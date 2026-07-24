@@ -5,17 +5,17 @@ import asyncio
 from dotenv import load_dotenv
 from scrapers.google_scraper import download_drive_file
 import tempfile
-import PyPDF2
+import pypdf
 import httpx
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-logging.getLogger("PyPDF2").setLevel(logging.ERROR)
+logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 import warnings
-warnings.filterwarnings("ignore", module="PyPDF2")
+warnings.filterwarnings("ignore", module="pypdf")
 
 async def run_nightly_job(bot, chat_id):
     from config import NIGHTLY_QUEUE_FILE, CACHE_DIR
@@ -46,7 +46,7 @@ async def run_nightly_job(bot, chat_id):
             
         if download_drive_file(file_id, path):
             try:
-                reader = PyPDF2.PdfReader(path)
+                reader = pypdf.PdfReader(path)
                 text = ""
                 for page in reader.pages:
                     text += page.extract_text() + "\n"

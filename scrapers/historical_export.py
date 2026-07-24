@@ -110,7 +110,7 @@ def export_all_classroom():
                 f_title = m['driveFile'].get('driveFile', {}).get('title', '')
                 if f_id and f_title.lower().endswith('.pdf'):
                     import tempfile
-                    import PyPDF2
+                    import pypdf
                     import sys
                     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
                     from scrapers.google_scraper import download_drive_file
@@ -119,7 +119,7 @@ def export_all_classroom():
                         path = tmp.name
                     if download_drive_file(f_id, path):
                         try:
-                            reader = PyPDF2.PdfReader(path)
+                            reader = pypdf.PdfReader(path)
                             text = ""
                             for page in reader.pages:
                                 text += page.extract_text() + "\n"

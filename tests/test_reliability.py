@@ -87,7 +87,7 @@ async def test_nightly_queue_processor(tmp_path):
         return file_id == "id2"
 
     with patch("scrapers.nightly_processor.download_drive_file", side_effect=mock_download), \
-         patch("scrapers.nightly_processor.PyPDF2.PdfReader") as mock_reader:
+         patch("scrapers.nightly_processor.pypdf.PdfReader") as mock_reader:
         mock_page = MagicMock()
         mock_page.extract_text.return_value = "dummy text " * 10
         mock_reader.return_value.pages = [mock_page]
@@ -99,6 +99,19 @@ async def test_nightly_queue_processor(tmp_path):
     assert len(queue) == 1
     assert queue[0]["file_id"] == "id1"
     assert "attempt_count" in queue[0]
+
+
+def test_pypdf_reader_compatibility(tmp_path):
+    """The maintained pypdf replacement preserves the PdfReader API we use."""
+    from pypdf import PdfReader, PdfWriter
+
+    pdf_path = tmp_path / "compatibility.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    with pdf_path.open("wb") as output:
+        writer.write(output)
+
+    assert len(PdfReader(pdf_path).pages) == 1
 
 def test_ai_processor_cache_consumer():
     # Behavioral test for DATA-01 cache directory usage

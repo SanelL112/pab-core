@@ -7,7 +7,7 @@ google-auth-oauthlib==1.4.0
 httpx==0.28.1
 requests==2.34.2
 pytesseract==0.3.13
-Pillow==12.2.0
+Pillow==12.3.0
 numpy==2.5.0
 python-docx
 beautifulsoup4==4.15.0
@@ -15,4 +15,6 @@ ddgs==9.14.4
 youtube-search-python==1.6.6
 youtube-transcript-api==1.2.4
 pdf2image==1.17.0
-PyPDF2==3.0.1
+# PyPDF2 has no patched release for GHSA-4vvm-4w3v-6mr8; pypdf is its
+# maintained successor and fixes the malformed-comment infinite-loop issue.
+pypdf==3.17.4
