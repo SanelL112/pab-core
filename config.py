@@ -118,6 +118,9 @@ MAX_MEGA_INDEX_CHARS = 100_000
 MAX_CURATED_BRAIN_CHARS = 50_000
 MAX_SEEN_TASKS = 200
 MAX_CHAT_HISTORY_KB = 50
+# Retain normal conversation history for a bounded period. Set to 0 only when
+# an operator explicitly needs to disable expiry (for example, a legal hold).
+CHAT_HISTORY_RETENTION_DAYS = max(0, int(os.getenv("CHAT_HISTORY_RETENTION_DAYS", "30")))
 DIGEST_INTERVAL_SECONDS = 14400            # 4 hours
 WATCHDOG_INTERVAL_SECONDS = 1800           # 30 minutes
 

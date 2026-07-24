@@ -31,14 +31,34 @@ The local regression suite passes (**53 tests**) with network calls disabled by
 default. This remains source-level verification, not proof of live service,
 credential, or hardware state.
 
+### Source update — 2026-07-24
+
+The repair worktree based on current `main` now additionally enforces an
+explicit cloud boundary: every cloud adapter defaults to `PRIVATE` and accepts
+requests only when its classification is exactly `PUBLIC`.  The chat bridge
+locally screens both automatic and manually selected cloud routes, and excludes
+the private digest, memory index, and semantic-retrieval context from the
+public-cloud prompt.  The two mega-study-guide jobs consume cached school and
+personal sources, so they now use local `agy` inference exclusively rather than
+falling back to any cloud provider.
+
+Conversation-history retention is bounded to 30 days by default, owner-only
+permissions are applied on write and rotation, and expiry is covered by a local
+regression test.  The period remains configurable through
+`CHAT_HISTORY_RETENTION_DAYS`; `0` is an explicit administrator opt-out.
+
+The local suite completed with **60 passed** using
+`pytest tests -q -ra --fail-on-skip`, with network calls blocked by default.
+The only warning is PyPDF2's upstream deprecation notice; no test was skipped.
+
 ### Still open or only partially remediated
 
 | IDs | Current status | Evidence and required follow-up |
 |---|---|---|
 | SEC-01 | **Resolved in source** | Command paths are resolved against explicit safe roots; traversal, symlinks, system pseudo-filesystems, secrets, `.env`, and private runtime files are rejected. Regression coverage exercises each boundary. |
-| SEC-03 | **Resolved in source** | `call_local_rpc()` now fails closed for `PRIVATE` (and invalid) classifications. The audited private call sites explicitly use `PRIVATE`; cloud fallback requires explicit `PUBLIC`. |
+| SEC-03 | **Resolved in source** | All cloud adapters now reject private, invalid, and unclassified requests; only exact `PUBLIC` permits a cloud call. Both automatic and manual cloud chat routes are locally screened and omit private cached context. Private mega-guide paths use local inference only. |
 | SEC-04 | **Operational action required** | Code reduces future HTTP client noise, but the historical Telegram token exposure still requires rotation, secret-store update, service restart, and journal-retention review. |
-| SEC-05 | **Partial** | Activity logs now enforce a metadata-only schema, Telegram notifications are queued, and raw OCR is neither saved to `important_extracts.txt` nor retained in chat history. General conversation-history retention still needs a documented user-data policy. |
+| SEC-05 | **Resolved in source / operational policy configurable** | Activity logs enforce a metadata-only schema, Telegram notifications are queued, raw OCR is neither saved to `important_extracts.txt` nor retained in chat history, and per-topic chat histories are owner-only and expire after 30 days by default. An operator may set `CHAT_HISTORY_RETENTION_DAYS` for the required retention policy. |
 | LLM-05 | **Partial / operationally unverified** | The router has safer local fallback behavior, but worker participation and the Surface RPC lifecycle still need a controlled deployment/restart test. |
 | RUNTIME-01 | **Open — deployment mismatch** | Pi alerts on 2026-07-23 show `call_local_rpc()` rejecting `allow_cloud`, although the current `main` implementation accepts it. The Pi is running an incompatible or partially deployed code/configuration set; this blocks memory consolidation and offline indexing. Deploy and restart the full compatible unit before further runtime conclusions. |
 | MCP-01 | **Operationally open** | Canvas still needs Composio re-authentication. |
@@ -47,8 +67,8 @@ credential, or hardware state.
 | LOG-03 | **Resolved in source** | The scanner uses configured log roots and recognizes structured `nightly` failure statuses. |
 | ASYNC-01 | **Resolved for audited paths** | Web precaching, Pi health checks, and memory-consolidation file/process/download work are offloaded from the event loop. |
 | DATA-01 | **Resolved in source** | Memory consolidation uses only the canonical `cache/` source; stale `source_cache` fallback reads were removed. |
-| TEST-01 | **Resolved** | The tracked `comprehensive_test.py` and `audit_script.py` remain import-side-effect scripts, even though the dedicated `tests/` suite is safe to collect. |
-| TEST-02, TEST-03 | **Resolved** | GitHub Actions does not run pytest. Its import check sets `TELEGRAM_CHAT_ID=0`, which `config.py` rejects, then silently counts the imports as skipped. Run pytest in CI with valid test defaults and fail on unexpected skipped imports. |
+| TEST-01 | **Resolved in source** | `comprehensive_test.py` and `audit_script.py` have `__main__` guards, so CI can import project modules without triggering their top-level work. |
+| TEST-02, TEST-03 | **Resolved in source** | GitHub Actions supplies a valid dummy chat ID, fails if a required import is skipped, and runs `pytest tests/ -q -ra --fail-on-skip`. |
 | DEP-03 | **Open — untriaged** | GitHub reported 14 Dependabot alerts on the default branch during this verification (10 high, 4 moderate). Enumerate the affected dependencies and patch or explicitly assess each alert before marking it resolved. |
 
 ### Confirmed code remediations

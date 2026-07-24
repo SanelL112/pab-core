@@ -27,6 +27,7 @@ from config import (
     COMBINED_SUMMARIES_FILE, CORRELATION_GRAPH_FILE,
     MAX_COMBINED_SUMMARIES_CHARS, MAX_MEGA_INDEX_CHARS,
     MAX_CURATED_BRAIN_CHARS, MAX_SEEN_TASKS, MAX_CHAT_HISTORY_KB,
+    CHAT_HISTORY_RETENTION_DAYS,
     BACKUP_FILES, BACKUP_RETENTION_DAYS, SANEL_CHAT_ID,
 )
 
@@ -62,8 +63,14 @@ def enforce_all_rotations():
     rotate_file_if_needed(MEGA_INDEX_FILE, MAX_MEGA_INDEX_CHARS)
     rotate_file_if_needed(CURATED_BRAIN_FILE, MAX_CURATED_BRAIN_CHARS)
 
-    # Rotate chat history files (per-topic)
+    # Enforce bounded, owner-only chat-history retention.  This intentionally
+    # applies to every per-topic history file, including inactive topics.
+    prune_expired_chat_histories()
     for f in BASE_DIR.glob("chat_history_*.txt"):
+        try:
+            os.chmod(f, 0o600)
+        except OSError:
+            logger.warning("Could not restrict permissions on %s", f.name)
         rotate_file_if_needed(f, MAX_CHAT_HISTORY_KB * 1024)
 
     # Cap state.json seen_tasks
@@ -75,6 +82,31 @@ def enforce_all_rotations():
             logger.info("Capped seen_tasks in state.json")
     except Exception as e:
         logger.error(f"Failed to cap seen_tasks: {e}")
+
+
+def prune_expired_chat_histories(now: float | None = None) -> int:
+    """Delete per-topic history files older than the configured retention period.
+
+    ``CHAT_HISTORY_RETENTION_DAYS=0`` is an explicit opt-out for operators who
+    need a longer retention period.  The policy is applied by the existing
+    rotation routine, so it runs during normal maintenance rather than on
+    import.
+    """
+    if CHAT_HISTORY_RETENTION_DAYS <= 0:
+        return 0
+    current_time = time.time() if now is None else now
+    cutoff = current_time - CHAT_HISTORY_RETENTION_DAYS * 24 * 60 * 60
+    deleted = 0
+    for history_file in BASE_DIR.glob("chat_history_*.txt"):
+        try:
+            if history_file.stat().st_mtime >= cutoff:
+                continue
+            history_file.unlink()
+            deleted += 1
+            logger.info("Removed expired chat history %s", history_file.name)
+        except OSError as exc:
+            logger.warning("Could not expire chat history %s: %s", history_file.name, exc)
+    return deleted
 
 
 # ── BASH Safety (Fix #7) ─────────────────────────────────────────────────────

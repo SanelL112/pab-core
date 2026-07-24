@@ -1,8 +1,8 @@
 # Personal Assistant Bot - Repair Changes Summary
 
-**Branch:** `fix/2026-07-bug-audit`
+**Branch:** `fix-all-bugs`
 **Base Commit:** `4c81ad5` (main)
-**Date:** 2026-07-23
+**Date:** 2026-07-24
 **Original repair scope:** 29 files, 702 insertions(+), 603 deletions(-)
 
 **Post-verification note (2026-07-23):** The active worktree contains the
@@ -44,10 +44,15 @@ This document captures all agent-owned code changes from the bug audit repair wo
 ## Privacy & Routing Fixes (P0/P1)
 
 ### 4. Private Workload Cloud Fail-Closed (`llm_router.py`, multiple callers)
-- **New** `allow_cloud` parameter (default `True` for compat) on `call_local_rpc()`
-- **Private callers** pass `allow_cloud=False`: watchdog, OCR/photo, curated-brain, PII route
+- **Cloud adapters default to `PRIVATE`** and reject any request unless its classification is exactly `PUBLIC`
+- **Private callers** never enable cloud fallback: watchdog, OCR/photo, curated-brain, cached study-guide inputs, and PII routes remain local
 - **Local fallback chain:** Surface → Pi Ollama → Dell local Ollama
 - **Fail message:** `"⚠️ Local inference unavailable and cloud fallback disabled."` (no cloud call)
+
+### 4a. Cloud Chat Context Containment (`bot/ai_bridge.py`)
+- **Manual cloud selection is screened locally** just like automatic routing; a private result is forced to local Flash
+- **Cloud prompts exclude** the personal digest, memory index, and semantic-retrieval context even after a public classification
+- **Mega-guide generators use local `agy` only** because their prompts include cached school and personal material
 
 ### 5. Dell Local Ollama Role (`config.py`, `llm_router.py`)
 - **Added** `OLLAMA_LOCAL_URL` (default `http://127.0.0.1:11434`)
@@ -142,7 +147,7 @@ This document captures all agent-owned code changes from the bug audit repair wo
 | Test File | Scope |
 |-----------|-------|
 | `tests/test_p0_security.py` | Command guard, Telegram auth, Cluster API auth/download |
-| `tests/test_routing_privacy.py` | Provider arg order, `allow_cloud=False` block, Dell fallback, no direct OpenRouter |
+| `tests/test_routing_privacy.py` | Cloud classification boundary, private-context containment, provider argument order, and Dell fallback |
 | `tests/test_reliability.py` | Cache paths, queue ack, state concurrency, Notion failure, full-content hash, nightly import safety |
 | `tests/test_reliability_tranche.py` | Cache dir, queue failure handling, state primitive |
 | `tests/test_telegram_logger.py` | Queue-backed emit, no synchronous network I/O |
@@ -151,9 +156,12 @@ This document captures all agent-owned code changes from the bug audit repair wo
 | `tests/test_requirements.py` | No duplicate requirements |
 | `tests/test_ui_emoji.py` | No U+FFFD in tracked Python |
 | `tests/test_script_imports.py` | No import-time side effects |
+| `tests/test_chat_history_retention.py` | Expired conversation-history cleanup |
+| `tests/test_private_guide_generation.py` | Local-only mega-guide inference |
 
-The original repair suite reported 35 tests. After verification coverage was
-added, **all 41 tests pass**. Full suite runs in ~25s.
+The original repair suite reported 35 tests. The final local verification run
+reported **60 passed** with no skips; tests use safe fake credentials and block
+network access by default. PyPDF2 emits one upstream deprecation warning.
 
 ---
 
@@ -169,6 +177,7 @@ clean_emojis.py
 config.py
 fix_bot_commands.py
 fix_utils_pii.py
+generate_mega_guide.py
 inline_keyboards.py
 llm_router.py
 log_scanner.py
@@ -191,7 +200,7 @@ telegram_logger.py
 utils.py
 ```
 
-**Unchanged (user data/artifacts):** `activity_log.jsonl`, `curated_brain.md`, `mega_index.md`, `embedding_data/`, `cache/`, `source_cache/`, `scrapers/source_cache/`, `BUG_AUDIT_VERIFICATION_REPORT.md`, `CONSOLIDATED_BUG_AUDIT_AND_REMEDIATION.md`, `SECURITY_AUDIT_*.md`
+**Unchanged (user data/artifacts):** `activity_log.jsonl`, `curated_brain.md`, `mega_index.md`, `embedding_data/`, `cache/`, `source_cache/`, `scrapers/source_cache/`, `BUG_AUDIT_VERIFICATION_REPORT.md`, `SECURITY_AUDIT_*.md`
 
 ---
 
@@ -200,7 +209,7 @@ utils.py
 ```bash
 # All tests
 ./venv/bin/pytest tests -q
-# → 41 passed, 1 deprecation warning (PyPDF2)
+# → 60 passed, 1 PyPDF2 upstream deprecation warning
 
 # Syntax & compilation
 python3 -W error::SyntaxWarning -m py_compile $(git ls-files '*.py')

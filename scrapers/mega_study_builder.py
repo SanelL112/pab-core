@@ -10,7 +10,7 @@ from ai_processor import call_agy
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import CACHE_DIR, OR_FALLBACK_MODEL, OR_THIRD_MODEL
+from config import CACHE_DIR
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -196,6 +196,15 @@ def search_youtube(topic: str):
         return None, ""
 
 
+def call_private_guide_model(prompt: str, timeout: int = 3600) -> str:
+    """Generate a study-guide section locally without cloud fallback.
+
+    Callers add cached classroom notes, PDF exports, and personal material to
+    the prompt.  These inputs remain local even if the local model is down.
+    """
+    return call_agy(prompt, timeout=timeout, model="flash")
+
+
 def generate_mega_guide(topic: str, pdf_text: str = "") -> str:
     """Generates the ultimate chunked study guide."""
     logger.info(f"Generating MEGA guide for: {topic} using Chunking Architecture")
@@ -241,42 +250,6 @@ def generate_mega_guide(topic: str, pdf_text: str = "") -> str:
     if not internal_notes:
         internal_notes = "None"
 
-    from llm_router import call_openrouter, estimate_tokens
-    from config import OPENROUTER_API_KEY
-
-    if not OPENROUTER_API_KEY:
-        return "❌ Missing OPENROUTER_API_KEY in .env"
-
-    # Token budget: max 500K tokens per night (prevents 21M token nights)
-    MAX_NIGHTLY_TOKENS = 500000
-    nightly_tokens_used = 0
-
-    def _call_or(prompt_text, timeout=3600):
-        """Unified OpenRouter caller — delegates to llm_router with token tracking."""
-        global nightly_tokens_used
-    
-        # Estimate tokens before call
-        prompt_tokens = estimate_tokens(prompt_text)
-        if nightly_tokens_used + prompt_tokens > MAX_NIGHTLY_TOKENS:
-            logger.warning(f"Token budget exceeded ({nightly_tokens_used}/{MAX_NIGHTLY_TOKENS}), skipping call")
-            return ""
-    
-        result = call_openrouter(
-            model=OR_FALLBACK_MODEL,
-            prompt=prompt_text,
-            task="study-guide",
-            fallback_chain=[OR_THIRD_MODEL],
-            timeout=timeout,
-        )
-    
-        # Track tokens used (approximate from result)
-        if result:
-            result_tokens = estimate_tokens(result)
-            nightly_tokens_used += prompt_tokens + result_tokens
-            logger.info(f"Token usage: {nightly_tokens_used}/{MAX_NIGHTLY_TOKENS} (this call: ~{prompt_tokens + result_tokens})")
-    
-        return result
-
     logger.info("Assembling and cleaning context payload...")
     
     # Strip null bytes
@@ -294,14 +267,14 @@ def generate_mega_guide(topic: str, pdf_text: str = "") -> str:
                 chunk = text[i:i+max_chunk_size]
                 prompt = f"Extract all facts, concepts, formulas, and notes strictly relevant to '{topic}'. Be comprehensive but concise. Ignore unrelated subjects.\n\nSOURCE TEXT ({label} Chunk {i//max_chunk_size + 1}):\n{chunk}"
                 logger.info(f"Summarizing {label} chunk {i//max_chunk_size + 1} / {(len(text)//max_chunk_size)+1}...")
-                summary = _call_or(prompt)
+                summary = call_private_guide_model(prompt)
                 if summary:
                     summarized += summary + "\n\n"
                     
             # The Final Reduce (Coherence) Pass
             logger.info(f"Synthesizing all {label} chunks into a coherent master document...")
             synthesis_prompt = f"You are an expert synthesizer. I have provided multiple summaries of '{topic}' below. Please rewrite them into one single, highly coherent, deduplicated master reference document. Do not leave any facts out.\n\nSUMMARIES:\n{summarized}"
-            final_coherent_doc = _call_or(synthesis_prompt)
+            final_coherent_doc = call_private_guide_model(synthesis_prompt)
             
             return final_coherent_doc if final_coherent_doc else summarized
             
@@ -350,7 +323,7 @@ CRITICAL LIMITATION: You may ONLY include exactly ONE chapter for "Practice Prob
 Respond ONLY with a raw JSON array of strings representing the chapter titles. Do not include markdown blocks or any other text.
 Example: ["Chapter 1: Introduction to Formulas", "Chapter 2: Advanced Mechanics"]"""
     
-    outline_json_str = _call_or(outline_prompt)
+    outline_json_str = call_private_guide_model(outline_prompt)
     import json
     outline = []
     if outline_json_str:
@@ -380,7 +353,7 @@ Example: ["Chapter 1: Introduction to Formulas", "Chapter 2: Advanced Mechanics"
     condensed_context = source_context
     if len(source_context) > 10000:
         logger.info(f"Condensing source_context ({len(source_context)} chars) for per-chapter use...")
-        condensed_context = _call_or(
+        condensed_context = call_private_guide_model(
             f"Condense the following educational source material into a dense, structured reference "
             f"document (max 3000 chars) preserving all key facts, formulas, and concepts for "
             f"the topic '{topic}'. Be comprehensive but concise.\n\nSOURCE MATERIAL:\n{source_context}",
@@ -420,12 +393,7 @@ INSTRUCTIONS:
 6. Wrap ALL of your internal planning or calculations inside <thought>...</thought> tags! Anything outside these tags must be the final, polished text for the chapter.
 7. Start your output directly with a Markdown Header for the chapter (e.g. # {chapter}).
 """
-        chunk_result = _call_or(chunk_prompt)
-        
-        if not chunk_result:
-            logger.warning(f"Failed to generate chunk {chapter}, trying local fallback...")
-            from ai_processor import call_agy
-            chunk_result = call_agy(chunk_prompt, timeout=3600, model="flash")
+        chunk_result = call_private_guide_model(chunk_prompt)
             
         if chunk_result:
             import re
@@ -461,7 +429,7 @@ INSTRUCTIONS:
 6. Wrap any internal scratchpad inside <thought>...</thought> tags.
 7. Output ONLY the perfectly polished, final version of {chapter}. Do NOT output other chapters.
 """
-        editor_result = _call_or(editor_prompt)
+        editor_result = call_private_guide_model(editor_prompt)
         
         if editor_result:
             import re

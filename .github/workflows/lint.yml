@@ -101,6 +101,9 @@ jobs:
                   skipped += 1
 
           print(f"  -> {ok} ok, {skipped} skipped, {failed} failed")
+          if skipped:
+              print("  import check failed because one or more required imports were skipped")
+              sys.exit(1)
           PYEOF
 
       - name: "[3/3] static grep for known 3.10+/3.12+ deprecation patterns"

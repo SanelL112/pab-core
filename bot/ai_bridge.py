@@ -206,8 +206,11 @@ async def send_to_antigravity_and_wait(
     
     state = load_state()
     model = state["user_models"].get(str(chat_id), "auto")
-    
-    if model == "auto":
+    cloud_classification = "PRIVATE"
+
+    # A user-selected cloud model is not permission to send private context.
+    # Screen both automatic and manually selected cloud routes locally first.
+    if model == "auto" or model.startswith("openrouter:"):
         if status_msg and context:
             try: await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="🛡️ Running local PII privacy filter...")
             except Exception: pass
@@ -216,7 +219,7 @@ async def send_to_antigravity_and_wait(
             "Analyze the following conversation context. Does it contain ANY highly personal "
             "information (e.g. real names, personal emails, physical addresses, private academic grades, "
             "bank details, or intimate personal stories)?\n\n"
-            f"Context to check:\n{chat_history[-1000:]}\n\nUser: {user_message}\n\n"
+            f"Context to check:\n{chat_history}\n\nUser: {user_message}\n\n"
             "Reply with EXACTLY ONE WORD: 'YES' if it contains personal info, or 'NO' if it is safe general/academic knowledge."
         )
         try:
@@ -236,16 +239,18 @@ async def send_to_antigravity_and_wait(
             is_private = True # Fail safe
             
         if is_private:
-            logger.info("Auto-routing to FLASH (PII detected)")
+            logger.info("Routing to FLASH because the cloud privacy screen detected private context")
             model = "flash"
         else:
-            if len(user_message) > 300:
-                logger.info("Auto-routing to NEMOTRON (Long/Complex query)")
-                model = "openrouter:nvidia/nemotron-3-ultra-550b-a55b:free"
-            else:
-                from config import OR_FALLBACK_MODEL
-                logger.info(f"Auto-routing to fallback model ({OR_FALLBACK_MODEL}) (Short/Academic query)")
-                model = f"openrouter:{OR_FALLBACK_MODEL}"
+            cloud_classification = "PUBLIC"
+            if model == "auto":
+                if len(user_message) > 300:
+                    logger.info("Auto-routing to NEMOTRON (Long/Complex query)")
+                    model = "openrouter:nvidia/nemotron-3-ultra-550b-a55b:free"
+                else:
+                    from config import OR_FALLBACK_MODEL
+                    logger.info(f"Auto-routing to fallback model ({OR_FALLBACK_MODEL}) (Short/Academic query)")
+                    model = f"openrouter:{OR_FALLBACK_MODEL}"
     
     out = ""
     actual_model_used = model
@@ -253,11 +258,23 @@ async def send_to_antigravity_and_wait(
         or_model_name = model.split("openrouter:", 1)[1]
         logger.info(f"OpenRouter model={or_model_name} processing request...")
         log_llm_call(or_model_name, "chat", 0, is_local=False)
-        
+
+        # ``system`` and ``full_prompt`` include the personal digest, brain,
+        # and local retrieval.  They are for local inference only.  A cloud
+        # request can use the locally screened public conversation, but never
+        # those cached private sources.
+        cloud_system_prompt = (
+            "You are a helpful assistant. Answer only from public, general "
+            "knowledge and the public conversation supplied by the user."
+        )
+        cloud_user_prompt = (
+            f"--- CONVERSATION HISTORY ---\n{chat_history}\n"
+            f"--- END HISTORY ---\n\nUser: {user_message}"
+        )
+
         async def _call_or(m_name):
             from llm_router import call_openrouter
-            sys_prompt = system + "\n\nCRITICAL: Before answering, you MUST think step-by-step and wrap your internal thought process in <thought>...</thought> tags."
-            usr_prompt = f"--- {topic.upper()} CONVERSATION HISTORY ---\n{chat_history}\n--- END HISTORY ---\n\nUser: {user_message}"
+            sys_prompt = cloud_system_prompt + "\n\nProvide a direct, well-structured answer."
             loop = asyncio.get_running_loop()
             stream_info = (context, chat_id, status_msg, loop) if status_msg and context else None
             try:
@@ -265,12 +282,13 @@ async def send_to_antigravity_and_wait(
                     None,
                     lambda: call_openrouter(
                         model=m_name,
-                        prompt=usr_prompt,
+                        prompt=cloud_user_prompt,
                         task=f"chat-{topic}",
                         max_tokens=4000,
                         system_prompt=sys_prompt,
                         timeout=180,
-                        stream_to_status=stream_info
+                        stream_to_status=stream_info,
+                        classification=cloud_classification,
                     )
                 )
                 return out
@@ -317,7 +335,7 @@ async def send_to_antigravity_and_wait(
                         from llm_router import call_opencode
                         zen_out = await asyncio.get_running_loop().run_in_executor(
                             None,
-                            lambda: call_opencode(prompt=full_prompt, model=OPENCODE_ZEN_MODEL, task=f"chat-{topic}", timeout=RESPONSE_TIMEOUT)
+                            lambda: call_opencode(prompt=cloud_user_prompt, model=OPENCODE_ZEN_MODEL, system_prompt=cloud_system_prompt, task=f"chat-{topic}", timeout=RESPONSE_TIMEOUT, classification=cloud_classification)
                         )
                         if zen_out:
                             out = zen_out
@@ -330,7 +348,7 @@ async def send_to_antigravity_and_wait(
                             from llm_router import call_hackclub
                             hc_out = await asyncio.get_running_loop().run_in_executor(
                                 None,
-                                lambda: call_hackclub(prompt=full_prompt, model="qwen/qwen3-32b", task=f"chat-{topic}", timeout=RESPONSE_TIMEOUT)
+                                lambda: call_hackclub(prompt=cloud_user_prompt, model="qwen/qwen3-32b", system_prompt=cloud_system_prompt, task=f"chat-{topic}", timeout=RESPONSE_TIMEOUT, classification=cloud_classification)
                             )
                             if hc_out:
                                 out = hc_out
@@ -377,7 +395,7 @@ async def send_to_antigravity_and_wait(
                         from llm_router import call_opencode
                         zen_out = await asyncio.get_running_loop().run_in_executor(
                             None,
-                            lambda: call_opencode(prompt=full_prompt, model=OPENCODE_ZEN_MODEL, task=f"chat-{topic}", timeout=RESPONSE_TIMEOUT)
+                            lambda: call_opencode(prompt=cloud_user_prompt, model=OPENCODE_ZEN_MODEL, system_prompt=cloud_system_prompt, task=f"chat-{topic}", timeout=RESPONSE_TIMEOUT, classification=cloud_classification)
                         )
                         if zen_out:
                             out = zen_out
@@ -390,7 +408,7 @@ async def send_to_antigravity_and_wait(
                             from llm_router import call_hackclub
                             hc_out = await asyncio.get_running_loop().run_in_executor(
                                 None,
-                                lambda: call_hackclub(prompt=full_prompt, model="qwen/qwen3-32b", task=f"chat-{topic}", timeout=RESPONSE_TIMEOUT)
+                                lambda: call_hackclub(prompt=cloud_user_prompt, model="qwen/qwen3-32b", system_prompt=cloud_system_prompt, task=f"chat-{topic}", timeout=RESPONSE_TIMEOUT, classification=cloud_classification)
                             )
                             if hc_out:
                                 out = hc_out
@@ -583,6 +601,7 @@ async def send_to_antigravity_and_wait(
         try:
             with open(history_file, "a", encoding="utf-8") as f:
                 f.write(f"User: {user_message}\nModel: {out}\n\n")
+            os.chmod(history_file, 0o600)
         # Rotate if file exceeds 50KB to prevent unbounded growth
             if os.path.getsize(history_file) > 50000:
                 with open(history_file, "r", encoding="utf-8") as f:

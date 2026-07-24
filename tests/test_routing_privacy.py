@@ -11,7 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import bot.ai_bridge
 from bot.ai_bridge import send_to_antigravity_and_wait
-from llm_router import call_local_rpc
+from llm_router import call_hackclub, call_local_rpc, call_opencode, call_openrouter
 
 
 def _inline_run_in_executor(loop, executor, func, *args):
@@ -50,6 +50,48 @@ async def test_ai_bridge_kwargs():
         kwargs = mock_opencode.call_args.kwargs
         assert "prompt" in kwargs
         assert "model" in kwargs
+
+
+@pytest.mark.asyncio
+async def test_manual_cloud_model_is_screened_and_excludes_private_cached_context(tmp_path, monkeypatch):
+    digest = tmp_path / "digest.txt"
+    brain = tmp_path / "brain.txt"
+    digest.write_text("PRIVATE_DIGEST_CONTENT")
+    brain.write_text("PRIVATE_BRAIN_CONTENT")
+    monkeypatch.setattr(bot.ai_bridge, "LATEST_DIGEST_FILE", digest)
+    monkeypatch.setattr(bot.ai_bridge, "BOT_CONTEXT_FILE", brain)
+
+    privacy_result = MagicMock(stdout="NO")
+    with patch("bot.ai_bridge.load_state", return_value={"user_models": {"7": "openrouter:test-model"}}), \
+         patch("bot.ai_bridge.detect_topic", return_value="school"), \
+         patch("bot.ai_bridge.subprocess.run", return_value=privacy_result), \
+         patch(
+             "llm_router.call_openrouter",
+             return_value="This is a sufficiently detailed public response about photosynthesis.",
+         ) as call_cloud, \
+         patch("asyncio.BaseEventLoop.run_in_executor", new=_inline_run_in_executor):
+        result = await send_to_antigravity_and_wait("Explain photosynthesis", 7, None, None)
+
+    assert result.startswith("This is a sufficiently detailed public response")
+    kwargs = call_cloud.call_args.kwargs
+    assert kwargs["classification"] == "PUBLIC"
+    assert "PRIVATE_DIGEST_CONTENT" not in kwargs["prompt"]
+    assert "PRIVATE_BRAIN_CONTENT" not in kwargs["system_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_manual_cloud_model_fails_closed_when_local_privacy_screen_finds_private_context():
+    privacy_result = MagicMock(stdout="YES")
+    local_result = MagicMock(stdout="This is a sufficiently detailed local response.")
+    with patch("bot.ai_bridge.load_state", return_value={"user_models": {"7": "openrouter:test-model"}}), \
+         patch("bot.ai_bridge.detect_topic", return_value="school"), \
+         patch("bot.ai_bridge.subprocess.run", side_effect=[privacy_result, local_result]), \
+         patch("llm_router.call_openrouter") as call_cloud, \
+         patch("asyncio.BaseEventLoop.run_in_executor", new=_inline_run_in_executor):
+        result = await send_to_antigravity_and_wait("private details", 7, None, None)
+
+    assert result.startswith("This is a sufficiently detailed local response")
+    call_cloud.assert_not_called()
 
 @pytest.mark.parametrize("classification", ["PRIVATE", "unexpected", None])
 def test_call_local_rpc_private_never_uses_cloud(classification):
@@ -91,6 +133,30 @@ def test_call_local_rpc_dell_fallback():
 
          res = call_local_rpc("test", classification="PRIVATE")
          assert res == "dell_response"
+
+
+def test_cloud_adapters_fail_closed_without_explicit_public_classification():
+    with patch("llm_router._do_call") as mock_do_call:
+        result = call_openrouter(model="test-model", prompt="private prompt")
+
+    assert "disabled" in result.lower()
+    mock_do_call.assert_not_called()
+    assert call_opencode(prompt="private prompt") == ""
+    assert call_hackclub(prompt="private prompt") == ""
+
+
+def test_openrouter_allows_only_explicit_public_classification():
+    with patch("llm_router._do_call", return_value="valid public response") as mock_do_call, patch(
+        "llm_router.log_call"
+    ):
+        result = call_openrouter(
+            model="test-model",
+            prompt="public academic question",
+            classification="PUBLIC",
+        )
+
+    assert result == "valid public response"
+    mock_do_call.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_pii_fail_closed():

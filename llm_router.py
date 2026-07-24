@@ -210,6 +210,11 @@ def is_valid_response(text: str) -> bool:
 
 
 # ── OpenRouter Unified Caller ────────────────────────────────────────────────
+def _allows_cloud(classification: object) -> bool:
+    """Cloud adapters require an explicit, exact public classification."""
+    return isinstance(classification, str) and classification.upper() == "PUBLIC"
+
+
 def call_openrouter(
     model: str,
     prompt: str,
@@ -219,6 +224,7 @@ def call_openrouter(
     fallback_chain: list = None,
     timeout: int = 120,
     stream_to_status=None,   # optional: (context, chat_id, status_msg) for streaming edits
+    classification: str = "PRIVATE",
 ) -> str:
     """
     Unified OpenRouter caller with retry, fallback, cost tracking.
@@ -236,10 +242,15 @@ def call_openrouter(
         fallback_chain: List of fallback model IDs if primary fails
         timeout: HTTP timeout in seconds
         stream_to_status: Optional (context, chat_id, status_msg) for live typing updates
+        classification: Must be exactly ``PUBLIC`` to permit a cloud request.
 
     Returns:
         Generated text string
     """
+    if not _allows_cloud(classification):
+        logger.warning("OpenRouter request blocked: classification is not explicitly PUBLIC")
+        return "⚠️ Cloud fallback is disabled for private or unclassified content."
+
     # SECURITY: Scrub PII at the entry point so ALL providers get scrubbed data.
     # This covers even the fallback chain models, Opencode Zen, and Hack Club AI.
     from utils import scrub_pii
@@ -291,6 +302,7 @@ def call_openrouter(
                 max_tokens=max_tokens,
                 system_prompt=scrubbed_system,
                 timeout=120 if isinstance(timeout, int) else 120,
+                classification="PUBLIC",
             )
     except Exception as e:
         logger.warning(f"Opencode Zen fallback also failed: {e}")
@@ -307,6 +319,7 @@ def call_openrouter(
                 max_tokens=min(max_tokens, 8000),
                 system_prompt=scrubbed_system,
                 timeout=120 if isinstance(timeout, int) else 120,
+                classification="PUBLIC",
             )
     except Exception as e:
         logger.warning(f"Hack Club AI fallback also failed: {e}")
@@ -774,6 +787,7 @@ def call_local_rpc(
             system_prompt=system_prompt,
             max_tokens=max_tokens,
             timeout=timeout,
+            classification="PUBLIC",
         )
 
     logger.warning(
@@ -1050,6 +1064,7 @@ def call_llamacpp_rpc_with_fallback(
     task: str = "overnight",
     timeout: int = 600,
     skip_cloud_fallback: bool = False,
+    classification: str = "PRIVATE",
 ) -> str:
     """
     Call Surface orchestrator API with full OOM protection and fallback chain.
@@ -1057,7 +1072,7 @@ def call_llamacpp_rpc_with_fallback(
     Fallback order:
       1. Surface API (primary) — llama-server on 10.0.0.47:8080, RPCs to Dell + Pi
       2. Solo Ollama on Dell (qwen2:0.5b or configured fallback model)
-      3. Cloud API via OpenRouter (free tier) — skipped if skip_cloud_fallback=True
+      3. Cloud API via OpenRouter (free tier) — only when classification is PUBLIC
 
     Each step validates memory + server health before attempting.
 
@@ -1122,8 +1137,8 @@ def call_llamacpp_rpc_with_fallback(
         logger.warning(f"Ollama fallback: failed ({e}), trying cloud...")
 
     # ── Step 3: Final fallback to cloud API (OpenRouter free tier) ───────
-    if skip_cloud_fallback:
-        logger.info("Cloud fallback skipped (caller has own cloud strategy)")
+    if skip_cloud_fallback or not _allows_cloud(classification):
+        logger.info("Cloud fallback skipped for private/unclassified content")
         return ""
 
     logger.info(f"Final fallback to cloud ({RPC_FALLBACK_CLOUD_MODEL})...")
@@ -1136,6 +1151,7 @@ def call_llamacpp_rpc_with_fallback(
             max_tokens=max_tokens,
             fallback_chain=[OR_FALLBACK_MODEL],
             timeout=120 if isinstance(timeout, int) else 120,
+            classification="PUBLIC",
         )
         if result:
             logger.info(f"Cloud fallback: success ({len(result)} chars)")
@@ -1156,6 +1172,7 @@ def call_opencode(
     task: str = "general",
     timeout: int = 120,
     temperature: float = 0.0,
+    classification: str = "PRIVATE",
 ) -> str:
     """
     Call Opencode Zen API — a separate provider from OpenRouter.
@@ -1177,6 +1194,10 @@ def call_opencode(
     Returns:
         Generated text, or empty string on failure.
     """
+    if not _allows_cloud(classification):
+        logger.warning("Opencode Zen request blocked: classification is not explicitly PUBLIC")
+        return ""
+
     if not OPENCODE_ZEN_API_KEY:
         logger.error("Opencode Zen: no API key set (OPENCODE_ZEN_API_KEY)")
         return ""
@@ -1293,6 +1314,7 @@ def call_hackclub(
     task: str = "general",
     timeout: int = 120,
     temperature: float = 0.0,
+    classification: str = "PRIVATE",
 ) -> str:
     """
     Call Hack Club AI (ai.hackclub.com) — an OpenRouter-like shared proxy.
@@ -1316,6 +1338,10 @@ def call_hackclub(
     Returns:
         Generated text, or empty string on failure.
     """
+    if not _allows_cloud(classification):
+        logger.warning("Hack Club AI request blocked: classification is not explicitly PUBLIC")
+        return ""
+
     from config import HACKCLUB_AI_API_KEY, HACKCLUB_AI_BASE_URL
 
     if not HACKCLUB_AI_API_KEY:

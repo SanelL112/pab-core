@@ -4,7 +4,7 @@ Mega Study Guide Generator — Runs as a scheduled cron job at 2 AM daily.
 1. Uses the rebuilt embedding index from the 1 AM job
 2. Fetches all cached summaries from /home/sanel/personal-assistant-bot/cache/
 3. Uses the embedding index to find relevant content across all sources
-4. Generates a comprehensive mega study guide using OpenRouter API (Nemotron-3-Ultra)
+4. Generates a comprehensive mega study guide with the local inference path
 5. Saves the guide to /home/sanel/personal-assistant-bot/output/mega_guide_YYYY-MM-DD.md
 6. Sends a Telegram notification with the guide summary
 7. Logs the generation time and any errors
@@ -43,12 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import local config and modules
-from llm_router import call_openrouter, call_hackclub, OPENCODE_ZEN_API_KEY
 from config import (
-    HACKCLUB_AI_API_KEY,
-    OPENROUTER_API_KEY,
-    OR_FALLBACK_MODEL,
-    OR_THIRD_MODEL,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
     CONVERSATION_ID,
@@ -57,6 +52,7 @@ from config import (
     ARCHIVE_DIR,
     MEGA_INDEX_FILE,
 )
+from ai_processor import call_agy
 from scrapers.semantic_retrieval import semantic_search
 
 
@@ -370,49 +366,23 @@ Generate the COMPLETE guide now. Be exhaustive. No token limits - write until do
     return prompt
 
 
-def call_openrouter(prompt: str, model: str = OR_FALLBACK_MODEL, max_tokens: int = 8000) -> str:
-    """Call unified llm_router OpenRouter with cross-provider fallbacks + Hack Club AI."""
-    if not OPENROUTER_API_KEY:
-        return "❌ Missing OPENROUTER_API_KEY"
+def call_private_guide_model(prompt: str, timeout: int = 600) -> str:
+    """Generate a guide through the local-only inference path.
 
-    from llm_router import call_openrouter as unified_call
-
-    fallback_chain = [m for m in [OR_FALLBACK_MODEL, OR_THIRD_MODEL] if m != model]
-
-    # Try unified call (handles retries, Opencode Zen fallback, etc.)
+    Mega-guide prompts contain cached school and personal material.  Keep
+    those inputs local and fail explicitly if local inference is unavailable;
+    do not fall back to OpenRouter or any other cloud adapter.
+    """
     try:
-        task = "mega-guide"
-        result = unified_call(
-            model=model, prompt=prompt, task=task,
-            max_tokens=max_tokens,
-            system_prompt="You are an elite academic tutor creating comprehensive study guides. Be exhaustive, precise, and well-structured.",
-            fallback_chain=fallback_chain,
-            timeout=600,
-        )
-        if result and not result.startswith("⚠️"):
-            logger.info(f"Unified call succeeded: {len(result)} chars")
-            return result
-        else:
-            logger.warning(f"Unified call returned fallback message: {result[:100]}")
-    except Exception as e:
-        logger.warning(f"Unified call_openrouter failed: {e}")
+        result = call_agy(prompt, timeout=timeout, model="flash")
+    except Exception as exc:
+        logger.warning("Local mega-guide inference failed: %s", type(exc).__name__)
+        result = ""
 
-    # Final fallback: Hack Club AI
-    try:
-        if HACKCLUB_AI_API_KEY:
-            logger.info("Falling back to Hack Club AI for mega guide...")
-            result = call_hackclub(
-                model="qwen/qwen3-235b-a22b", prompt=prompt,
-                system_prompt="You are an elite academic tutor creating comprehensive study guides. Be exhaustive, precise, and well-structured.",
-                max_tokens=max_tokens, task="mega-guide", timeout=600,
-            )
-            if result:
-                logger.info(f"Hack Club AI succeeded: {len(result)} chars")
-                return result
-    except Exception as e:
-        logger.warning(f"Hack Club AI fallback failed: {e}")
-
-    return "❌ All models failed (OpenRouter + Opencode Zen + Hack Club AI)"
+    if result:
+        logger.info("Local mega-guide inference succeeded: %s chars", len(result))
+        return result
+    return "❌ Local inference unavailable; private mega-guide content was not sent to cloud."
 
 
 def send_telegram_message(text: str, parse_mode: str = None) -> bool:
@@ -520,15 +490,9 @@ def main():
         prompt = build_mega_guide_prompt(topics, all_context)
         logger.info(f"Prompt length: {len(prompt)} chars")
         
-        # 8. Call OpenRouter (Nemotron-3-Ultra)
-        logger.info("Generating mega study guide via OpenRouter (Nemotron-3-Ultra)...")
-        guide_content = call_openrouter(prompt, model="nvidia/nemotron-3-ultra-550b-a55b:free")
-        
-        if guide_content.startswith("❌"):
-            logger.error(f"Generation failed: {guide_content}")
-            # Try fallback
-            logger.info("Trying fallback model...")
-            guide_content = call_openrouter(prompt)
+        # 8. Generate locally because the prompt contains private cache data.
+        logger.info("Generating mega study guide through local inference...")
+        guide_content = call_private_guide_model(prompt)
         
         if guide_content.startswith("❌"):
             raise RuntimeError(f"All models failed: {guide_content}")
