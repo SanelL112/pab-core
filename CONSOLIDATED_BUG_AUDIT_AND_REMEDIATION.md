@@ -85,7 +85,7 @@ test was skipped.
 | DATA-01 | **Resolved in source** | Memory consolidation uses only the canonical `cache/` source; stale `source_cache` fallback reads were removed. |
 | TEST-01 | **Resolved in source** | `comprehensive_test.py` and `audit_script.py` have `__main__` guards, so CI can import project modules without triggering their top-level work. |
 | TEST-02, TEST-03 | **Resolved in source** | GitHub Actions supplies a valid dummy chat ID, fails if a required import is skipped, and runs `pytest tests/ -q -ra --fail-on-skip`. |
-| DEP-03 | **Remediated in source / GitHub re-scan pending** | The 14 direct alerts were 13 advisories affecting `Pillow==12.2.0` (upgraded to `12.3.0`) and one affecting unmaintained `PyPDF2==3.0.1` (migrated to current patched `pypdf==6.14.2`, because PyPDF2 has no patched version). Clean dependency resolution, import smoke tests, compilation, and 68 isolated tests passed. GitHub must re-scan the pushed commit before this can be marked externally resolved. |
+| DEP-03 | **Resolved / GitHub confirmed** | The 14 direct alerts were 13 advisories affecting `Pillow==12.2.0` (upgraded to `12.3.0`) and one affecting unmaintained `PyPDF2==3.0.1` (migrated to current patched `pypdf==6.14.2`, because PyPDF2 has no patched version). Clean dependency resolution, import smoke tests, compilation, and 68 isolated tests passed. GitHub's authenticated Dependabot API reported zero open alerts after the final push. |
 
 ### Confirmed code remediations
 
