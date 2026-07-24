@@ -40,5 +40,14 @@ async def test_async_job_queue():
     with open("main.py", "r") as f:
         content = f.read()
     assert "lambda ctx:" not in content
+
+
+def test_watchdog_loads_state_before_attachment_deduplication():
+    """Classroom attachment processing must not reference an undefined state."""
+    with open("main.py", "r") as f:
+        content = f.read()
+
+    attachment_loop = content.index("for title, full_link, file_id in all_files:")
+    assert content.index("state = load_state()", attachment_loop - 500, attachment_loop) < attachment_loop
     assert "atexit.register" not in content
     assert "post_shutdown" in content

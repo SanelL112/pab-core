@@ -55,7 +55,11 @@ provided. Opencode Zen retries the configured `mimo-v2.5-free` fallback when a
 configured model is explicitly rejected, covering the historical `hy3-free`
 401 without bypassing cloud classification.
 
-The local suite completed with **65 passed** using
+Pyflakes also found and the source now fixes a watchdog attachment-processing
+defect: it loads state before de-duplicating newly discovered classroom files,
+preventing the former undefined `state` runtime failure.
+
+The local suite completed with **66 passed** using
 `pytest tests -q -ra --fail-on-skip`, with network calls blocked by default.
 The only warning is PyPDF2's upstream deprecation notice; no test was skipped.
 

@@ -195,6 +195,9 @@ async def _watchdog_impl(context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         nightly_queue = []
 
+    # Attachment de-duplication uses the same transactional state store as the
+    # digest path below.  Load the current snapshot before consulting it.
+    state = load_state()
     queue_updated = False
 
     for title, full_link, file_id in all_files:

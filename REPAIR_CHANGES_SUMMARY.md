@@ -95,6 +95,7 @@ This document captures all agent-owned code changes from the bug audit repair wo
 - **Atomic write** via temp file + `os.replace()`
 - **Failed items retained** with `attempt_count`, `last_error`, `retryable` fields
 - **No destructive clear** of entire queue
+- **Watchdog attachment de-duplication** loads the state snapshot before checking `seen_tasks`, preventing an undefined-state failure
 
 ### 13. Nightly Entrypoint Cleanup (`nightly_processor.py`, `scrapers/nightly_processor.py`)
 - **Removed** duplicate `__main__` blocks, `git pull/commit/push`, `pkill ollama serve`
@@ -164,7 +165,7 @@ This document captures all agent-owned code changes from the bug audit repair wo
 | `tests/test_private_guide_generation.py` | Explicit cloud opt-in and local-fallback mega-guide inference |
 
 The original repair suite reported 35 tests. The final local verification run
-reported **65 passed** with no skips; tests use safe fake credentials and block
+reported **66 passed** with no skips; tests use safe fake credentials and block
 network access by default. PyPDF2 emits one upstream deprecation warning.
 
 ---
@@ -213,7 +214,7 @@ utils.py
 ```bash
 # All tests
 ./venv/bin/pytest tests -q
-# → 65 passed, 1 PyPDF2 upstream deprecation warning
+# → 66 passed, 1 PyPDF2 upstream deprecation warning
 
 # Syntax & compilation
 python3 -W error::SyntaxWarning -m py_compile $(git ls-files '*.py')
