@@ -305,7 +305,7 @@ Summaries:
             max_tokens=1024,
             temperature=0.3,
             timeout=120,
-            allow_cloud=False,
+            classification="PRIVATE",
         )
         if result and result.strip():
             return result.strip()

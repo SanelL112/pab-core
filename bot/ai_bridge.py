@@ -304,16 +304,17 @@ async def send_to_antigravity_and_wait(user_message: str, chat_id: int = 0, cont
 
                 if not fallback_tried:
                     # ── Cross-provider: try Opencode Zen (separate rate limit bucket) ──
-                    logger.warning("OpenRouter models all failed. Trying Opencode Zen (hy3-free)...")
+                    from config import OPENCODE_ZEN_MODEL
+                    logger.warning("OpenRouter models all failed. Trying Opencode Zen (%s)...", OPENCODE_ZEN_MODEL)
                     try:
                         from llm_router import call_opencode
                         zen_out = await asyncio.get_running_loop().run_in_executor(
                             None,
-                            lambda: call_opencode(prompt=full_prompt, model="hy3-free", task=f"chat-{topic}", timeout=RESPONSE_TIMEOUT)
+                            lambda: call_opencode(prompt=full_prompt, model=OPENCODE_ZEN_MODEL, task=f"chat-{topic}", timeout=RESPONSE_TIMEOUT)
                         )
                         if zen_out:
                             out = zen_out
-                            actual_model_used = "hy3-free (Opencode Zen)"
+                            actual_model_used = f"{OPENCODE_ZEN_MODEL} (Opencode Zen)"
                         else:
                             raise Exception("empty")
                     except Exception as ze:
@@ -363,16 +364,17 @@ async def send_to_antigravity_and_wait(user_message: str, chat_id: int = 0, cont
 
                 if not fallback_tried:
                     # ── Cross-provider: Opencode Zen ──
-                    logger.warning("All streaming OpenRouter models failed. Trying Opencode Zen...")
+                    from config import OPENCODE_ZEN_MODEL
+                    logger.warning("All streaming OpenRouter models failed. Trying Opencode Zen (%s)...", OPENCODE_ZEN_MODEL)
                     try:
                         from llm_router import call_opencode
                         zen_out = await asyncio.get_running_loop().run_in_executor(
                             None,
-                            lambda: call_opencode(prompt=full_prompt, model="hy3-free", task=f"chat-{topic}", timeout=RESPONSE_TIMEOUT)
+                            lambda: call_opencode(prompt=full_prompt, model=OPENCODE_ZEN_MODEL, task=f"chat-{topic}", timeout=RESPONSE_TIMEOUT)
                         )
                         if zen_out:
                             out = zen_out
-                            actual_model_used = "hy3-free (Opencode Zen)"
+                            actual_model_used = f"{OPENCODE_ZEN_MODEL} (Opencode Zen)"
                         else:
                             raise Exception("empty")
                     except Exception as ze:
@@ -458,7 +460,10 @@ async def send_to_antigravity_and_wait(user_message: str, chat_id: int = 0, cont
                 )
                 if "no" in sanity_result.stdout.lower() and "yes" not in sanity_result.stdout.lower()[:5]:
                     logger.warning("Sanity check flagged response as broken. Running recovery agent...")
-                    log_event("error", {"message": "AI response failed sanity check, running recovery", "source": "sanity_filter"})
+                    log_event(
+                        "error",
+                        {"error_code": "sanity_check_failed", "source": "sanity_filter"},
+                    )
                     recovery_prompt = (
                         "You are a Recovery AI Agent. The primary AI model hallucinated or produced broken output.\n\n"
                         f"USER REQUEST:\n{user_message}\n\n"

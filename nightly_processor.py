@@ -56,7 +56,12 @@ Notes:
     
     # Try local RPC first (no rate limits)
     from llm_router import call_local_rpc
-    result = call_local_rpc(prompt=scrubbed_prompt, max_tokens=500, timeout=180, allow_cloud=False)
+    result = call_local_rpc(
+        prompt=scrubbed_prompt,
+        max_tokens=500,
+        timeout=180,
+        classification="PRIVATE",
+    )
     if not result or result.startswith("⚠️"):
         print("Topic extraction: local RPC failed or unavailable.")
         result = None
@@ -112,7 +117,12 @@ DO NOT rewrite the entire study guide, ONLY output the new section to be appende
         new_section = ""
         try:
             from llm_router import call_local_rpc
-            new_section = call_local_rpc(prompt=scrubbed_prompt, max_tokens=4000, timeout=300, allow_cloud=False)
+            new_section = call_local_rpc(
+                prompt=scrubbed_prompt,
+                max_tokens=4000,
+                timeout=300,
+                classification="PRIVATE",
+            )
         except Exception as e:
             print(f"Local RPC error: {e}")
 

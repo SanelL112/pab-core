@@ -23,7 +23,7 @@ from typing import Optional
 from config import (
     OPENROUTER_API_KEY, OR_DEFAULT_MODEL, OR_FALLBACK_MODEL, OR_THIRD_MODEL,
     COST_LOG_FILE, AGENTAPI_BIN, OLLAMA_URL, OLLAMA_ORANGEPI_URL,
-    OPENCODE_ZEN_API_KEY, OPENCODE_ZEN_URL
+    OPENCODE_ZEN_API_KEY, OPENCODE_ZEN_URL, OPENCODE_ZEN_MODEL,
 )
 
 logger = logging.getLogger(__name__)
@@ -278,14 +278,14 @@ def call_openrouter(
 
     # ── Opencode Zen cross-provider fallback ──
     # OpenRouter free models share one rate-limit bucket. When 429'd,
-    # Opencode Zen models (hy3-free, mimo-v2.5-free) are a separate provider
+    # Opencode Zen models are a separate provider
     # with their own rate limits.
     try:
-        from config import OPENCODE_ZEN_API_KEY
+        from config import OPENCODE_ZEN_API_KEY, OPENCODE_ZEN_MODEL
         if OPENCODE_ZEN_API_KEY:
             logger.info("OpenRouter chain exhausted — falling back to Opencode Zen")
             return call_opencode(
-                model="hy3-free",
+                model=OPENCODE_ZEN_MODEL,
                 prompt=scrubbed_prompt,
                 task=task,
                 max_tokens=max_tokens,
@@ -685,12 +685,25 @@ def call_local_rpc(
         max_tokens: Max output tokens
         temperature: 0.0 = deterministic
         timeout: Max seconds to wait
-        classification: "PRIVATE" or "PUBLIC". PRIVATE is default and disables cloud fallback.
+        classification: "PRIVATE" or "PUBLIC". Any other value is treated as
+            PRIVATE, so an invalid caller cannot enable a cloud fallback.
 
 
     Returns:
         Generated text, or empty string/warning if all local paths fail.
     """
+    if not isinstance(classification, str):
+        logger.warning("call_local_rpc: invalid non-string classification; treating as PRIVATE")
+        normalized_classification = "PRIVATE"
+    else:
+        normalized_classification = classification.upper()
+        if normalized_classification not in {"PRIVATE", "PUBLIC"}:
+            logger.warning(
+                "call_local_rpc: invalid classification %r; treating as PRIVATE",
+                classification,
+            )
+            normalized_classification = "PRIVATE"
+
     surface_timeout = min(timeout, 45)  # Don't hang on Surface — fall through fast
 
     logger.info("call_local_rpc: trying Surface orchestrator API (10.0.0.47:8080)")
@@ -752,11 +765,7 @@ def call_local_rpc(
     except Exception as e:
         logger.warning(f"call_local_rpc: Dell local failed: {e}")
 
-    # Backward compatibility for old callers that might still pass kwargs
-    # (Although we should update them all).
-    allow_cloud = (classification.upper() == "PUBLIC")
-
-    if allow_cloud:
+    if normalized_classification == "PUBLIC":
         logger.warning("call_local_rpc: all local paths exhausted, falling back to cloud")
         from config import RPC_FALLBACK_CLOUD_MODEL
         return call_openrouter(
@@ -767,7 +776,10 @@ def call_local_rpc(
             timeout=timeout,
         )
 
-    logger.warning(f"call_local_rpc: all local paths exhausted and classification={classification}")
+    logger.warning(
+        "call_local_rpc: all local paths exhausted and classification=%s",
+        normalized_classification,
+    )
     return "⚠️ Local inference unavailable and cloud fallback disabled."
 
 
@@ -1138,7 +1150,7 @@ def call_llamacpp_rpc_with_fallback(
 # ── Opencode Zen (separate provider from OpenRouter) ────────────────────────
 def call_opencode(
     prompt: str,
-    model: str = "mimo-v2.5-free",
+    model: str = OPENCODE_ZEN_MODEL,
     system_prompt: str = "",
     max_tokens: int = 4000,
     task: str = "general",
@@ -1151,12 +1163,11 @@ def call_opencode(
 
     Models available (free tier):
       - "mimo-v2.5-free"  (MiMo 2.5)
-      - "hy3-free"        (Hy3)
       - "nemotron-3-ultra-free"
 
     Args:
         prompt: The user message
-        model: Model ID (e.g. "mimo-v2.5-free", "hy3-free")
+        model: Model ID (defaults to OPENCODE_ZEN_MODEL)
         system_prompt: Optional system message
         max_tokens: Max output tokens
         task: Label for cost tracking

@@ -51,8 +51,9 @@ async def test_ai_bridge_kwargs():
         assert "prompt" in kwargs
         assert "model" in kwargs
 
-def test_call_local_rpc_no_cloud():
-    # Test that allow_cloud=False never invokes call_openrouter
+@pytest.mark.parametrize("classification", ["PRIVATE", "unexpected", None])
+def test_call_local_rpc_private_never_uses_cloud(classification):
+    # PRIVATE classification must never invoke call_openrouter.
     with patch("llm_router.call_llamacpp_rpc", return_value=""), \
          patch("llm_router.httpx.Client") as mock_client, \
          patch("llm_router.call_openrouter") as mock_openrouter:
@@ -62,7 +63,7 @@ def test_call_local_rpc_no_cloud():
          mock_response.status_code = 500
          mock_client_instance.post.return_value = mock_response
 
-         res = call_local_rpc("test", allow_cloud=False)
+         res = call_local_rpc("test", classification=classification)
          assert "local inference unavailable" in res.lower() or "local inference" in res.lower() or "local" in res.lower()
          mock_openrouter.assert_not_called()
 
@@ -88,7 +89,7 @@ def test_call_local_rpc_dell_fallback():
 
          mock_client_instance.post.side_effect = side_effect_post
 
-         res = call_local_rpc("test", allow_cloud=False)
+         res = call_local_rpc("test", classification="PRIVATE")
          assert res == "dell_response"
 
 @pytest.mark.asyncio

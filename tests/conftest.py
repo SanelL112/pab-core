@@ -16,6 +16,27 @@ for _name, _value in _TEST_ENV.items():
 import pytest
 import socket
 
+_SKIPPED_REPORTS = []
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--fail-on-skip",
+        action="store_true",
+        default=False,
+        help="treat skipped tests as a failing test run",
+    )
+
+
+def pytest_runtest_logreport(report):
+    if report.skipped:
+        _SKIPPED_REPORTS.append(report)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if session.config.getoption("--fail-on-skip") and exitstatus == 0 and _SKIPPED_REPORTS:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
 @pytest.fixture(autouse=True)
 def disable_network_calls(monkeypatch):
     """
@@ -25,8 +46,18 @@ def disable_network_calls(monkeypatch):
     def block_network(*args, **kwargs):
         raise RuntimeError("Network calls are disabled in tests!")
     
-    # Block socket level
-    monkeypatch.setattr(socket, "socket", block_network)
+    # Preserve Unix-domain sockets: asyncio uses socketpair() for its local
+    # event-loop wakeup pipe.  Internet socket families remain blocked.
+    original_socket = socket.socket
+
+    def guarded_socket(*args, **kwargs):
+        family = kwargs.get("family", args[0] if args else socket.AF_INET)
+        if family in (socket.AF_INET, socket.AF_INET6):
+            return block_network(*args, **kwargs)
+        return original_socket(*args, **kwargs)
+
+    monkeypatch.setattr(socket, "socket", guarded_socket)
+    monkeypatch.setattr(socket, "create_connection", block_network)
     
     # Block requests/httpx if they try to bypass or are already imported
     try:
@@ -34,6 +65,7 @@ def disable_network_calls(monkeypatch):
         monkeypatch.setattr(requests, "get", block_network)
         monkeypatch.setattr(requests, "post", block_network)
         monkeypatch.setattr(requests.Session, "request", block_network)
+        monkeypatch.setattr(requests.Session, "send", block_network)
     except ImportError:
         pass
         
@@ -43,6 +75,7 @@ def disable_network_calls(monkeypatch):
         monkeypatch.setattr(httpx, "post", block_network)
         monkeypatch.setattr(httpx.Client, "request", block_network)
         monkeypatch.setattr(httpx.AsyncClient, "request", block_network)
+        monkeypatch.setattr(httpx.Client, "send", block_network)
+        monkeypatch.setattr(httpx.AsyncClient, "send", block_network)
     except ImportError:
         pass
-

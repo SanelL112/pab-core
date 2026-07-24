@@ -34,3 +34,34 @@ def test_activity_log_scanner_supports_all_timestamp_formats(tmp_path, monkeypat
         '[critical] {"kind": "date-time"}',
     ]
     assert matches[1]["timestamp"] == f"{now.date().isoformat()} {now.strftime('%H:%M:%S')}"
+
+
+def test_activity_log_scanner_recognizes_structured_nightly_failures(tmp_path, monkeypatch):
+    now = datetime.now(timezone.utc)
+    entry = {
+        "ts": now.timestamp(),
+        "cat": "nightly",
+        "details": {"phase": "indexing", "status": "failed"},
+    }
+    (tmp_path / "activity_log.jsonl").write_text(json.dumps(entry) + "\n")
+    monkeypatch.setattr(log_scanner, "BASE_DIR", tmp_path)
+
+    matches = log_scanner.scan_activity_log(hours=1)
+
+    assert len(matches) == 1
+    assert matches[0]["category"] == "NIGHTLY_FAIL"
+
+
+def test_log_file_scanner_uses_configured_roots_and_all_matching_files(tmp_path, monkeypatch):
+    import config
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    (log_dir / "first.log").write_text("connection refused\n")
+    (log_dir / "second.log").write_text("nightly failed\n")
+    monkeypatch.setattr(config, "LOG_SCAN_DIRS", [log_dir])
+
+    matches = log_scanner.scan_log_files(hours=1)
+
+    assert {match["source"] for match in matches} == {"file:first.log", "file:second.log"}
+    assert {match["category"] for match in matches} == {"NETWORK_ERR", "NIGHTLY_FAIL"}

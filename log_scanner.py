@@ -195,7 +195,8 @@ def scan_activity_log(hours: int = 24) -> list[dict]:
             continue
 
         cat = entry.get("cat", "")
-        msg = json.dumps(entry.get("details", {}), default=str)
+        details = entry.get("details", {})
+        msg = json.dumps(details, default=str)
 
         if cat in ("error", "critical", "nightly_fail"):
             display_ts = ts_str or f"{date_str} {time_str}".strip()
@@ -206,6 +207,14 @@ def scan_activity_log(hours: int = 24) -> list[dict]:
                 "timestamp": display_ts,
                 "category": cat.upper(),
                 "message": f"[{cat}] {msg[:300]}",
+            })
+        elif cat == "nightly" and details.get("status") in {"failed", "error"}:
+            display_ts = ts_str or f"{date_str} {time_str}".strip() or entry_ts.isoformat()
+            matches.append({
+                "source": "activity_log",
+                "timestamp": display_ts,
+                "category": "NIGHTLY_FAIL",
+                "message": f"[nightly] {msg[:300]}",
             })
         else:
             for pattern, category in ERROR_PATTERNS:
@@ -249,8 +258,8 @@ def scan_log_files(hours: int = 24) -> list[dict]:
     cutoff = datetime.now() - timedelta(hours=hours)
     
     try:
-        from config import SAFE_BASH_ROOTS
-        search_dirs = [Path(d) for d in SAFE_BASH_ROOTS]
+        from config import LOG_SCAN_DIRS
+        search_dirs = [Path(directory) for directory in LOG_SCAN_DIRS]
     except ImportError:
         search_dirs = [BASE_DIR]
 
@@ -265,16 +274,16 @@ def scan_log_files(hours: int = 24) -> list[dict]:
                     text = fpath.read_text(errors="replace")
                 except Exception:
                     continue
-            for line in text.splitlines():
-                for pattern, category in ERROR_PATTERNS:
-                    if re.search(pattern, line, re.IGNORECASE):
-                        matches.append({
-                            "source": f"file:{fpath.name}",
-                            "timestamp": datetime.fromtimestamp(fpath.stat().st_mtime).isoformat(),
-                            "category": category,
-                            "message": line.strip()[:300],
-                        })
-                        break
+                for line in text.splitlines():
+                    for pattern, category in ERROR_PATTERNS:
+                        if re.search(pattern, line, re.IGNORECASE):
+                            matches.append({
+                                "source": f"file:{fpath.name}",
+                                "timestamp": datetime.fromtimestamp(fpath.stat().st_mtime).isoformat(),
+                                "category": category,
+                                "message": line.strip()[:300],
+                            })
+                            break
     return matches
 
 

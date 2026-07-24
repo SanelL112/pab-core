@@ -5,6 +5,7 @@ import os
 import json
 import time
 import random
+import re
 import shutil
 import hashlib
 import logging
@@ -190,6 +191,92 @@ BLOCKED_PATTERNS = [
 _audit_log_path = BASE_DIR / "command_audit.log"
 _rate_limit = {}  # chat_id -> [timestamps]
 
+_DENIED_SYSTEM_ROOTS = (Path("/proc"), Path("/sys"), Path("/dev"))
+_SENSITIVE_PATH_PARTS = {".env", ".git", "credentials.json", "token.json"}
+_SENSITIVE_PATH_MARKERS = ("secret", "password", "credential", "token")
+_PRIVATE_RUNTIME_FILES = {
+    "activity_log.jsonl",
+    "bot_context.txt",
+    "command_audit.log",
+    "correlation_graph.json",
+    "curated_brain.md",
+    "latest_digest.txt",
+    "llm_cost_log.json",
+    "mega_index.md",
+    "nightly_queue.json",
+    "state.json",
+}
+
+
+def _contains_symlink(path: Path) -> bool:
+    """Return whether any lexically supplied component is a symlink.
+
+    ``Path.resolve`` alone prevents an escape through a symlink, but it does
+    not let the caller enforce the stricter policy that *no* symlink is an
+    acceptable command argument.
+    """
+    expanded = path.expanduser()
+    current = Path(expanded.anchor) if expanded.is_absolute() else Path.cwd()
+    parts = expanded.parts[1:] if expanded.is_absolute() else expanded.parts
+    for part in parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            current = current.parent
+            continue
+        current /= part
+        if os.path.islink(current):
+            return True
+    return False
+
+
+def _validate_command_path(path_str: str, safe_roots: list[Path]) -> tuple[bool, str]:
+    """Apply containment and sensitive-file rules to a command path argument."""
+    supplied_path = Path(path_str).expanduser()
+    try:
+        resolved_path = supplied_path.resolve(strict=False)
+    except OSError as exc:
+        return False, f"Path resolution error: {exc}"
+
+    if any(
+        resolved_path == denied_root or denied_root in resolved_path.parents
+        for denied_root in _DENIED_SYSTEM_ROOTS
+    ):
+        return False, f"Access to system device/proc denied: {resolved_path}"
+
+    if _contains_symlink(supplied_path):
+        return False, f"Symlink paths are not permitted: {path_str}"
+
+    parts_lower = {part.lower() for part in resolved_path.parts}
+    filename_lower = resolved_path.name.lower()
+    if (
+        parts_lower & _SENSITIVE_PATH_PARTS
+        or any(marker in filename_lower for marker in _SENSITIVE_PATH_MARKERS)
+        or filename_lower in _PRIVATE_RUNTIME_FILES
+        or filename_lower.startswith("chat_history_")
+        or resolved_path.suffix.lower() in {".pem", ".key", ".p12", ".pfx"}
+    ):
+        return False, f"Access to sensitive file denied: {resolved_path.name}"
+
+    if not any(resolved_path == root or root in resolved_path.parents for root in safe_roots):
+        return False, f"Path outside safe roots: {resolved_path}"
+    return True, "OK"
+
+
+def _matches_blocked_pattern(command: str, pattern: str) -> bool:
+    """Match a blocked command without treating a safe pathname as a command.
+
+    The allowlist is the primary control.  This is a defense-in-depth check,
+    so it must not reject a safe path merely because it contains text such as
+    ``"at "`` or ``"mount"``.
+    """
+    if ".*" in pattern:
+        return re.search(pattern, command) is not None
+    return re.search(
+        rf"(?<![A-Za-z0-9_./-]){re.escape(pattern)}(?![A-Za-z0-9_./-])",
+        command,
+    ) is not None
+
 
 def _is_command_allowed(cmd: str) -> tuple[bool, str]:
     """
@@ -203,7 +290,7 @@ def _is_command_allowed(cmd: str) -> tuple[bool, str]:
     # Check blocklist first (safety net)
     cmd_lower = cmd_stripped.lower()
     for blocked in BLOCKED_PATTERNS:
-        if blocked in cmd_lower:
+        if _matches_blocked_pattern(cmd_lower, blocked):
             return False, f"Blocked pattern: {blocked}"
 
     # Parse command to get base command and args
@@ -235,7 +322,7 @@ def _is_command_allowed(cmd: str) -> tuple[bool, str]:
 
     # Path validation for <path> arguments
     import config
-    safe_roots = [Path(r).resolve() for r in config.SAFE_BASH_ROOTS]
+    safe_roots = [Path(root).resolve() for root in config.SAFE_BASH_ROOTS]
     
     # We need to find the template that matched to know which args are <path>
     for template_cmd, template_args in ALLOWED_COMMAND_TEMPLATES:
@@ -247,28 +334,9 @@ def _is_command_allowed(cmd: str) -> tuple[bool, str]:
             for tmpl_arg in template_args:
                 if tmpl_arg == "<path>":
                     path_str = args[arg_idx]
-                    try:
-                        resolved_path = Path(path_str).resolve()
-                        
-                        # Prevent reading .env, credentials, tokens
-                        filename = resolved_path.name
-                        if filename in ('.env', 'credentials.json', 'token.json'):
-                            return False, f"Access to sensitive file denied: {filename}"
-                        
-                        # Prevent traversal /sys, /proc, /dev
-                        if str(resolved_path).startswith(('/sys', '/proc', '/dev')):
-                            return False, f"Access to system device/proc denied: {resolved_path}"
-                            
-                        # Must be inside safe roots
-                        is_safe = any(
-                            resolved_path == root or root in resolved_path.parents
-                            for root in safe_roots
-                        )
-                        if not is_safe:
-                            return False, f"Path outside safe roots: {resolved_path}"
-                            
-                    except Exception as e:
-                        return False, f"Path resolution error: {e}"
+                    allowed, reason = _validate_command_path(path_str, safe_roots)
+                    if not allowed:
+                        return False, reason
                     arg_idx += 1
                 elif tmpl_arg.startswith('<') and tmpl_arg.endswith('>'):
                     arg_idx += 1
@@ -510,7 +578,7 @@ def create_backup() -> Optional[str]:
     for fpath in BASE_DIR.glob("chat_history_*.txt"):
         files_to_backup.append(str(fpath))
 
-    # Also backup source_cache summaries
+    # Also back up canonical cache summaries.
     for fpath in CACHE_DIR.glob("*.txt"):
         files_to_backup.append(str(fpath))
 

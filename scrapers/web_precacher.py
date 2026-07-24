@@ -1,132 +1,139 @@
-import os
-import json
-import logging
+"""Pre-cache public study material without sending private context to the cloud."""
+
 import asyncio
+import logging
+import os
+import re
+from pathlib import Path
+from urllib.parse import quote_plus
+
 import httpx
 from bs4 import BeautifulSoup
-import re
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# Import config for fallback models
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import OR_FALLBACK_MODEL
 
-async def pre_cache_web():
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    brain_file = os.path.join(base_dir, "curated_brain.md")
-    
-    if not os.path.exists(brain_file):
+def _normalize_result_url(url: str) -> str:
+    """Turn DuckDuckGo relative redirect URLs into absolute URLs."""
+    if url.startswith("//"):
+        return "https:" + url
+    if url.startswith("/"):
+        return "https://duckduckgo.com" + url
+    return url
+
+
+async def pre_cache_web() -> None:
+    """Find a study topic locally, then cache web research for that topic.
+
+    The curated brain and the derived topic are private, so both local-model
+    calls explicitly fail closed.  Public web text is only stored after it has
+    been summarized locally.
+    """
+    base_dir = Path(__file__).resolve().parents[1]
+    brain_file = base_dir / "curated_brain.md"
+    if not brain_file.exists():
         logger.info("No curated brain found. Skipping web pre-caching.")
         return
-       
-        def _read_brain():
-            with open(brain_file, "r") as f:
-                return f.read()
-        brain = await asyncio.to_thread(_read_brain)
-       
-        # 1. Ask local model what topics we should research
+
+    try:
+        brain = await asyncio.to_thread(brain_file.read_text, encoding="utf-8")
         logger.info("Asking local model to identify research topics...")
         prompt = (
-            "Based on the following curated brain of a student, identify ONE specific academic topic they are currently learning that would benefit from extra web research (e.g., 'Quadratic Formula', 'Cellular Respiration').\n"
-            "Reply with ONLY the topic name. If there are no academic topics, reply with 'NONE'.\n\n"
+            "Based on the following curated brain of a student, identify ONE specific "
+            "academic topic they are currently learning that would benefit from extra "
+            "web research (e.g., 'Quadratic Formula', 'Cellular Respiration').\n"
+            "Reply with ONLY the topic name. If there are no academic topics, reply "
+            "with 'NONE'.\n\n"
             f"BRAIN:\n{brain}"
         )
-        
+
         from llm_router import call_local_rpc
-        
-        # Try local RPC first (PRIVATE data)
+
         topic = await asyncio.to_thread(
-            call_local_rpc, 
-            prompt=prompt, 
-            max_tokens=50, 
-            timeout=120, 
-            classification="PRIVATE"
+            call_local_rpc,
+            prompt=prompt,
+            max_tokens=50,
+            timeout=120,
+            classification="PRIVATE",
         )
-        
-        if not topic or any(p in topic.lower()[:50] for p in ["i cannot", "i'm sorry", "i don't know", "as an ai", "none", "⚠️"]):
+        if not topic or any(
+            phrase in topic.lower()[:50]
+            for phrase in ("i cannot", "i'm sorry", "i don't know", "as an ai", "none", "⚠️")
+        ):
             logger.info("No valid topics found or local inference failed.")
             return
 
-        if not topic: topic = ""
-        topic = re.sub(r'[^a-zA-Z0-9\s]', '', topic)
-       
-        if not topic or "NONE" in topic.upper() or len(topic) > 50:
+        topic = re.sub(r"[^a-zA-Z0-9\s]", "", topic).strip()
+        if not topic or len(topic) > 50:
             logger.info("No valid topics found to research.")
             return
-           
-        logger.info(f"Identified topic for pre-caching: {topic}")
-       
-        # 2. Search the web (using a simple DuckDuckGo HTML scrape)
-        from urllib.parse import quote_plus
-        search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(topic + ' explanation examples')}"
-       
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)) as client:
-            res = await client.get(search_url, headers={"User-Agent": "Mozilla/5.0"})
 
-        soup = BeautifulSoup(res.text, "html.parser")
-        results = soup.find_all('a', class_='result__snippet', limit=3)
-        urls_to_scrape = [a['href'] for a in results if 'href' in a.attrs]
+        logger.info("Identified topic for pre-caching: %s", topic)
+        search_url = (
+            "https://html.duckduckgo.com/html/?q="
+            f"{quote_plus(topic + ' explanation examples')}"
+        )
+        timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(search_url, headers={"User-Agent": "Mozilla/5.0"})
+            response.raise_for_status()
 
-        # DuckDuckGo returns URLs in several forms that httpx 0.28+ rejects:
-        #   - protocol-relative: //duckduckgo.com/l/?uddg=... -> prepend "https:"
-        #   - path-relative:     /l/?uddg=...                   -> prepend "https://duckduckgo.com"
-        # Normalize both so the scraping client (with follow_redirects=True)
-        # follows the uddg redirect chain to the actual target.
-        def _normalize(u):
-            if u.startswith("//"):
-                return "https:" + u
-            if u.startswith("/"):
-                return "https://duckduckgo.com" + u
-            return u
-        urls_to_scrape = [_normalize(u) for u in urls_to_scrape]
-
+        soup = BeautifulSoup(response.text, "html.parser")
+        urls_to_scrape = [
+            _normalize_result_url(result["href"])
+            for result in soup.find_all("a", class_="result__snippet", limit=3)
+            if result.get("href")
+        ]
         if not urls_to_scrape:
             logger.warning("No search results found.")
             return
 
-        # 3. Scrape the sites and summarize
-        combined_research = ""
-        for url in urls_to_scrape:
-            try:
-                async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)) as client:
-                    page_res = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
-                page_soup = BeautifulSoup(page_res.text, "html.parser")
-                text = " ".join([p.text for p in page_soup.find_all('p')])
-               
-                # Summarize — PUBLIC classification since it's web text
-                sum_prompt = f"Summarize the following educational text about {topic}. Extract key formulas, facts, and examples.\n\nTEXT:\n{text[:10000]}"
-                summary = await asyncio.to_thread(
-                    call_local_rpc, 
-                    prompt=sum_prompt, 
-                    max_tokens=500, 
-                    timeout=120, 
-                    classification="PUBLIC"
-                )
-                if not summary or any(p in summary.lower()[:50] for p in ["i cannot", "i'm sorry", "i don't know", "as an ai", "⚠️"]):
-                    summary = "Summary unavailable."
-               
-                combined_research += f"\n### Source: {url}\n{summary}\n"
-            except Exception as e:
-                logger.error(f"Failed to scrape {url}: {e}")
-               
-        # 4. Save to study database
-        db_dir = os.path.join(base_dir, "study_database")
-        
-        def _save_research():
-            os.makedirs(db_dir, exist_ok=True)
-            filename = f"{topic.replace(' ', '_').lower()}.md"
-            with open(os.path.join(db_dir, filename), "w") as f:
-                f.write(f"# Pre-Cached Research: {topic}\n{combined_research}")
-                
-        await asyncio.to_thread(_save_research)
+        research_sections: list[str] = []
+        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
+            for url in urls_to_scrape:
+                try:
+                    page_response = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                    page_response.raise_for_status()
+                    page_soup = BeautifulSoup(page_response.text, "html.parser")
+                    page_text = " ".join(p.get_text(" ", strip=True) for p in page_soup.find_all("p"))
+                    if not page_text:
+                        continue
 
-           
-        logger.info(f"Successfully cached research for {topic}")
-       
-    pass
+                    summary_prompt = (
+                        "Summarize the following educational text. Extract key formulas, "
+                        f"facts, and examples.\n\nTEXT:\n{page_text[:10000]}"
+                    )
+                    summary = await asyncio.to_thread(
+                        call_local_rpc,
+                        prompt=summary_prompt,
+                        max_tokens=500,
+                        timeout=120,
+                        classification="PRIVATE",
+                    )
+                    if not summary or any(
+                        phrase in summary.lower()[:50]
+                        for phrase in ("i cannot", "i'm sorry", "i don't know", "as an ai", "⚠️")
+                    ):
+                        summary = "Summary unavailable."
+                    research_sections.append(f"\n### Source: {url}\n{summary}\n")
+                except (httpx.HTTPError, ValueError) as exc:
+                    logger.warning("Failed to scrape %s: %s", url, exc)
+
+        if not research_sections:
+            logger.warning("No web research could be cached for %s", topic)
+            return
+
+        db_dir = base_dir / "study_database"
+        filename = f"{topic.replace(' ', '_').lower()}.md"
+        output_file = db_dir / filename
+        contents = f"# Pre-Cached Research: {topic}\n{''.join(research_sections)}"
+        await asyncio.to_thread(db_dir.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(output_file.write_text, contents, encoding="utf-8")
+        logger.info("Successfully cached research for %s", topic)
+    except (OSError, httpx.HTTPError, ValueError) as exc:
+        logger.error("Web pre-cacher failed: %s", exc)
+
 
 if __name__ == "__main__":
     asyncio.run(pre_cache_web())

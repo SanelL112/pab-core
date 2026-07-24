@@ -20,6 +20,8 @@ import os
 import json
 import time
 import logging
+import queue
+import re
 import threading
 from datetime import datetime, timezone
 
@@ -36,6 +38,9 @@ _write_lock = threading.Lock()
 # Telegram notification config
 _TELEGRAM_TOKEN = None
 _TELEGRAM_CHAT_ID = None
+_TELEGRAM_QUEUE: queue.Queue[str] = queue.Queue(maxsize=100)
+_telegram_worker_started = False
+_telegram_worker_lock = threading.Lock()
 
 
 def _init_telegram():
@@ -58,19 +63,21 @@ _NOTIFY_CATEGORIES = {
     "verification", "digest", "alert",
 }
 
-# Whitelist of detail keys allowed in the activity log.
-# Any key not in this list will have its value [REDACTED].
+# This schema contains metadata only.  It deliberately excludes raw messages,
+# previews, error strings, document names, and other free text.
 _SAFE_DETAIL_KEYS = {
     "model", "task", "duration_s", "cost_usd", "tokens_in", "tokens_out", "local",
-    "source", "count", "note",
+    "source", "count",
     "subsystem", "action",
-    "message",
     "phase", "status",
     "sources",
-    "preview", "routed_to",
+    "routed_to",
     "has_question", "ocr_chars",
-    "chunks"
+    "chunks", "error_type", "error_code",
 }
+_SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9_./:-]{1,80}")
+_REDACTED_FIELD = "[REDACTED_UNSAFE_FIELD]"
+_REDACTED_VALUE = "[REDACTED_UNSAFE_VALUE]"
 
 # Short label map for Telegram
 _CATEGORY_ICONS = {
@@ -109,11 +116,8 @@ def _rotate_if_needed():
         pass
 
 
-def _send_telegram_notification(text: str):
-    """Send a muted (silent) Telegram message.
-
-    SECURITY: PII is scrubbed before sending to Telegram cloud API.
-    """
+def _deliver_telegram_notification(text: str) -> None:
+    """Deliver one already-redacted notification in the queue worker."""
     _init_telegram()
     if not _TELEGRAM_TOKEN or not _TELEGRAM_CHAT_ID:
         return
@@ -137,6 +141,55 @@ def _send_telegram_notification(text: str):
         pass  # notifications are best-effort
 
 
+def _telegram_notification_worker() -> None:
+    """Perform best-effort Telegram I/O without blocking bot handlers."""
+    while True:
+        text = _TELEGRAM_QUEUE.get()
+        try:
+            _deliver_telegram_notification(text)
+        finally:
+            _TELEGRAM_QUEUE.task_done()
+
+
+def _enqueue_telegram_notification(text: str) -> None:
+    """Queue a notification without allowing a slow Telegram API to block work."""
+    global _telegram_worker_started
+    with _telegram_worker_lock:
+        if not _telegram_worker_started:
+            worker = threading.Thread(
+                target=_telegram_notification_worker,
+                name="activity-log-telegram",
+                daemon=True,
+            )
+            worker.start()
+            _telegram_worker_started = True
+    try:
+        _TELEGRAM_QUEUE.put_nowait(text)
+    except queue.Full:
+        logger.warning("Activity-log Telegram queue is full; dropping notification")
+
+
+def _sanitize_detail(key: str, value) -> str | int | float | bool:
+    """Keep only bounded metadata values that cannot contain natural-language PII."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str) and _SAFE_IDENTIFIER.fullmatch(value):
+        return value
+    return _REDACTED_VALUE
+
+
+def _sanitize_details(details: dict | None) -> dict:
+    """Normalize newly supplied details and legacy on-disk events alike."""
+    if not isinstance(details, dict):
+        return {}
+    return {
+        key: _sanitize_detail(key, value) if key in _SAFE_DETAIL_KEYS else _REDACTED_FIELD
+        for key, value in details.items()
+    }
+
+
 def log_event(category: str, details: dict = None, notify: bool = None):
     """Log an activity event.
 
@@ -145,17 +198,8 @@ def log_event(category: str, details: dict = None, notify: bool = None):
         details: Optional dict with event-specific data
         notify: Force notify (True) or suppress (False). Default: auto based on category.
     """
-    # Enforce whitelist and redact PII for all logged details
-    safe_details = {}
-    if details:
-        from utils import scrub_pii
-        for k, v in details.items():
-            if k in _SAFE_DETAIL_KEYS:
-                # Scrub PII but keep the data for allowed fields
-                safe_details[k] = scrub_pii(str(v), aggressive=False)
-            else:
-                # Field not in whitelist - redact it entirely to prevent arbitrary data leaks
-                safe_details[k] = "[REDACTED_UNSAFE_FIELD]"
+    # Enforce a metadata-only schema for every persisted or cloud-bound event.
+    safe_details = _sanitize_details(details)
 
     entry = {
         "ts": time.time(),
@@ -170,6 +214,7 @@ def log_event(category: str, details: dict = None, notify: bool = None):
         try:
             with open(LOG_PATH, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            os.chmod(LOG_PATH, 0o600)
         except Exception:
             pass
 
@@ -179,7 +224,7 @@ def log_event(category: str, details: dict = None, notify: bool = None):
         icon = _CATEGORY_ICONS.get(category, "\U0001f4e5")
         # Build short summary
         summary = _format_event_short(icon, entry)
-        _send_telegram_notification(summary)
+        _enqueue_telegram_notification(summary)
 
 
 def _format_event_short(icon: str, entry: dict) -> str:
@@ -188,9 +233,10 @@ def _format_event_short(icon: str, entry: dict) -> str:
     cat = entry.get("cat", "?")
     t = entry.get("time", "?")
 
-    # Extra aggressive scrubbing for Telegram (cloud API)
-    from utils import scrub_pii
-    safe_details = {k: scrub_pii(str(v), aggressive=True) if v != "[REDACTED_UNSAFE_FIELD]" else v for k, v in d.items()}
+    safe_details = {
+        key: value if value not in {_REDACTED_FIELD, _REDACTED_VALUE} else "[REDACTED]"
+        for key, value in d.items()
+    }
 
     # Category-specific formatting (use safe_details only)
     if cat == "llm_call":
@@ -206,8 +252,7 @@ def _format_event_short(icon: str, entry: dict) -> str:
     if cat == "scrape":
         source = safe_details.get("source", "?")
         count = safe_details.get("count", "?")
-        note = safe_details.get("note", "")
-        return f"{icon} `{t}` Scraped {source}: {count} {note}".strip()
+        return f"{icon} `{t}` Scraped {source}: {count}"
 
     if cat == "system":
         subsystem = safe_details.get("subsystem", "?")
@@ -215,7 +260,7 @@ def _format_event_short(icon: str, entry: dict) -> str:
         return f"{icon} `{t}` {subsystem}: {action}"
 
     if cat == "error":
-        msg = safe_details.get("message", "unknown error")[:80]
+        msg = safe_details.get("error_type", safe_details.get("error_code", "unknown_error"))
         source = safe_details.get("source", "")
         return f"{icon} `{t}` {source}: {msg}" if source else f"{icon} `{t}` {msg}"
 
@@ -252,7 +297,8 @@ def log_llm_call(model: str, task: str, duration_s: float, cost_usd: float = 0,
 
 def log_scrape(source: str, count: int, note: str = ""):
     """Convenience: log a scrape event."""
-    log_event("scrape", {"source": source, "count": count, "note": note})
+    # ``note`` can contain scraped or user-provided text; intentionally omit it.
+    log_event("scrape", {"source": source, "count": count})
 
 
 def log_system(subsystem: str, action: str, details: dict = None):
@@ -290,6 +336,7 @@ def get_recent_events(n: int = 30, category: str = None) -> list[dict]:
             entry = json.loads(line)
             if category and entry.get("cat") != category:
                 continue
+            entry["details"] = _sanitize_details(entry.get("details"))
             events.append(entry)
             if len(events) >= n:
                 break
@@ -309,7 +356,7 @@ def format_events(events: list[dict]) -> str:
         cat = e.get("cat", "?")
         icon = _CATEGORY_ICONS.get(cat, "\U0001f4e5")
         t = e.get("time", "?")
-        d = e.get("details", {})
+        d = _sanitize_details(e.get("details"))
 
         if cat == "llm_call":
             model = d.get("model", "?")
@@ -320,14 +367,13 @@ def format_events(events: list[dict]) -> str:
         elif cat == "scrape":
             source = d.get("source", "?")
             count = d.get("count", "?")
-            note = d.get("note", "")
-            lines.append(f"`{t}` {icon} {source}: {count} {note}".strip())
+            lines.append(f"`{t}` {icon} {source}: {count}")
         elif cat == "system":
             subsystem = d.get("subsystem", "?")
             action = d.get("action", "?")
             lines.append(f"`{t}` {icon} {subsystem}: {action}")
         elif cat == "error":
-            msg = d.get("message", "?")[:60]
+            msg = d.get("error_type", d.get("error_code", "unknown_error"))
             source = d.get("source", "")
             lines.append(f"`{t}` {icon} {source}: {msg}" if source else f"`{t}` {icon} {msg}")
         elif cat == "nightly":
@@ -335,9 +381,8 @@ def format_events(events: list[dict]) -> str:
             status = d.get("status", "?")
             lines.append(f"`{t}` {icon} {phase}: {status}")
         elif cat == "message":
-            msg = d.get("preview", "?")[:50]
             routed = d.get("routed_to", "?")
-            lines.append(f"`{t}` {icon} \"{msg}\" -> {routed}")
+            lines.append(f"`{t}` {icon} message -> {routed}")
         elif cat == "photo":
             has_q = d.get("has_question", False)
             chars = d.get("ocr_chars", 0)

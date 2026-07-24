@@ -35,22 +35,42 @@ def test_python_bash_tag_execution_behavior():
         mock_run.assert_not_called()
         assert "not in allowlist" in out.lower() or "blocked" in out.lower() or "error" in out.lower() or "not allowed" in out.lower()
 
-def test_path_containment_in_bash():
-    # Inside safe roots
+def test_path_containment_in_bash(tmp_path, monkeypatch):
     import config
-    safe_dir = list(config.SAFE_BASH_ROOTS)[0]
-    allowed, reason = _is_command_allowed(f"cat {safe_dir}/requirements.txt")
+    monkeypatch.setattr(config, "SAFE_BASH_ROOTS", [str(tmp_path)])
+
+    allowed_file = tmp_path / "allowed.txt"
+    allowed_file.write_text("safe")
+    allowed, reason = _is_command_allowed(f"cat {allowed_file}")
     assert allowed is True, f"Should allow cat inside safe root: {reason}"
-    
+
     # Outside safe roots
     allowed, reason = _is_command_allowed("cat /etc/passwd")
     assert allowed is False
     assert "outside safe roots" in reason.lower()
-    
+
     # Traverse outside
-    allowed, reason = _is_command_allowed(f"cat {safe_dir}/../../../../etc/passwd")
+    allowed, reason = _is_command_allowed(f"cat {tmp_path}/../../../../etc/passwd")
     assert allowed is False
     assert "outside safe roots" in reason.lower()
+
+    for system_path in ("/proc/self/environ", "/sys/kernel", "/dev/null"):
+        allowed, reason = _is_command_allowed(f"cat {system_path}")
+        assert allowed is False
+        assert "system device/proc" in reason.lower()
+
+    for sensitive_name in (".env", "credentials.json", "state.json", "app_token.txt"):
+        sensitive_file = tmp_path / sensitive_name
+        sensitive_file.write_text("private")
+        allowed, reason = _is_command_allowed(f"cat {sensitive_file}")
+        assert allowed is False
+        assert "sensitive file" in reason.lower()
+
+    linked_file = tmp_path / "outside-link"
+    linked_file.symlink_to("/etc/passwd")
+    allowed, reason = _is_command_allowed(f"cat {linked_file}")
+    assert allowed is False
+    assert "symlink" in reason.lower()
 
 # ---------------------------------------------------------
 # Test Scope 2: Telegram Authentication Security

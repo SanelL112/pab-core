@@ -82,7 +82,7 @@ async def consolidate_memory():
             max_tokens=2048,
             temperature=0.2,
             timeout=300,
-            allow_cloud=False,
+            classification="PRIVATE",
         )
         if brain:
             brain = brain.strip()
@@ -116,7 +116,7 @@ async def consolidate_memory():
                     max_tokens=2048,
                     temperature=0.2,
                     timeout=300,
-                    allow_cloud=False,
+                    classification="PRIVATE",
                 )
                 if merged_out and merged_out.strip():
                     final_brain = merged_out.strip()
@@ -157,10 +157,10 @@ async def consolidate_memory():
         from scrapers.google_scraper import download_classroom_pdfs
         pdf_result = download_classroom_pdfs("classroom_pdfs")
         logger.info(f"Classroom PDF download: {pdf_result}")
-        log_nightly("classroom_pdfs", "completed", {"result": pdf_result[:100]})
+        log_nightly("classroom_pdfs", "completed")
     except Exception as e:
         logger.warning(f"Classroom PDF download failed (non-critical): {e}")
-        log_nightly("classroom_pdfs", "failed", {"message": str(e)[:80]})
+        log_nightly("classroom_pdfs", "failed", {"error_type": type(e).__name__})
 
     # Phase 4: Nightly Indexer
     logger.info("Running nightly massive indexer via OpenRouter...")
@@ -190,7 +190,7 @@ async def consolidate_memory():
             log_nightly("embedding_indexer", "failed")
     except Exception as e:
         logger.warning(f"Embedding index rebuild failed (non-critical): {e}")
-        log_nightly("embedding_indexer", "error", {"message": str(e)[:80]})
+        log_nightly("embedding_indexer", "error", {"error_type": type(e).__name__})
 
     logger.info("Daily pipeline complete.")
 

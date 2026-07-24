@@ -36,6 +36,7 @@ user_models = {}
 POLL_INTERVAL       = 2    # seconds between transcript polls
 
 # ── Data source toggle – switch between native scrapers and Composio ──
+USE_COMPOSIO = config.USE_COMPOSIO
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -129,7 +130,7 @@ async def _watchdog_impl(context: ContextTypes.DEFAULT_TYPE):
     if is_sleep_window(): return
     chat_id = context.job.chat_id
     # sys.path already set at module level
-    if config.USE_COMPOSIO:
+    if USE_COMPOSIO:
         from scrapers.composio_fetcher import (
             get_all_canvas_data, get_unread_emails,
             get_classroom_assignments, get_classroom_announcements
@@ -249,7 +250,7 @@ async def _watchdog_impl(context: ContextTypes.DEFAULT_TYPE):
             prompt=prompt,
             max_tokens=150,
             timeout=90,
-            allow_cloud=False,
+            classification="PRIVATE",
         )
 
         if result and "⚠️ Local inference unavailable" in result:
@@ -313,7 +314,7 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
     chat_id = context.job.chat_id
     state = load_state()
 
-    if config.USE_COMPOSIO:
+    if USE_COMPOSIO:
         from scrapers.composio_fetcher import (
             get_all_canvas_data, get_unread_emails,
             get_classroom_assignments, get_classroom_announcements,
@@ -564,7 +565,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
     except Exception as e:
         logger.error(f"Error handling message: {e}")
-        log_event("error", {"message": str(e)[:80], "source": "handle_message"})
+        log_event(
+            "error",
+            {"error_type": type(e).__name__, "source": "handle_message"},
+        )
         try:
             await context.bot.edit_message_text(
                 chat_id=chat_id,
@@ -657,7 +661,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ocr_text = "(No text found in image)"
             log_event("photo", {"ocr_chars": len(ocr_text), "has_question": bool(caption.strip())}, notify=False)
         except Exception as e:
-            log_event("error", {"message": str(e)[:80], "source": "ocr"})
+            log_event("error", {"error_type": type(e).__name__, "source": "ocr"})
             await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="❌ Error processing photo.")
             return
     finally:
@@ -711,7 +715,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prompt=prompt,
             max_tokens=200,
             timeout=120,
-            allow_cloud=False,
+            classification="PRIVATE",
         )
         if extracted and "⚠️ Local inference unavailable" in extracted:
             extracted = "UNSURE"
@@ -854,7 +858,7 @@ async def nightly_wrapper(context: ContextTypes.DEFAULT_TYPE):
                 logger.info("Nightly: No curated brain content for deep research — skipping RPC step")
         except Exception as e:
             logger.warning(f"Nightly: RPC deep research failed (non-critical): {e}")
-            log_nightly("rpc_deep_research", "failed", {"message": str(e)[:80]})
+            log_nightly("rpc_deep_research", "failed", {"error_type": type(e).__name__})
 
         # 4. Fetch tomorrow's research based on the new brain
         try: await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="💤 **Sleep Cycle:**\n✅ Deep Research Complete.\n4️⃣ Pre-caching tomorrow's research from the web...", parse_mode="Markdown")

@@ -31,6 +31,14 @@ CANVAS_CACHE_TTL = 3600 * 24 * 7  # 1 week — course list rarely changes
 # Entity IDs used per app
 ENTITY_GOOGLE = "default"          # Google apps use "default" entity
 ENTITY_CANVAS = "canvas_ionone-arided"  # Canvas entity ID
+_CANVAS_AUTH_MARKERS = (
+    "expired access token",
+    "token expired",
+    "invalid token",
+    "reauthenticate",
+    "re-authenticate",
+    "unauthorized",
+)
 
 
 # ── Internal helpers ────────────────────────────────────────────────────────
@@ -44,6 +52,76 @@ def _load_token() -> Optional[str]:
     except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
         logger.error(f"Failed to load Composio token: {e}")
         return None
+
+
+def _failed_mcp_result(tool_slug: str, message: str, status_code: int | None = None) -> dict:
+    """Return a stable, non-secret failure shape for all MCP callers."""
+    lowered = message.lower()
+    is_canvas_tool = tool_slug.startswith("CANVAS_")
+    if is_canvas_tool and (
+        status_code in {401, 403} or any(marker in lowered for marker in _CANVAS_AUTH_MARKERS)
+    ):
+        return {
+            "successful": False,
+            "data": {
+                "message": "Canvas authorization expired; re-authenticate the Composio Canvas connection.",
+                "error_code": "CANVAS_REAUTH_REQUIRED",
+            },
+        }
+    return {
+        "successful": False,
+        "data": {"message": message[:200], "error_code": "MCP_REQUEST_FAILED"},
+    }
+
+
+def _decode_mcp_responses(body: str) -> list[dict]:
+    """Decode either JSON-RPC JSON or the MCP server's SSE ``data:`` payloads."""
+    responses: list[dict] = []
+    try:
+        decoded = json.loads(body)
+        if isinstance(decoded, dict):
+            responses.append(decoded)
+    except json.JSONDecodeError:
+        pass
+
+    for line in body.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        try:
+            decoded = json.loads(line.removeprefix("data:").strip())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(decoded, dict):
+            responses.append(decoded)
+    return responses
+
+
+def _extract_mcp_tool_response(rpc_response: dict) -> Optional[dict]:
+    """Extract the first COMPOSIO_MULTI_EXECUTE_TOOL result, if present."""
+    result = rpc_response.get("result", {})
+    if not isinstance(result, dict):
+        return None
+    for content_item in result.get("content", []):
+        if content_item.get("type") != "text":
+            continue
+        content = content_item.get("text", "")
+        try:
+            inner = json.loads(content) if isinstance(content, str) else content
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(inner, dict):
+            continue
+        results = inner.get("data", {}).get("results", [])
+        if isinstance(results, dict):
+            results = [results]
+        if not results:
+            continue
+        response = results[0].get("response", {})
+        if isinstance(response, dict) and "successful" in response:
+            return response
+        return {"successful": True, "data": {"response_data": response}}
+    return None
 
 
 def _call_mcp(tool_slug: str, arguments: dict, entity_id: str = ENTITY_GOOGLE) -> Optional[dict]:
@@ -73,6 +151,7 @@ def _call_mcp(tool_slug: str, arguments: dict, entity_id: str = ENTITY_GOOGLE) -
         }
     })
 
+    conn = None
     try:
         conn = http.client.HTTPSConnection(COMPOSIO_HOST, timeout=15)
         conn.request("POST", COMPOSIO_PATH, body=payload, headers={
@@ -81,35 +160,28 @@ def _call_mcp(tool_slug: str, arguments: dict, entity_id: str = ENTITY_GOOGLE) -
             "Accept": "application/json, text/event-stream"
         })
         resp = conn.getresponse()
-        text = resp.read().decode()
-        conn.close()
+        text = resp.read().decode("utf-8", errors="replace")
+        if resp.status >= 400:
+            return _failed_mcp_result(tool_slug, f"Composio HTTP {resp.status}", resp.status)
 
-        # Parse SSE-style response (data: {...} lines)
         last_error = "No result in MCP response"
-        for line in text.split("\n"):
-            line = line.strip()
-            if line.startswith("data: "):
-                try:
-                    rpc_response = json.loads(line[6:])
-                except json.JSONDecodeError:
-                    continue
-                if "error" in rpc_response:
-                    last_error = str(rpc_response["error"])
-                if "result" in rpc_response:
-                    for content_item in rpc_response["result"].get("content", []):
-                        if content_item.get("type") == "text":
-                            try:
-                                inner = json.loads(content_item["text"])
-                                results = inner.get("data", {}).get("results", [])
-                                if results:
-                                    return results[0].get("response", {})
-                            except json.JSONDecodeError:
-                                pass
+        for rpc_response in _decode_mcp_responses(text):
+            if "error" in rpc_response:
+                last_error = str(rpc_response["error"])
+            response = _extract_mcp_tool_response(rpc_response)
+            if response is not None:
+                return response
 
-        return {"successful": False, "data": {"message": last_error}}
-    except Exception as e:
-        logger.error(f"Composio MCP call failed ({tool_slug}): {e}")
-        return {"successful": False, "data": {"message": f"MCP error: {e}"}}
+        return _failed_mcp_result(tool_slug, last_error)
+    except (OSError, http.client.HTTPException, ValueError) as exc:
+        logger.error("Composio MCP call failed for %s: %s", tool_slug, type(exc).__name__)
+        return _failed_mcp_result(tool_slug, "Composio connection failed")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except OSError:
+                pass
 
 
 def _strip_html(text: str) -> str:

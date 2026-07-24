@@ -33,6 +33,14 @@ SAFE_BASH_ROOTS = [
     os.path.abspath(os.path.dirname(__file__))
 ]
 
+# Directories containing application logs.  Keep this separate from the BASH
+# read allowlist so observability configuration cannot broaden command access.
+LOG_SCAN_DIRS = [
+    Path(directory).expanduser()
+    for directory in os.getenv("LOG_SCAN_DIRS", str(BASE_DIR / "logs")).split(os.pathsep)
+    if directory
+]
+
 # Validate required environment variables at startup
 _missing_vars = []
 if not OPENROUTER_API_KEY:
@@ -54,6 +62,7 @@ OLLAMA_LOCAL_URL = os.getenv("OLLAMA_LOCAL_URL", "http://127.0.0.1:11434")
 OLLAMA_ORANGEPI_URL = os.getenv("OLLAMA_ORANGEPI_URL", "http://10.10.10.2:11434")  # Orange Pi 5 via ethernet
 OPENCODE_ZEN_API_KEY = os.getenv("OPENCODE_ZEN_API_KEY", "")
 OPENCODE_ZEN_URL = os.getenv("OPENCODE_ZEN_URL", "https://opencode.ai/zen/v1")
+OPENCODE_ZEN_MODEL = os.getenv("OPENCODE_ZEN_MODEL", "mimo-v2.5-free")
 RESPONSE_TIMEOUT = 300  # seconds to wait for a reply
 HACKCLUB_AI_API_KEY = os.getenv("HACKCLUB_AI_API_KEY", "")
 HACKCLUB_AI_BASE_URL = os.getenv("HACKCLUB_AI_BASE_URL", "https://ai.hackclub.com/proxy/v1")

@@ -130,6 +130,5 @@ jobs:
           CONVERSATION_ID: ci-dummy
           OPENROUTER_API_KEY: ci-dummy
         run: |
-          python3 -m pip install pytest pytest-asyncio
-          pytest tests/
-
+          python3 -m pip install pytest pytest-asyncio pytest-mock
+          pytest tests/ -q -ra --fail-on-skip
