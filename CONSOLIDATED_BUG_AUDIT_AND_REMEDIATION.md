@@ -27,25 +27,26 @@ The detailed findings and status labels below describe the July 21 baseline. Thi
 section supersedes those labels for the current `main` commit. It is a source and
 test review, not proof of live service, credential, or hardware state.
 
-The local regression suite passes (**41 tests**), but it does not cover every
-private-data call path or the GitHub Actions workflow.
+The local regression suite passes (**53 tests**) with network calls disabled by
+default. This remains source-level verification, not proof of live service,
+credential, or hardware state.
 
 ### Still open or only partially remediated
 
 | IDs | Current status | Evidence and required follow-up |
 |---|---|---|
-| SEC-01 | **Partial — high risk remains** | Arbitrary `python3 -c` execution is blocked, but the command allowlist accepts unrestricted `<path>` arguments. An allowed read command can still access service-readable secrets or files outside approved roots. Resolve paths and enforce an explicit allowed-root policy. |
-| SEC-03 | **Open — critical** | Several private-data paths still allow cloud fallback: `scrapers/web_precacher.py` sends `curated_brain.md` to OpenRouter; `scrapers/compile_context.py`, `scrapers/nightly_indexer.py`, and `scripts/generate_daily_digest.py` omit `allow_cloud=False`. Make private the default and require an explicit public classification for every cloud call. |
+| SEC-01 | **Resolved in source** | Command paths are resolved against explicit safe roots; traversal, symlinks, system pseudo-filesystems, secrets, `.env`, and private runtime files are rejected. Regression coverage exercises each boundary. |
+| SEC-03 | **Resolved in source** | `call_local_rpc()` now fails closed for `PRIVATE` (and invalid) classifications. The audited private call sites explicitly use `PRIVATE`; cloud fallback requires explicit `PUBLIC`. |
 | SEC-04 | **Operational action required** | Code reduces future HTTP client noise, but the historical Telegram token exposure still requires rotation, secret-store update, service restart, and journal-retention review. |
-| SEC-05 | **Open** | `bot/ai_bridge.py` logs raw user-message excerpts; `main.py` writes raw OCR into chat histories and `important_extracts.txt`; `activity_log.py` persists arbitrary details before notification scrubbing. Replace prompt excerpts with metadata and define retention/permissions. |
+| SEC-05 | **Partial** | Activity logs now enforce a metadata-only schema, Telegram notifications are queued, and raw OCR is neither saved to `important_extracts.txt` nor retained in chat history. General conversation-history retention still needs a documented user-data policy. |
 | LLM-05 | **Partial / operationally unverified** | The router has safer local fallback behavior, but worker participation and the Surface RPC lifecycle still need a controlled deployment/restart test. |
 | RUNTIME-01 | **Open — deployment mismatch** | Pi alerts on 2026-07-23 show `call_local_rpc()` rejecting `allow_cloud`, although the current `main` implementation accepts it. The Pi is running an incompatible or partially deployed code/configuration set; this blocks memory consolidation and offline indexing. Deploy and restart the full compatible unit before further runtime conclusions. |
 | MCP-01 | **Operationally open** | Canvas still needs Composio re-authentication. |
-| MCP-02, MCP-03 | **Open** | Composio remains hardcoded on in `main.py`; its wrapper has limited SSE/error recovery and native/Composio credential health is not modeled as configuration. |
-| LOG-02 | **Partial** | `telegram_logger.py` is queue-backed, but `activity_log.log_event()` still makes a synchronous Telegram HTTP request and can block a caller. |
-| LOG-03 | **Partial** | Activity-log timestamp parsing is fixed, but scanning remains root-only rather than covering configured `logs/` roots and does not explicitly classify structured nightly failures. |
-| ASYNC-01 | **Partial** | `web_precacher.py` calls synchronous local/cloud inference inside an async function; the nightly wrapper makes a blocking Pi health request; memory consolidation still performs direct process/download work in its async flow. |
-| DATA-01 | **Partial** | The canonical cache is `cache/`, but memory consolidation and embedding collection still fall back to `scrapers/source_cache`, which can reintroduce stale inputs. |
+| MCP-02, MCP-03 | **Partial** | Composio/native selection is configuration-driven; MCP response parsing supports JSON/SSE, closes connections, and reports Canvas token expiry explicitly. Live credential health remains operational. |
+| LOG-02 | **Resolved in source** | `activity_log` uses a bounded daemon queue for muted Telegram delivery and never blocks a bot handler on HTTP. |
+| LOG-03 | **Resolved in source** | The scanner uses configured log roots and recognizes structured `nightly` failure statuses. |
+| ASYNC-01 | **Resolved for audited paths** | Web precaching, Pi health checks, and memory-consolidation file/process/download work are offloaded from the event loop. |
+| DATA-01 | **Resolved in source** | Memory consolidation uses only the canonical `cache/` source; stale `source_cache` fallback reads were removed. |
 | TEST-01 | **Resolved** | The tracked `comprehensive_test.py` and `audit_script.py` remain import-side-effect scripts, even though the dedicated `tests/` suite is safe to collect. |
 | TEST-02, TEST-03 | **Resolved** | GitHub Actions does not run pytest. Its import check sets `TELEGRAM_CHAT_ID=0`, which `config.py` rejects, then silently counts the imports as skipped. Run pytest in CI with valid test defaults and fail on unexpected skipped imports. |
 | DEP-03 | **Open — untriaged** | GitHub reported 14 Dependabot alerts on the default branch during this verification (10 high, 4 moderate). Enumerate the affected dependencies and patch or explicitly assess each alert before marking it resolved. |

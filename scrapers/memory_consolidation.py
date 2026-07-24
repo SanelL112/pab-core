@@ -8,6 +8,17 @@ from activity_log import log_nightly
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+
+def _read_text(path: str) -> str:
+    with open(path, "r", encoding="utf-8", errors="replace") as source_file:
+        return source_file.read()
+
+
+def _write_text(path: str, text: str) -> None:
+    with open(path, "w", encoding="utf-8") as destination_file:
+        destination_file.write(text)
+
+
 async def consolidate_memory():
     import subprocess
     logger.info("Starting 1 AM Pipeline: Preparing system for heavy local AI processing...")
@@ -40,20 +51,15 @@ async def consolidate_memory():
 
     # 1. Read combined_summaries.txt
     summaries_file = os.path.join(CACHE_DIR, "combined_summaries.txt")
-    legacy_summaries = os.path.join(base_dir, "cache", "combined_summaries.txt")
-
-    target_file = summaries_file if os.path.exists(summaries_file) else legacy_summaries
-    if os.path.exists(target_file):
-        if target_file == legacy_summaries:
-            logger.warning(f"Reading stale legacy cache from {legacy_summaries}")
-        with open(target_file, "r") as f:
-            raw_text += "\n--- DAILY SUMMARIES AND NOTES ---\n" + f.read()
+    if os.path.exists(summaries_file):
+        summaries = await asyncio.to_thread(_read_text, summaries_file)
+        raw_text += "\n--- DAILY SUMMARIES AND NOTES ---\n" + summaries
 
     # 2. Read chat_history files
-    chat_files = glob.glob(os.path.join(base_dir, "chat_history_*.txt"))
+    chat_files = await asyncio.to_thread(glob.glob, os.path.join(base_dir, "chat_history_*.txt"))
     for cf in chat_files:
-        with open(cf, "r") as f:
-            raw_text += f"\n--- CHAT HISTORY ({os.path.basename(cf)}) ---\n" + f.read()
+        history = await asyncio.to_thread(_read_text, cf)
+        raw_text += f"\n--- CHAT HISTORY ({os.path.basename(cf)}) ---\n" + history
 
     if not raw_text.strip():
         logger.info("No raw memory to consolidate tonight.")
@@ -91,7 +97,7 @@ async def consolidate_memory():
     except Exception as e:
         logger.warning(f"Local RPC failed to consolidate memory ({type(e).__name__}: {e}). Falling back to secure local G1 Flash to protect PII...")
         from ai_processor import call_agy
-        brain = call_agy(prompt, timeout=180, model="flash")
+        brain = await asyncio.to_thread(call_agy, prompt, timeout=180, model="flash")
 
     if not brain:
         logger.error("All local models failed to consolidate memory. Aborting to protect PII.")
@@ -102,8 +108,7 @@ async def consolidate_memory():
         brain_file = os.path.join(base_dir, "curated_brain.md")
         existing_brain = ""
         if os.path.exists(brain_file):
-            with open(brain_file, "r") as f:
-                existing_brain = f.read()
+            existing_brain = await asyncio.to_thread(_read_text, brain_file)
 
         final_brain = brain
         if existing_brain:
@@ -125,11 +130,10 @@ async def consolidate_memory():
             except Exception as e:
                 logger.warning(f"Local RPC failed to merge brain ({e}). Falling back to secure local G1 Flash...")
                 from ai_processor import call_agy
-                merged = call_agy(merge_prompt, timeout=180, model="flash")
+                merged = await asyncio.to_thread(call_agy, merge_prompt, timeout=180, model="flash")
                 if merged: final_brain = merged
 
-        with open(brain_file, "w") as f:
-            f.write(final_brain)
+        await asyncio.to_thread(_write_text, brain_file, final_brain)
     except Exception as e:
         logger.error(f"Failed to write brain file: {e}")
 
@@ -137,7 +141,11 @@ async def consolidate_memory():
     logger.info("Triggering offline topic researcher...")
     try:
         import subprocess
-        subprocess.run(["python3", os.path.join(base_dir, "overnight_researcher.py")], timeout=1800)
+        await asyncio.to_thread(
+            subprocess.run,
+            ["python3", os.path.join(base_dir, "overnight_researcher.py")],
+            timeout=1800,
+        )
     except subprocess.TimeoutExpired:
         logger.warning("Overnight researcher timed out — continuing")
     except Exception as e:
@@ -147,7 +155,7 @@ async def consolidate_memory():
     logger.info("Running massive historical data export...")
     try:
         from scrapers.historical_export import run_all_exports
-        run_all_exports()
+        await asyncio.to_thread(run_all_exports)
     except Exception as e:
         logger.warning(f"Historical export failed (non-critical): {e}")
 
@@ -155,7 +163,7 @@ async def consolidate_memory():
     logger.info("Downloading Classroom PDFs...")
     try:
         from scrapers.google_scraper import download_classroom_pdfs
-        pdf_result = download_classroom_pdfs("classroom_pdfs")
+        pdf_result = await asyncio.to_thread(download_classroom_pdfs, "classroom_pdfs")
         logger.info(f"Classroom PDF download: {pdf_result}")
         log_nightly("classroom_pdfs", "completed")
     except Exception as e:
@@ -198,14 +206,12 @@ async def consolidate_memory():
     try:
         # Trim combined_summaries instead of full delete
         if os.path.exists(summaries_file):
-            size = os.path.getsize(summaries_file)
+            size = await asyncio.to_thread(os.path.getsize, summaries_file)
             if size > 90000:  # keep last ~50%, written by rotation
-                with open(summaries_file, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read()
+                content = await asyncio.to_thread(_read_text, summaries_file)
                 # Keep only last half
                 mid = len(content) // 2
-                with open(summaries_file, "w", encoding="utf-8") as f:
-                    f.write("[older entries trimmed]\n" + content[mid:])
+                await asyncio.to_thread(_write_text, summaries_file, "[older entries trimmed]\n" + content[mid:])
                 logger.info(f"Trimmed combined_summaries from {size} to ~{size//2} bytes")
         # Don't delete chat files — they have conversation history the user might reference
         logger.info("Memory consolidation complete!")

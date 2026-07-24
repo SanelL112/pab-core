@@ -66,7 +66,7 @@ def _call_mcp(tool_slug: str, params: dict = None, entity_id: str = "default") -
             "Accept": "application/json, text/event-stream"
         })
         resp = conn.getresponse()
-        text = resp.read().decode()
+        text = resp.read().decode("utf-8", errors="replace")
         conn.close()
 
         for line in text.split("\n"):

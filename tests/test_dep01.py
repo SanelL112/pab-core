@@ -40,3 +40,21 @@ def test_youtube_transcript_compatibility(m_ytt):
     text = get_transcript("test_id")
     assert text == "hello world"
     m_instance.fetch.assert_called_once_with("test_id")
+
+
+@patch("scrapers.mega_study_builder.YouTubeTranscriptApi")
+@patch("scrapers.mega_study_builder.VideosSearch")
+def test_mega_youtube_search_handles_missing_titles_and_uses_instance_api(m_search, m_ytt):
+    from scrapers.mega_study_builder import search_youtube
+
+    m_search.return_value.result.side_effect = [
+        {"result": [{"id": "video-id", "title": None}]},
+        {"result": []},
+    ]
+    m_ytt.return_value.fetch.return_value.snippets = [MagicMock(text="transcript text")]
+
+    metadata, text = search_youtube("Algebra")
+
+    assert metadata["title"] == "Fetched 1 YouTube Transcripts | Untitled Video"
+    assert "transcript text" in text
+    m_ytt.return_value.fetch.assert_called_once_with("video-id")

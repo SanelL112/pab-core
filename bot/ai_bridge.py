@@ -72,7 +72,14 @@ async def detect_topic(message: str, chat_id: int) -> str:
 
 # ── Bridge logic ───────────────────────────────────────────────────────────────
 
-async def send_to_antigravity_and_wait(user_message: str, chat_id: int = 0, context=None, status_msg=None) -> str:
+async def send_to_antigravity_and_wait(
+    user_message: str,
+    chat_id: int = 0,
+    context=None,
+    status_msg=None,
+    *,
+    persist_history: bool = True,
+) -> str:
     """Uses agy --print for a direct response. Works standalone on Debian."""
     try:
         with open(LATEST_DIGEST_FILE, "r") as f:
@@ -570,28 +577,30 @@ async def send_to_antigravity_and_wait(user_message: str, chat_id: int = 0, cont
             except Exception as e:
                 logger.error(f"Summary agent error: {e}")
 
-    # Append turn to custom history file (with atomic write + rotation)
-    try:
-        with open(history_file, "a", encoding="utf-8") as f:
-            f.write(f"User: {user_message}\nModel: {out}\n\n")
+    # Append turn to custom history file (with atomic write + rotation).  OCR
+    # photo requests opt out: their raw recognized text must not be retained.
+    if persist_history:
+        try:
+            with open(history_file, "a", encoding="utf-8") as f:
+                f.write(f"User: {user_message}\nModel: {out}\n\n")
         # Rotate if file exceeds 50KB to prevent unbounded growth
-        if os.path.getsize(history_file) > 50000:
-            with open(history_file, "r", encoding="utf-8") as f:
-                content = f.read()
-            # Atomic write: write to temp then rename
-            import tempfile
-            fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(history_file), suffix='.tmp')
-            try:
-                with os.fdopen(fd, 'w', encoding="utf-8") as f:
-                    f.write(content[-40000:])  # Keep last 40KB
-                os.replace(tmp_path, history_file)
-                logger.info(f"Rotated history file: {os.path.basename(history_file)}")
-            except Exception:
+            if os.path.getsize(history_file) > 50000:
+                with open(history_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                # Atomic write: write to temp then rename
+                import tempfile
+                fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(history_file), suffix='.tmp')
                 try:
-                    os.unlink(tmp_path)
+                    with os.fdopen(fd, 'w', encoding="utf-8") as f:
+                        f.write(content[-40000:])  # Keep last 40KB
+                    os.replace(tmp_path, history_file)
+                    logger.info(f"Rotated history file: {os.path.basename(history_file)}")
                 except Exception:
-                    pass
-    except Exception:
-        pass
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         
     return out

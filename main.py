@@ -56,6 +56,23 @@ if BOT_DIR not in sys.path:
     sys.path.insert(0, BOT_DIR)
 
 
+def _extract_ocr_from_image(image_path: str) -> str:
+    """Run OCR while deterministically closing the image file handle."""
+    import pytesseract
+    from PIL import Image
+
+    with Image.open(image_path) as image:
+        return pytesseract.image_to_string(image)
+
+
+def _append_important_extract(extracted_text: str) -> None:
+    """Persist only local, filtered task text—not raw OCR—to the private queue."""
+    extract_path = os.path.join(BOT_DIR, "important_extracts.txt")
+    with open(extract_path, "a", encoding="utf-8") as extract_file:
+        extract_file.write(f"\n--- Photo Upload (Filtered Extract) ---\n{extracted_text}\n")
+    os.chmod(extract_path, 0o600)
+
+
 # ── Transcript helpers ─────────────────────────────────────────────────────────
 
 def get_last_step_index() -> int:
@@ -654,9 +671,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="🔍 Running local OCR (Tesseract)...")
 
         try:
-            import pytesseract
-            from PIL import Image
-            ocr_text = await asyncio.to_thread(pytesseract.image_to_string, Image.open(download_path))
+            ocr_text = await asyncio.to_thread(_extract_ocr_from_image, download_path)
             if not ocr_text.strip():
                 ocr_text = "(No text found in image)"
             log_event("photo", {"ocr_chars": len(ocr_text), "has_question": bool(caption.strip())}, notify=False)
@@ -675,7 +690,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             user_lock = get_user_lock(chat_id)
             async with user_lock:
-                reply = await send_to_antigravity_and_wait(user_text, chat_id, context, msg)
+                reply = await send_to_antigravity_and_wait(
+                    user_text,
+                    chat_id,
+                    context,
+                    msg,
+                    persist_history=False,
+                )
 
             try:
                 await context.bot.delete_message(chat_id=chat_id, message_id=msg.message_id)
@@ -690,7 +711,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(chat_id=chat_id, text=reply[i:i+max_len])
             return
         except Exception as e:
-            logger.error(f"Error answering photo question: {e}")
+            logger.error("Error answering photo question: %s", type(e).__name__)
             await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="❌ Error analyzing photo.")
             return
 
@@ -726,35 +747,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             extracted = await asyncio.to_thread(call_agy, prompt, 3600, "flash")
         except Exception as e:
-            logger.error(f"Error calling local fallback: {e}")
+            logger.error("Error calling local fallback: %s", type(e).__name__)
             extracted = None
-            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "important_extracts.txt"), "a") as f:
-                f.write(f"\n--- Photo Upload (Raw OCR) ---\n{ocr_text}\n")
-
-            # Add to the most recently active chat history so the user can ask follow-up questions!
-            import glob
-            history_files = glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), f"chat_history_{chat_id}_*.txt"))
-            if history_files:
-                latest_file = max(history_files, key=os.path.getmtime)
-                with open(latest_file, "a") as f:
-                    f.write(f"User: [I just uploaded a photo. Here is the raw text extracted from it: {ocr_text}]\\nModel: (Image received. I am ready for questions about it.)\\n\\n")
 
     if extracted:
         if "NO_ALERT" not in extracted.upper() and "UNSURE" not in extracted.upper():
-            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "important_extracts.txt"), "a") as f:
-                f.write(f"\n--- Photo Upload ---\n{extracted}\n")
+            await asyncio.to_thread(_append_important_extract, extracted)
             reply = f"✅ Important text found and saved for the next digest!\n\n_Filtered preview:_\n{extracted}"
-            import glob
-            history_files = glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), f"chat_history_{chat_id}_*.txt"))
-            if history_files:
-                latest_file = max(history_files, key=os.path.getmtime)
-                with open(latest_file, "a") as f:
-                    f.write(f"User: [I just uploaded a photo. Here is the raw text extracted from it: {ocr_text}]\\nModel: (Image received. I am ready for questions about it.)\\n\\n")
         else:
-            # User specifically sent a photo, so it's important regardless of what the small model thinks.
-            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "important_extracts.txt"), "a") as f:
-                f.write(f"\n--- Photo Upload (Raw OCR) ---\n{ocr_text}\n")
-            reply = "⚠️ Local AI couldn't parse specific assignments, but I saved the raw text for the cloud AI to review!"
+            reply = "⚠️ Local AI couldn't identify a specific assignment. Raw OCR was not retained."
+    else:
+        reply = "⚠️ Local OCR processing was unavailable. Raw OCR was not retained."
 
     try:
         await context.bot.edit_message_text(
@@ -792,7 +795,11 @@ async def nightly_wrapper(context: ContextTypes.DEFAULT_TYPE):
         # 1.6. Warm up Orange Pi 5 classifier (pre-loads qwen2:0.5b for morning)
         try:
             import requests
-            resp = requests.get("http://10.10.10.2:8080/health", timeout=10)
+            resp = await asyncio.to_thread(
+                requests.get,
+                "http://10.10.10.2:8080/health",
+                timeout=10,
+            )
             if resp.status_code == 200:
                 logger.info("Nightly: Pi classifier health OK — model warm for morning")
             else:

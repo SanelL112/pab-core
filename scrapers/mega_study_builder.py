@@ -46,6 +46,23 @@ CRITICAL FORMATTING RULES:
 - You MUST wrap ALL of your internal planning or calculations inside <thought>...</thought> tags! Anything outside these tags must be the final, polished study guide text.
 """
 
+
+def _response_html(response) -> str:
+    """Decode response bytes explicitly before HTML parsing.
+
+    Passing raw bytes to BeautifulSoup delegates encoding detection to its
+    UnicodeDammit layer, which emits replacement-character warnings for some
+    classroom/web documents.  A deterministic replacement policy keeps the
+    parser and nightly logs quiet while preserving readable text.
+    """
+    encoding = getattr(response, "encoding", None)
+    if not isinstance(encoding, str) or not encoding:
+        encoding = "utf-8"
+    try:
+        return response.content.decode(encoding, errors="replace")
+    except LookupError:
+        return response.content.decode("utf-8", errors="replace")
+
 def search_web_article(topic: str):
     logger.info(f"Searching Web for: {topic}...")
     try:
@@ -65,7 +82,7 @@ def search_web_article(topic: str):
                     
                     try:
                         resp = requests.get(res["href"], timeout=5)
-                        soup = BeautifulSoup(resp.content, "html.parser")
+                        soup = BeautifulSoup(_response_html(resp), "html.parser")
                         combined_text += f"\n--- SOURCE: {res['title']} ---\n"
                         combined_text += " ".join([p.text for p in soup.find_all("p")])
                         sources_list.append({"title": res["title"], "href": res["href"]})
@@ -95,84 +112,87 @@ def search_images(topic: str):
         logger.error(f"Image scrape failed: {e}")
     return []
 
+def _transcript_text(transcript) -> str:
+    """Normalize the instance API's transcript response into plain text."""
+    snippets = getattr(transcript, "snippets", transcript)
+    parts = []
+    for snippet in snippets:
+        if isinstance(snippet, dict):
+            value = snippet.get("text")
+        else:
+            value = getattr(snippet, "text", None)
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+    return " ".join(parts)
+
+
+def _youtube_metadata(titles: list[str]) -> dict:
+    preview = " | ".join(titles[:5])
+    label = f"Fetched {len(titles)} YouTube Transcripts"
+    if preview:
+        label += f" | {preview}"
+    return {"title": label, "link": "Multiple Videos"}
+
+
 def search_youtube(topic: str):
-    logger.info(f"Searching YouTube for: {topic} educational tutorial")
-    try:
-        videosSearch = VideosSearch(f"{topic} educational tutorial", limit=20)
-        combined_text = ""
-        meta_titles = []
-        ytt_api = YouTubeTranscriptApi()  # New instance-based API (v1.0+)
-        
-        for page in range(5): # Loop 5 pages (5 * 20 = 100 videos)
-            logger.info(f"YouTube Page {page + 1}/5...")
-            try:
-                result = videosSearch.result()
-                if not result or "result" not in result or not result["result"]: break
-                
-                for video in result["result"]:
-                    if len(meta_titles) >= 100: break
-                    try:
-                        transcript = YouTubeTranscriptApi.get_transcript(video["id"])
-                        combined_text += f"\n--- VIDEO: {video['title']} ---\n"
-                        combined_text += " ".join([item['text'] for item in transcript])
-                        meta_titles.append(video["title"])
-                    except Exception:
-                        continue
-                videosSearch.next()
-            except TypeError as e:
-                if "proxies" in str(e):
-                    # youtubesearchpython version mismatch - try without proxies
-                    logger.warning("YouTube search: proxies parameter issue, retrying with basic search")
-                    try:
-                        videosSearch = VideosSearch(f"{topic} educational tutorial", limit=20)
-                        result = videosSearch.result()
-                        if result and "result" in result and result["result"]:
-                            for video in result["result"]:
-                                if len(meta_titles) >= 100: break
-                                try:
-                                    transcript = YouTubeTranscriptApi.get_transcript(video["id"])
-                                    combined_text += f"\n--- VIDEO: {video['title']} ---\n"
-                                    combined_text += " ".join([item['text'] for item in transcript])
-                                    meta_titles.append(video["title"])
-                                except Exception:
-                                    continue
-                    except Exception as e2:
-                        logger.error(f"YouTube search error (retry): {e2}")
-                else:
-                    logger.error(f"YouTube search page failed: {e}")
-                    break
-            except Exception as e:
-                # Handle 'proxies' keyword argument error from youtubesearchpython
-                if "proxies" in str(e):
-                    logger.warning("YouTube search: proxies parameter issue in request, retrying")
-                    try:
-                        videosSearch = VideosSearch(f"{topic} educational tutorial", limit=20)
-                        result = videosSearch.result()
-                        if result and "result" in result and result["result"]:
-                            for video in result["result"]:
-                                if len(meta_titles) >= 100: break
-                                try:
-                                    transcript = YouTubeTranscriptApi.get_transcript(video["id"])
-                                    combined_text += f"\n--- VIDEO: {video['title']} ---\n"
-                                    combined_text += " ".join([item['text'] for item in transcript])
-                                    meta_titles.append(video["title"])
-                                except Exception:
-                                    continue
-                        return {"title": f"Fetched {len(meta_titles)} YouTube Transcripts | " + " | ".join(meta_titles[:5]) + "...", "link": "Multiple Videos"}, combined_text
-                    except Exception as e2:
-                        logger.error(f"YouTube search error (retry): {e2}")
-                else:
-                    logger.error(f"YouTube search page failed: {e}")
-                    break
-                logger.error(f"YouTube search page failed: {e}")
-                break
-                
-        if meta_titles:
-            logger.info(f"Successfully fetched {len(meta_titles)} YouTube Transcripts.")
-            return {"title": f"Fetched {len(meta_titles)} YouTube Transcripts | " + " | ".join(meta_titles[:5]) + "...", "link": "Multiple Videos"}, combined_text
+    """Fetch up to 100 transcripts using the supported instance transcript API."""
+    if not isinstance(topic, str) or not topic.strip():
+        logger.warning("YouTube search skipped because no topic was supplied")
         return None, ""
-    except Exception as e:
-        logger.error(f"YouTube error: {e}")
+
+    normalized_topic = topic.strip()
+    logger.info("Searching YouTube for: %s educational tutorial", normalized_topic)
+    try:
+        video_search = VideosSearch(f"{normalized_topic} educational tutorial", limit=20)
+        transcript_api = YouTubeTranscriptApi()
+        sections: list[str] = []
+        titles: list[str] = []
+
+        for page in range(5):
+            logger.info("YouTube Page %s/5", page + 1)
+            try:
+                result = video_search.result()
+            except Exception as exc:
+                logger.warning("YouTube search page failed: %s", type(exc).__name__)
+                break
+
+            videos = result.get("result", []) if isinstance(result, dict) else []
+            if not isinstance(videos, list) or not videos:
+                break
+
+            for video in videos:
+                if len(titles) >= 100:
+                    break
+                if not isinstance(video, dict):
+                    continue
+                video_id = video.get("id")
+                if not isinstance(video_id, str) or not video_id:
+                    continue
+                title = video.get("title")
+                title = title.strip() if isinstance(title, str) and title.strip() else "Untitled Video"
+                try:
+                    text = _transcript_text(transcript_api.fetch(video_id))
+                except Exception:
+                    continue
+                if not text:
+                    continue
+                sections.append(f"\n--- VIDEO: {title} ---\n{text}")
+                titles.append(title)
+
+            if len(titles) >= 100:
+                break
+            try:
+                video_search.next()
+            except Exception as exc:
+                logger.warning("YouTube pagination stopped: %s", type(exc).__name__)
+                break
+
+        if not titles:
+            return None, ""
+        logger.info("Successfully fetched %s YouTube Transcripts.", len(titles))
+        return _youtube_metadata(titles), "".join(sections)
+    except Exception as exc:
+        logger.error("YouTube search setup failed: %s", type(exc).__name__)
         return None, ""
 
 
