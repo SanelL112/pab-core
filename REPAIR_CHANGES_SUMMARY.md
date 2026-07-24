@@ -52,7 +52,7 @@ This document captures all agent-owned code changes from the bug audit repair wo
 ### 4a. Cloud Chat Context Containment (`bot/ai_bridge.py`)
 - **Manual cloud selection is screened locally** just like automatic routing; a private result is forced to local Flash
 - **Cloud prompts exclude** the personal digest, memory index, and semantic-retrieval context even after a public classification
-- **Mega-guide generators use local `agy` only** because their prompts include cached school and personal material
+- **Mega-guide cloud use requires** `MEGA_GUIDE_CLOUD_CLASSIFICATION=PUBLIC`; without that operator opt-in, the generators use local `agy` and return to it if cloud generation fails
 
 ### 5. Dell Local Ollama Role (`config.py`, `llm_router.py`)
 - **Added** `OLLAMA_LOCAL_URL` (default `http://127.0.0.1:11434`)
@@ -157,10 +157,10 @@ This document captures all agent-owned code changes from the bug audit repair wo
 | `tests/test_ui_emoji.py` | No U+FFFD in tracked Python |
 | `tests/test_script_imports.py` | No import-time side effects |
 | `tests/test_chat_history_retention.py` | Expired conversation-history cleanup |
-| `tests/test_private_guide_generation.py` | Local-only mega-guide inference |
+| `tests/test_private_guide_generation.py` | Explicit cloud opt-in and local-fallback mega-guide inference |
 
 The original repair suite reported 35 tests. The final local verification run
-reported **60 passed** with no skips; tests use safe fake credentials and block
+reported **62 passed** with no skips; tests use safe fake credentials and block
 network access by default. PyPDF2 emits one upstream deprecation warning.
 
 ---
@@ -209,7 +209,7 @@ utils.py
 ```bash
 # All tests
 ./venv/bin/pytest tests -q
-# → 60 passed, 1 PyPDF2 upstream deprecation warning
+# → 62 passed, 1 PyPDF2 upstream deprecation warning
 
 # Syntax & compilation
 python3 -W error::SyntaxWarning -m py_compile $(git ls-files '*.py')

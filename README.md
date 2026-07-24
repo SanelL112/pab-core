@@ -60,6 +60,10 @@ runs; do not force-add them to commits.
    CANVAS_API_TOKEN=your_canvas_token
    ```
 
+   Mega guides remain local by default because they can include cached class
+   and personal material. To explicitly allow OpenRouter generation, add
+   `MEGA_GUIDE_CLOUD_CLASSIFICATION=PUBLIC` to `.env`.
+
 3. **Google API Credentials**:
    Place your `credentials.json` in the root directory to generate a `token.json` file for Google Workspace integration (Classroom, Drive, Gmail).
 

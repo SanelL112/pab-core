@@ -51,6 +51,11 @@ from config import (
     CACHE_DIR,
     ARCHIVE_DIR,
     MEGA_INDEX_FILE,
+    MEGA_GUIDE_CLOUD_CLASSIFICATION,
+    OPENROUTER_API_KEY,
+    OR_DEFAULT_MODEL,
+    OR_FALLBACK_MODEL,
+    OR_THIRD_MODEL,
 )
 from ai_processor import call_agy
 from scrapers.semantic_retrieval import semantic_search
@@ -366,13 +371,36 @@ Generate the COMPLETE guide now. Be exhaustive. No token limits - write until do
     return prompt
 
 
-def call_private_guide_model(prompt: str, timeout: int = 600) -> str:
-    """Generate a guide through the local-only inference path.
+def call_guide_model(prompt: str, timeout: int = 600) -> str:
+    """Generate a guide with an explicit cloud opt-in and local fallback.
 
-    Mega-guide prompts contain cached school and personal material.  Keep
-    those inputs local and fail explicitly if local inference is unavailable;
-    do not fall back to OpenRouter or any other cloud adapter.
+    The environment must set ``MEGA_GUIDE_CLOUD_CLASSIFICATION=PUBLIC`` before
+    cached school and personal material can be sent to OpenRouter.  Otherwise,
+    this path remains local-only.
     """
+    cloud_attempted = False
+    if MEGA_GUIDE_CLOUD_CLASSIFICATION == "PUBLIC" and OPENROUTER_API_KEY:
+        cloud_attempted = True
+        from llm_router import call_openrouter
+
+        result = call_openrouter(
+            model=OR_DEFAULT_MODEL,
+            prompt=prompt,
+            task="mega-guide",
+            max_tokens=8000,
+            system_prompt=(
+                "You are an elite academic tutor creating comprehensive study "
+                "guides. Be exhaustive, precise, and well-structured."
+            ),
+            fallback_chain=[OR_FALLBACK_MODEL, OR_THIRD_MODEL],
+            timeout=timeout,
+            classification="PUBLIC",
+        )
+        if result and not result.startswith("⚠️"):
+            logger.info("Cloud mega-guide inference succeeded: %s chars", len(result))
+            return result
+        logger.warning("Cloud mega-guide inference failed; falling back to local inference")
+
     try:
         result = call_agy(prompt, timeout=timeout, model="flash")
     except Exception as exc:
@@ -382,6 +410,8 @@ def call_private_guide_model(prompt: str, timeout: int = 600) -> str:
     if result:
         logger.info("Local mega-guide inference succeeded: %s chars", len(result))
         return result
+    if cloud_attempted:
+        return "❌ Local inference unavailable after approved cloud generation failed."
     return "❌ Local inference unavailable; private mega-guide content was not sent to cloud."
 
 
@@ -490,9 +520,9 @@ def main():
         prompt = build_mega_guide_prompt(topics, all_context)
         logger.info(f"Prompt length: {len(prompt)} chars")
         
-        # 8. Generate locally because the prompt contains private cache data.
-        logger.info("Generating mega study guide through local inference...")
-        guide_content = call_private_guide_model(prompt)
+        # 8. Cloud generation requires an explicit deployment opt-in.
+        logger.info("Generating mega study guide through the configured inference path...")
+        guide_content = call_guide_model(prompt)
         
         if guide_content.startswith("❌"):
             raise RuntimeError(f"All models failed: {guide_content}")

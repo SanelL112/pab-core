@@ -10,7 +10,13 @@ from ai_processor import call_agy
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import CACHE_DIR
+from config import (
+    CACHE_DIR,
+    MEGA_GUIDE_CLOUD_CLASSIFICATION,
+    OPENROUTER_API_KEY,
+    OR_FALLBACK_MODEL,
+    OR_THIRD_MODEL,
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -196,12 +202,29 @@ def search_youtube(topic: str):
         return None, ""
 
 
-def call_private_guide_model(prompt: str, timeout: int = 3600) -> str:
-    """Generate a study-guide section locally without cloud fallback.
+def call_guide_model(prompt: str, timeout: int = 3600) -> str:
+    """Generate a study-guide section with optional, explicit cloud consent.
 
-    Callers add cached classroom notes, PDF exports, and personal material to
-    the prompt.  These inputs remain local even if the local model is down.
+    Cached classroom notes, PDF exports, and personal material are sent to a
+    cloud provider only when the deployment explicitly sets
+    ``MEGA_GUIDE_CLOUD_CLASSIFICATION=PUBLIC``.  Local inference remains the
+    safe default and the fallback for a cloud failure.
     """
+    if MEGA_GUIDE_CLOUD_CLASSIFICATION == "PUBLIC" and OPENROUTER_API_KEY:
+        from llm_router import call_openrouter
+
+        result = call_openrouter(
+            model=OR_FALLBACK_MODEL,
+            prompt=prompt,
+            task="study-guide",
+            fallback_chain=[OR_THIRD_MODEL],
+            timeout=timeout,
+            classification="PUBLIC",
+        )
+        if result and not result.startswith("⚠️"):
+            return result
+        logger.warning("Cloud study-guide generation failed; falling back to local inference")
+
     return call_agy(prompt, timeout=timeout, model="flash")
 
 
@@ -267,14 +290,14 @@ def generate_mega_guide(topic: str, pdf_text: str = "") -> str:
                 chunk = text[i:i+max_chunk_size]
                 prompt = f"Extract all facts, concepts, formulas, and notes strictly relevant to '{topic}'. Be comprehensive but concise. Ignore unrelated subjects.\n\nSOURCE TEXT ({label} Chunk {i//max_chunk_size + 1}):\n{chunk}"
                 logger.info(f"Summarizing {label} chunk {i//max_chunk_size + 1} / {(len(text)//max_chunk_size)+1}...")
-                summary = call_private_guide_model(prompt)
+                summary = call_guide_model(prompt)
                 if summary:
                     summarized += summary + "\n\n"
                     
             # The Final Reduce (Coherence) Pass
             logger.info(f"Synthesizing all {label} chunks into a coherent master document...")
             synthesis_prompt = f"You are an expert synthesizer. I have provided multiple summaries of '{topic}' below. Please rewrite them into one single, highly coherent, deduplicated master reference document. Do not leave any facts out.\n\nSUMMARIES:\n{summarized}"
-            final_coherent_doc = call_private_guide_model(synthesis_prompt)
+            final_coherent_doc = call_guide_model(synthesis_prompt)
             
             return final_coherent_doc if final_coherent_doc else summarized
             
@@ -323,7 +346,7 @@ CRITICAL LIMITATION: You may ONLY include exactly ONE chapter for "Practice Prob
 Respond ONLY with a raw JSON array of strings representing the chapter titles. Do not include markdown blocks or any other text.
 Example: ["Chapter 1: Introduction to Formulas", "Chapter 2: Advanced Mechanics"]"""
     
-    outline_json_str = call_private_guide_model(outline_prompt)
+    outline_json_str = call_guide_model(outline_prompt)
     import json
     outline = []
     if outline_json_str:
@@ -353,7 +376,7 @@ Example: ["Chapter 1: Introduction to Formulas", "Chapter 2: Advanced Mechanics"
     condensed_context = source_context
     if len(source_context) > 10000:
         logger.info(f"Condensing source_context ({len(source_context)} chars) for per-chapter use...")
-        condensed_context = call_private_guide_model(
+        condensed_context = call_guide_model(
             f"Condense the following educational source material into a dense, structured reference "
             f"document (max 3000 chars) preserving all key facts, formulas, and concepts for "
             f"the topic '{topic}'. Be comprehensive but concise.\n\nSOURCE MATERIAL:\n{source_context}",
@@ -393,7 +416,7 @@ INSTRUCTIONS:
 6. Wrap ALL of your internal planning or calculations inside <thought>...</thought> tags! Anything outside these tags must be the final, polished text for the chapter.
 7. Start your output directly with a Markdown Header for the chapter (e.g. # {chapter}).
 """
-        chunk_result = call_private_guide_model(chunk_prompt)
+        chunk_result = call_guide_model(chunk_prompt)
             
         if chunk_result:
             import re
@@ -429,7 +452,7 @@ INSTRUCTIONS:
 6. Wrap any internal scratchpad inside <thought>...</thought> tags.
 7. Output ONLY the perfectly polished, final version of {chapter}. Do NOT output other chapters.
 """
-        editor_result = call_private_guide_model(editor_prompt)
+        editor_result = call_guide_model(editor_prompt)
         
         if editor_result:
             import re

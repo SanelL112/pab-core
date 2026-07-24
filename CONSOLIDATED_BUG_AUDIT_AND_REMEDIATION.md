@@ -38,16 +38,17 @@ explicit cloud boundary: every cloud adapter defaults to `PRIVATE` and accepts
 requests only when its classification is exactly `PUBLIC`.  The chat bridge
 locally screens both automatic and manually selected cloud routes, and excludes
 the private digest, memory index, and semantic-retrieval context from the
-public-cloud prompt.  The two mega-study-guide jobs consume cached school and
-personal sources, so they now use local `agy` inference exclusively rather than
-falling back to any cloud provider.
+public-cloud prompt. The two mega-study-guide jobs consume cached school and
+personal sources, so cloud generation is disabled unless an operator explicitly
+sets `MEGA_GUIDE_CLOUD_CLASSIFICATION=PUBLIC`; local `agy` remains the default
+and cloud-failure fallback.
 
 Conversation-history retention is bounded to 30 days by default, owner-only
 permissions are applied on write and rotation, and expiry is covered by a local
 regression test.  The period remains configurable through
 `CHAT_HISTORY_RETENTION_DAYS`; `0` is an explicit administrator opt-out.
 
-The local suite completed with **60 passed** using
+The local suite completed with **62 passed** using
 `pytest tests -q -ra --fail-on-skip`, with network calls blocked by default.
 The only warning is PyPDF2's upstream deprecation notice; no test was skipped.
 
@@ -56,7 +57,7 @@ The only warning is PyPDF2's upstream deprecation notice; no test was skipped.
 | IDs | Current status | Evidence and required follow-up |
 |---|---|---|
 | SEC-01 | **Resolved in source** | Command paths are resolved against explicit safe roots; traversal, symlinks, system pseudo-filesystems, secrets, `.env`, and private runtime files are rejected. Regression coverage exercises each boundary. |
-| SEC-03 | **Resolved in source** | All cloud adapters now reject private, invalid, and unclassified requests; only exact `PUBLIC` permits a cloud call. Both automatic and manual cloud chat routes are locally screened and omit private cached context. Private mega-guide paths use local inference only. |
+| SEC-03 | **Resolved in source** | All cloud adapters now reject private, invalid, and unclassified requests; only exact `PUBLIC` permits a cloud call. Both automatic and manual cloud chat routes are locally screened and omit private cached context. Mega-guide cloud use is separately opt-in through `MEGA_GUIDE_CLOUD_CLASSIFICATION=PUBLIC`. |
 | SEC-04 | **Operational action required** | Code reduces future HTTP client noise, but the historical Telegram token exposure still requires rotation, secret-store update, service restart, and journal-retention review. |
 | SEC-05 | **Resolved in source / operational policy configurable** | Activity logs enforce a metadata-only schema, Telegram notifications are queued, raw OCR is neither saved to `important_extracts.txt` nor retained in chat history, and per-topic chat histories are owner-only and expire after 30 days by default. An operator may set `CHAT_HISTORY_RETENTION_DAYS` for the required retention policy. |
 | LLM-05 | **Partial / operationally unverified** | The router has safer local fallback behavior, but worker participation and the Surface RPC lifecycle still need a controlled deployment/restart test. |

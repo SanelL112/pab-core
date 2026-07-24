@@ -26,6 +26,13 @@ NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "")
 
 # ── Feature Flags ─────────────────────────────────────────────────────────────
 USE_COMPOSIO = os.getenv("USE_COMPOSIO", "True").lower() in ("true", "1", "yes", "t")
+# Mega-guide prompts can contain cached school and personal material.  Cloud
+# processing is therefore disabled unless an operator explicitly opts in.
+MEGA_GUIDE_CLOUD_CLASSIFICATION = os.getenv(
+    "MEGA_GUIDE_CLOUD_CLASSIFICATION", "PRIVATE"
+).strip().upper()
+if MEGA_GUIDE_CLOUD_CLASSIFICATION not in {"PRIVATE", "PUBLIC"}:
+    MEGA_GUIDE_CLOUD_CLASSIFICATION = "PRIVATE"
 
 # ── Safe Roots ────────────────────────────────────────────────────────────────
 # Allowed directories for read-only bash commands (e.g. cat, grep)
