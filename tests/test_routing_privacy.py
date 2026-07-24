@@ -135,6 +135,57 @@ def test_call_local_rpc_dell_fallback():
          assert res == "dell_response"
 
 
+def test_call_local_rpc_accepts_legacy_allow_cloud_without_leaking_when_false():
+    with patch("llm_router.call_llamacpp_rpc", return_value=""), \
+         patch("llm_router.httpx.Client") as mock_client, \
+         patch("llm_router.call_openrouter") as mock_openrouter:
+        mock_client_instance = mock_client.return_value.__enter__.return_value
+        mock_response = MagicMock(status_code=500)
+        mock_client_instance.post.return_value = mock_response
+
+        result = call_local_rpc("private prompt", allow_cloud=False)
+
+    assert "cloud fallback disabled" in result.lower()
+    mock_openrouter.assert_not_called()
+
+
+def test_call_local_rpc_accepts_legacy_allow_cloud_true_as_explicit_public_opt_in():
+    with patch("llm_router.call_llamacpp_rpc", return_value=""), \
+         patch("llm_router.httpx.Client") as mock_client, \
+         patch("llm_router.call_openrouter", return_value="cloud response") as mock_openrouter:
+        mock_client_instance = mock_client.return_value.__enter__.return_value
+        mock_response = MagicMock(status_code=500)
+        mock_client_instance.post.return_value = mock_response
+
+        result = call_local_rpc("public prompt", allow_cloud=True)
+
+    assert result == "cloud response"
+    assert mock_openrouter.call_args.kwargs["classification"] == "PUBLIC"
+
+
+def test_opencode_retries_supported_fallback_after_rejected_configured_model():
+    rejected = MagicMock(status_code=401, text='{"message":"Model hy3-free is not supported"}')
+    recovered = MagicMock(status_code=200)
+    recovered.json.return_value = {"choices": [{"message": {"content": "recovered response"}}]}
+
+    with patch("llm_router.OPENCODE_ZEN_API_KEY", "test-key"), \
+         patch("llm_router.OPENCODE_ZEN_FALLBACK_MODEL", "mimo-v2.5-free"), \
+         patch("llm_router.httpx.Client") as mock_client, \
+         patch("llm_router.log_call"):
+        mock_client_instance = mock_client.return_value.__enter__.return_value
+        mock_client_instance.post.side_effect = [rejected, recovered]
+
+        result = call_opencode(
+            prompt="public prompt",
+            model="hy3-free",
+            classification="PUBLIC",
+        )
+
+    assert result == "recovered response"
+    attempted_models = [call.kwargs["json"]["model"] for call in mock_client_instance.post.call_args_list]
+    assert attempted_models == ["hy3-free", "mimo-v2.5-free"]
+
+
 def test_cloud_adapters_fail_closed_without_explicit_public_classification():
     with patch("llm_router._do_call") as mock_do_call:
         result = call_openrouter(model="test-model", prompt="private prompt")

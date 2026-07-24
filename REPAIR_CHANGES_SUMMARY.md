@@ -47,7 +47,11 @@ This document captures all agent-owned code changes from the bug audit repair wo
 - **Cloud adapters default to `PRIVATE`** and reject any request unless its classification is exactly `PUBLIC`
 - **Private callers** never enable cloud fallback: watchdog, OCR/photo, curated-brain, cached study-guide inputs, and PII routes remain local
 - **Local fallback chain:** Surface → Pi Ollama → Dell local Ollama
+- **Legacy Pi/Surface compatibility:** `allow_cloud` is accepted by both local-RPC entry points; `False` remains private and `True` maps to public only when classification is omitted
 - **Fail message:** `"⚠️ Local inference unavailable and cloud fallback disabled."` (no cloud call)
+
+### 4b. Cloud Provider Recovery (`llm_router.py`)
+- **Opencode Zen** retries `OPENCODE_ZEN_FALLBACK_MODEL` (`mimo-v2.5-free` by default) when the configured model is explicitly rejected, covering stale `hy3-free` configuration without weakening classification controls
 
 ### 4a. Cloud Chat Context Containment (`bot/ai_bridge.py`)
 - **Manual cloud selection is screened locally** just like automatic routing; a private result is forced to local Flash
@@ -147,7 +151,7 @@ This document captures all agent-owned code changes from the bug audit repair wo
 | Test File | Scope |
 |-----------|-------|
 | `tests/test_p0_security.py` | Command guard, Telegram auth, Cluster API auth/download |
-| `tests/test_routing_privacy.py` | Cloud classification boundary, private-context containment, provider argument order, and Dell fallback |
+| `tests/test_routing_privacy.py` | Cloud classification boundary, legacy RPC compatibility, Opencode model recovery, private-context containment, provider argument order, and Dell fallback |
 | `tests/test_reliability.py` | Cache paths, queue ack, state concurrency, Notion failure, full-content hash, nightly import safety |
 | `tests/test_reliability_tranche.py` | Cache dir, queue failure handling, state primitive |
 | `tests/test_telegram_logger.py` | Queue-backed emit, no synchronous network I/O |
@@ -160,7 +164,7 @@ This document captures all agent-owned code changes from the bug audit repair wo
 | `tests/test_private_guide_generation.py` | Explicit cloud opt-in and local-fallback mega-guide inference |
 
 The original repair suite reported 35 tests. The final local verification run
-reported **62 passed** with no skips; tests use safe fake credentials and block
+reported **65 passed** with no skips; tests use safe fake credentials and block
 network access by default. PyPDF2 emits one upstream deprecation warning.
 
 ---
@@ -209,7 +213,7 @@ utils.py
 ```bash
 # All tests
 ./venv/bin/pytest tests -q
-# → 62 passed, 1 PyPDF2 upstream deprecation warning
+# → 65 passed, 1 PyPDF2 upstream deprecation warning
 
 # Syntax & compilation
 python3 -W error::SyntaxWarning -m py_compile $(git ls-files '*.py')

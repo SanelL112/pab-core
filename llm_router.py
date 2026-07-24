@@ -24,6 +24,7 @@ from config import (
     OPENROUTER_API_KEY, OR_DEFAULT_MODEL, OR_FALLBACK_MODEL, OR_THIRD_MODEL,
     COST_LOG_FILE, AGENTAPI_BIN, OLLAMA_URL, OLLAMA_ORANGEPI_URL,
     OPENCODE_ZEN_API_KEY, OPENCODE_ZEN_URL, OPENCODE_ZEN_MODEL,
+    OPENCODE_ZEN_FALLBACK_MODEL,
 )
 
 logger = logging.getLogger(__name__)
@@ -213,6 +214,28 @@ def is_valid_response(text: str) -> bool:
 def _allows_cloud(classification: object) -> bool:
     """Cloud adapters require an explicit, exact public classification."""
     return isinstance(classification, str) and classification.upper() == "PUBLIC"
+
+
+def _normalize_cloud_classification(
+    classification: object | None,
+    allow_cloud: object | None = None,
+) -> str:
+    """Normalize routing flags while accepting the retired ``allow_cloud`` API.
+
+    ``allow_cloud=False`` always wins to preserve a caller's privacy intent.
+    ``allow_cloud=True`` is honored only when no classification was supplied.
+    Unknown values fail closed as ``PRIVATE``.
+    """
+    if allow_cloud is False:
+        return "PRIVATE"
+    if classification is not None:
+        if isinstance(classification, str) and classification.upper() in {"PRIVATE", "PUBLIC"}:
+            return classification.upper()
+        logger.warning("Invalid cloud classification %r; treating as PRIVATE", classification)
+        return "PRIVATE"
+    if allow_cloud is True:
+        return "PUBLIC"
+    return "PRIVATE"
 
 
 def call_openrouter(
@@ -680,7 +703,8 @@ def call_local_rpc(
     max_tokens: int = 1024,
     temperature: float = 0.0,
     timeout: int = 120,
-    classification: str = "PRIVATE",
+    classification: str | None = None,
+    allow_cloud: bool | None = None,
 ) -> str:
     """
     Primary local inference path — tries cluster nodes in order.
@@ -700,22 +724,17 @@ def call_local_rpc(
         timeout: Max seconds to wait
         classification: "PRIVATE" or "PUBLIC". Any other value is treated as
             PRIVATE, so an invalid caller cannot enable a cloud fallback.
+        allow_cloud: Deprecated compatibility flag for older Pi/Surface jobs.
+            ``False`` forces private routing; ``True`` permits cloud only when
+            ``classification`` was omitted.
 
 
     Returns:
         Generated text, or empty string/warning if all local paths fail.
     """
-    if not isinstance(classification, str):
-        logger.warning("call_local_rpc: invalid non-string classification; treating as PRIVATE")
-        normalized_classification = "PRIVATE"
-    else:
-        normalized_classification = classification.upper()
-        if normalized_classification not in {"PRIVATE", "PUBLIC"}:
-            logger.warning(
-                "call_local_rpc: invalid classification %r; treating as PRIVATE",
-                classification,
-            )
-            normalized_classification = "PRIVATE"
+    normalized_classification = _normalize_cloud_classification(classification, allow_cloud)
+    if allow_cloud is not None:
+        logger.info("call_local_rpc: accepted deprecated allow_cloud compatibility flag")
 
     surface_timeout = min(timeout, 45)  # Don't hang on Surface — fall through fast
 
@@ -1064,7 +1083,8 @@ def call_llamacpp_rpc_with_fallback(
     task: str = "overnight",
     timeout: int = 600,
     skip_cloud_fallback: bool = False,
-    classification: str = "PRIVATE",
+    classification: str | None = None,
+    allow_cloud: bool | None = None,
 ) -> str:
     """
     Call Surface orchestrator API with full OOM protection and fallback chain.
@@ -1084,6 +1104,8 @@ def call_llamacpp_rpc_with_fallback(
         timeout: Per-request timeout (seconds)
         skip_cloud_fallback: If True, skip the cloud API fallback (step 3).
             Use when caller has its own cloud fallback (e.g., Mega Study Builder).
+        classification: Explicit privacy classification; cloud requires PUBLIC.
+        allow_cloud: Deprecated compatibility flag for older cluster jobs.
 
     Returns:
         Generated text, or empty string if all fallbacks fail.
@@ -1093,6 +1115,10 @@ def call_llamacpp_rpc_with_fallback(
         RPC_FALLBACK_OLLAMA_MODEL, RPC_FALLBACK_CLOUD_MODEL,
         RPC_INFERENCE_TIMEOUT
     )
+
+    normalized_classification = _normalize_cloud_classification(classification, allow_cloud)
+    if allow_cloud is not None:
+        logger.info("call_llamacpp_rpc_with_fallback: accepted deprecated allow_cloud compatibility flag")
 
     # ── Step 1: Check if RPC is viable (memory check) ─────────────────────
     mem_ok, mem_reason = check_rpc_memory_ok(
@@ -1137,7 +1163,7 @@ def call_llamacpp_rpc_with_fallback(
         logger.warning(f"Ollama fallback: failed ({e}), trying cloud...")
 
     # ── Step 3: Final fallback to cloud API (OpenRouter free tier) ───────
-    if skip_cloud_fallback or not _allows_cloud(classification):
+    if skip_cloud_fallback or not _allows_cloud(normalized_classification):
         logger.info("Cloud fallback skipped for private/unclassified content")
         return ""
 
@@ -1214,6 +1240,10 @@ def call_opencode(
         messages.append({"role": "system", "content": scrubbed_system})
     messages.append({"role": "user", "content": scrubbed_prompt})
 
+    models_to_try = [model]
+    if model != OPENCODE_ZEN_FALLBACK_MODEL:
+        models_to_try.append(OPENCODE_ZEN_FALLBACK_MODEL)
+
     start = time.time()
     try:
         with httpx.Client(
@@ -1223,27 +1253,45 @@ def call_opencode(
                 "Content-Type": "application/json",
             },
         ) as client:
-            resp = client.post(
-                f"{OPENCODE_ZEN_URL.rstrip('/')}/chat/completions",
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                    "temperature": temperature,
-                },
-            )
-        if resp.status_code == 200:
-            data = resp.json()
-            text = data["choices"][0]["message"]["content"].strip()
-            duration = time.time() - start
-            log_call(model, task, prompt, text, duration)
-            logger.info(
-                f"Opencode Zen ({model}): {len(text)} chars in {duration:.1f}s"
-            )
-            return text
-        else:
-            logger.error(f"Opencode Zen: HTTP {resp.status_code}: {resp.text[:200]}")
-            return ""
+            for candidate_model in models_to_try:
+                resp = client.post(
+                    f"{OPENCODE_ZEN_URL.rstrip('/')}/chat/completions",
+                    json={
+                        "model": candidate_model,
+                        "messages": messages,
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                    },
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    text = data["choices"][0]["message"]["content"].strip()
+                    duration = time.time() - start
+                    log_call(candidate_model, task, prompt, text, duration)
+                    logger.info(
+                        "Opencode Zen (%s): %s chars in %.1fs",
+                        candidate_model,
+                        len(text),
+                        duration,
+                    )
+                    return text
+
+                error_text = getattr(resp, "text", "")[:200]
+                model_rejected = (
+                    candidate_model != OPENCODE_ZEN_FALLBACK_MODEL
+                    and "model" in error_text.lower()
+                    and "not supported" in error_text.lower()
+                )
+                if model_rejected:
+                    logger.warning(
+                        "Opencode Zen rejected configured model %s; retrying with %s",
+                        candidate_model,
+                        OPENCODE_ZEN_FALLBACK_MODEL,
+                    )
+                    continue
+                logger.error("Opencode Zen: HTTP %s: %s", resp.status_code, error_text)
+                return ""
+        return ""
     except httpx.TimeoutException:
         logger.error(f"Opencode Zen: timed out after {timeout}s")
         return ""

@@ -48,7 +48,14 @@ permissions are applied on write and rotation, and expiry is covered by a local
 regression test.  The period remains configurable through
 `CHAT_HISTORY_RETENTION_DAYS`; `0` is an explicit administrator opt-out.
 
-The local suite completed with **62 passed** using
+`call_local_rpc()` and `call_llamacpp_rpc_with_fallback()` now accept the
+retired `allow_cloud` flag used by older Pi/Surface jobs. `False` remains
+fail-closed, while `True` maps to `PUBLIC` only when no classification is
+provided. Opencode Zen retries the configured `mimo-v2.5-free` fallback when a
+configured model is explicitly rejected, covering the historical `hy3-free`
+401 without bypassing cloud classification.
+
+The local suite completed with **65 passed** using
 `pytest tests -q -ra --fail-on-skip`, with network calls blocked by default.
 The only warning is PyPDF2's upstream deprecation notice; no test was skipped.
 
@@ -61,7 +68,7 @@ The only warning is PyPDF2's upstream deprecation notice; no test was skipped.
 | SEC-04 | **Operational action required** | Code reduces future HTTP client noise, but the historical Telegram token exposure still requires rotation, secret-store update, service restart, and journal-retention review. |
 | SEC-05 | **Resolved in source / operational policy configurable** | Activity logs enforce a metadata-only schema, Telegram notifications are queued, raw OCR is neither saved to `important_extracts.txt` nor retained in chat history, and per-topic chat histories are owner-only and expire after 30 days by default. An operator may set `CHAT_HISTORY_RETENTION_DAYS` for the required retention policy. |
 | LLM-05 | **Partial / operationally unverified** | The router has safer local fallback behavior, but worker participation and the Surface RPC lifecycle still need a controlled deployment/restart test. |
-| RUNTIME-01 | **Open — deployment mismatch** | Pi alerts on 2026-07-23 show `call_local_rpc()` rejecting `allow_cloud`, although the current `main` implementation accepts it. The Pi is running an incompatible or partially deployed code/configuration set; this blocks memory consolidation and offline indexing. Deploy and restart the full compatible unit before further runtime conclusions. |
+| RUNTIME-01 | **Resolved in source / deployment required** | `call_local_rpc()` and the RPC fallback now accept the legacy `allow_cloud` argument safely. Deploy current `main` and restart the Pi/Surface jobs; until then, older running components can still emit the TypeError and block indexing. |
 | MCP-01 | **Operationally open** | Canvas still needs Composio re-authentication. |
 | MCP-02, MCP-03 | **Partial** | Composio/native selection is configuration-driven; MCP response parsing supports JSON/SSE, closes connections, and reports Canvas token expiry explicitly. Live credential health remains operational. |
 | LOG-02 | **Resolved in source** | `activity_log` uses a bounded daemon queue for muted Telegram delivery and never blocks a bot handler on HTTP. |

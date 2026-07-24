@@ -70,6 +70,9 @@ OLLAMA_ORANGEPI_URL = os.getenv("OLLAMA_ORANGEPI_URL", "http://10.10.10.2:11434"
 OPENCODE_ZEN_API_KEY = os.getenv("OPENCODE_ZEN_API_KEY", "")
 OPENCODE_ZEN_URL = os.getenv("OPENCODE_ZEN_URL", "https://opencode.ai/zen/v1")
 OPENCODE_ZEN_MODEL = os.getenv("OPENCODE_ZEN_MODEL", "mimo-v2.5-free")
+# Used only when the configured Opencode model is explicitly rejected by the
+# provider (for example the historical ``hy3-free is not supported`` error).
+OPENCODE_ZEN_FALLBACK_MODEL = os.getenv("OPENCODE_ZEN_FALLBACK_MODEL", "mimo-v2.5-free")
 RESPONSE_TIMEOUT = 300  # seconds to wait for a reply
 HACKCLUB_AI_API_KEY = os.getenv("HACKCLUB_AI_API_KEY", "")
 HACKCLUB_AI_BASE_URL = os.getenv("HACKCLUB_AI_BASE_URL", "https://ai.hackclub.com/proxy/v1")
