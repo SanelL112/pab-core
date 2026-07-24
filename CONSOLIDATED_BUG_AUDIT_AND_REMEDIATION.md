@@ -59,7 +59,10 @@ Pyflakes also found and the source now fixes a watchdog attachment-processing
 defect: it loads state before de-duplicating newly discovered classroom files,
 preventing the former undefined `state` runtime failure.
 
-The local suite completed with **66 passed** using
+Deployments can set `PAB_RUNTIME_DIR` to retain the existing `.env` and
+runtime data while running code from a clean release checkout.
+
+The local suite completed with **67 passed** using
 `pytest tests -q -ra --fail-on-skip`, with network calls blocked by default.
 The only warning is PyPDF2's upstream deprecation notice; no test was skipped.
 

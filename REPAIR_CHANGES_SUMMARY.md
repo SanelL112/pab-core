@@ -165,7 +165,7 @@ This document captures all agent-owned code changes from the bug audit repair wo
 | `tests/test_private_guide_generation.py` | Explicit cloud opt-in and local-fallback mega-guide inference |
 
 The original repair suite reported 35 tests. The final local verification run
-reported **66 passed** with no skips; tests use safe fake credentials and block
+reported **67 passed** with no skips; tests use safe fake credentials and block
 network access by default. PyPDF2 emits one upstream deprecation warning.
 
 ---
@@ -214,7 +214,7 @@ utils.py
 ```bash
 # All tests
 ./venv/bin/pytest tests -q
-# → 66 passed, 1 PyPDF2 upstream deprecation warning
+# → 67 passed, 1 PyPDF2 upstream deprecation warning
 
 # Syntax & compilation
 python3 -W error::SyntaxWarning -m py_compile $(git ls-files '*.py')

@@ -2,11 +2,12 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env from the bot directory
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
-
 # ── Base Paths ────────────────────────────────────────────────────────────────
-BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+# Code can be deployed from an immutable release checkout while retaining the
+# existing runtime data and secrets in the production directory.
+CODE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = Path(os.getenv("PAB_RUNTIME_DIR", str(CODE_DIR))).expanduser().resolve()
+load_dotenv(BASE_DIR / ".env")
 CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
