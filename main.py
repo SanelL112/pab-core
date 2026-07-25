@@ -773,9 +773,16 @@ async def nightly_wrapper(context: ContextTypes.DEFAULT_TYPE):
     try:
         msg = await context.bot.send_message(chat_id=chat_id, text="💤 **Entering Sleep Cycle...** Initiating nightly background tasks.", disable_notification=True)
 
-        # 1. Process queued practice PDFs
+        # 1. Discover recent Canvas PDFs/docs, then process all queued study material.
         try: await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="💤 **Sleep Cycle:**\n1️⃣ Processing queued OCR/Practice PDFs...", parse_mode="Markdown")
         except Exception: pass
+        try:
+            from scrapers.canvas_scraper import queue_recent_canvas_study_files
+            canvas_files_queued = await asyncio.to_thread(queue_recent_canvas_study_files)
+            if canvas_files_queued:
+                logger.info("Nightly: queued %d Canvas study file(s)", canvas_files_queued)
+        except Exception as e:
+            logger.warning("Nightly: Canvas study-file discovery failed (non-critical): %s", e)
         await run_nightly_job(context.bot, chat_id)
 
         # 1.5. Clean up stale Notion tasks (archive >60d)

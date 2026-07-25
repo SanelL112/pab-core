@@ -9,6 +9,7 @@ storage never leave Firefox.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -35,6 +36,14 @@ from scrapers.canvas_scraper import (  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("canvas_browser_daemon")
+
+CLASSLINK_APP_URL = "https://myapps.classlink.com/home"
+CLASSLINK_HOSTS = {"launchpad.classlink.com", "myapps.classlink.com"}
+CLASSLINK_NON_APP_LABELS = {
+    "add apps", "add & share apps", "edit mode", "help", "home", "log out",
+    "logout", "my apps", "notifications", "profile", "search", "settings",
+    "sign out", "switch account",
+}
 
 
 class VirtualDisplay:
@@ -99,6 +108,87 @@ class BrowserDaemon:
         driver.switch_to.window(original)
         return False
 
+    def _select_classlink_tab(self) -> bool:
+        """Select a ClassLink tab, opening only the app dashboard if needed."""
+        assert self.client.driver is not None
+        driver = self.client.driver
+        original = driver.current_window_handle
+        for handle in driver.window_handles:
+            driver.switch_to.window(handle)
+            if urlsplit(driver.current_url).netloc in CLASSLINK_HOSTS:
+                return True
+        # Canvas may have opened in a new tab and replaced the LaunchPad tab.
+        # Opening the dashboard is read-only and reuses the existing ClassLink
+        # session; no app itself is opened.
+        try:
+            driver.switch_to.new_window("tab")
+            driver.get(CLASSLINK_APP_URL)
+            return urlsplit(driver.current_url).netloc in CLASSLINK_HOSTS
+        except Exception:
+            try:
+                driver.switch_to.window(original)
+            except Exception:
+                pass
+            return False
+
+    @staticmethod
+    def _clean_app_entries(entries: object) -> list[dict[str, str | None]]:
+        """Remove dashboard chrome and de-duplicate visible app labels."""
+        if not isinstance(entries, list):
+            return []
+        apps: list[dict[str, str | None]] = []
+        seen: set[str] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            name = " ".join(str(entry.get("name") or "").split())
+            if not name or len(name) > 140 or name.lower() in CLASSLINK_NON_APP_LABELS:
+                continue
+            # Dashboard navigation controls normally have no app-like parent
+            # class and no destination. Keep actual applications even when
+            # ClassLink launches them with JavaScript instead of an href.
+            href = entry.get("href")
+            class_name = str(entry.get("className") or "").lower()
+            if not href and "app" not in class_name and "tile" not in class_name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            apps.append({"name": name, "url": str(href) if href else None})
+        return apps
+
+    def list_classlink_apps(self) -> dict[str, object]:
+        """List visible ClassLink app tiles without opening any application."""
+        assert self.client.driver is not None
+        with self.lock:
+            if not self._select_classlink_tab():
+                raise CanvasSignInRequired("ClassLink is not available in the persistent Firefox session.")
+            driver = self.client.driver
+            deadline = time.monotonic() + 10
+            entries: object = []
+            while time.monotonic() < deadline:
+                entries = driver.execute_script(
+                    """
+                    return Array.from(document.querySelectorAll(
+                      'a, button, [role="link"], [role="button"]'
+                    )).map((element) => ({
+                      name: element.getAttribute('aria-label') || element.getAttribute('title') || element.innerText || '',
+                      href: element.href || element.getAttribute('data-url') || null,
+                      className: [
+                        element.className || '',
+                        element.parentElement?.className || '',
+                        element.closest('[class*="app" i], [class*="tile" i]')?.className || ''
+                      ].join(' ')
+                    }));
+                    """
+                )
+                apps = self._clean_app_entries(entries)
+                if apps:
+                    return {"apps": apps, "location": self.location()}
+                time.sleep(0.5)
+            return {"apps": [], "location": self.location()}
+
     def health(self) -> dict[str, object]:
         with self.lock:
             assert self.client.driver is not None
@@ -146,6 +236,56 @@ class BrowserDaemon:
                 raise CanvasSignInRequired("Canvas is not open in the persistent Firefox session.")
             return self.client._request_json(path_or_url)
 
+    def download_canvas_file(self, file_id: str) -> tuple[bytes, str, str]:
+        """Download a bounded Canvas file through Firefox, never via copied cookies."""
+        if not file_id.isdigit():
+            raise CanvasSessionError("Canvas file IDs must be numeric.")
+        max_bytes = max(1, int(os.getenv("CANVAS_STUDY_FILE_MAX_MB", "15"))) * 1024 * 1024
+        with self.lock:
+            if not self._select_canvas_tab():
+                raise CanvasSignInRequired("Canvas is not open in the persistent Firefox session.")
+            metadata = self.client.get_json(f"/api/v1/files/{file_id}")
+            if not isinstance(metadata, dict) or not metadata.get("url"):
+                raise CanvasSessionError("Canvas did not provide a downloadable file URL.")
+            result = self.client.driver.execute_async_script(
+                """
+                const target = arguments[0];
+                const maxBytes = arguments[1];
+                const done = arguments[arguments.length - 1];
+                fetch(target, {credentials: 'include', redirect: 'follow'}).then(async (response) => {
+                  const declaredSize = Number(response.headers.get('content-length') || 0);
+                  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                  if (declaredSize && declaredSize > maxBytes) throw new Error('File is larger than the configured limit.');
+                  const buffer = await response.arrayBuffer();
+                  if (buffer.byteLength > maxBytes) throw new Error('File is larger than the configured limit.');
+                  const bytes = new Uint8Array(buffer);
+                  let binary = '';
+                  const chunkSize = 0x8000;
+                  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+                    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+                  }
+                  done({
+                    data: btoa(binary),
+                    contentType: response.headers.get('content-type') || 'application/octet-stream'
+                  });
+                }).catch((error) => done({error: String(error)}));
+                """,
+                metadata["url"],
+                max_bytes,
+            )
+            if not isinstance(result, dict) or result.get("error") or not result.get("data"):
+                raise CanvasSessionError(
+                    f"Canvas file download failed: {result.get('error', 'unknown error') if isinstance(result, dict) else 'unknown error'}"
+                )
+            try:
+                content = base64.b64decode(result["data"], validate=True)
+            except (TypeError, ValueError) as exc:
+                raise CanvasSessionError("Canvas returned invalid file data.") from exc
+            if len(content) > max_bytes:
+                raise CanvasSessionError("Canvas file is larger than the configured limit.")
+            filename = str(metadata.get("display_name") or metadata.get("filename") or f"canvas-{file_id}")
+            return content, str(result.get("contentType") or "application/octet-stream"), filename
+
     def close(self) -> None:
         self.client.close()
 
@@ -157,6 +297,15 @@ class DaemonHandler(BaseHTTPRequestHandler):
         route = urlsplit(self.path)
         if route.path == "/health":
             self._send(200, self.server.daemon.health())
+            return
+        if route.path == "/apps":
+            try:
+                self._send(200, self.server.daemon.list_classlink_apps())
+            except CanvasSignInRequired as exc:
+                self._send(401, {"error": str(exc)})
+            except Exception:
+                logger.exception("ClassLink app listing failed")
+                self._send(500, {"error": "Could not list ClassLink apps."})
             return
         if route.path == "/request":
             value = parse_qs(route.query).get("path", [""])[0]
@@ -172,6 +321,20 @@ class DaemonHandler(BaseHTTPRequestHandler):
             else:
                 self._send(200, {"data": data, "link": link})
             return
+        if route.path == "/download":
+            file_id = parse_qs(route.query).get("file_id", [""])[0]
+            try:
+                content, content_type, filename = self.server.daemon.download_canvas_file(file_id)
+            except CanvasSignInRequired as exc:
+                self._send(401, {"error": str(exc)})
+            except CanvasSessionError as exc:
+                self._send(400, {"error": str(exc)})
+            except Exception:
+                logger.exception("Canvas file download failed")
+                self._send(500, {"error": "Canvas file download failed."})
+            else:
+                self._send_binary(200, content, content_type, filename)
+            return
         self._send(404, {"error": "Not found."})
 
     def _send(self, status: int, payload: dict[str, object]) -> None:
@@ -179,6 +342,15 @@ class DaemonHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_binary(self, status: int, body: bytes, content_type: str, filename: str) -> None:
+        safe_filename = filename.replace('"', "'").replace("\r", "").replace("\n", "")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'attachment; filename="{safe_filename}"')
         self.end_headers()
         self.wfile.write(body)
 

@@ -15,6 +15,8 @@ import os
 import re
 import stat
 import time
+import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
@@ -49,6 +51,115 @@ def _env_bool(name: str, default: bool) -> bool:
 
 def _short_date(value: Any, fallback: str) -> str:
     return str(value)[:10] if value else fallback
+
+
+def _parse_canvas_date(value: Any) -> datetime | None:
+    """Parse Canvas's ISO timestamps into an aware UTC datetime."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _assignment_is_actionable(assignment: dict[str, Any], now: datetime | None = None) -> bool:
+    """Return whether an assignment belongs in the active task feed.
+
+    Canvas favorites often include old club and prior-year courses.  Canvas also
+    returns those old assignments when sorting by ``updated_at``.  A due date
+    is the best indicator of an actionable task; undated work is retained only
+    when it was edited recently.  Both windows are configurable so an unusual
+    teacher workflow can be accommodated without changing code.
+    """
+    if assignment.get("workflow_state") == "deleted":
+        return False
+
+    now = now or datetime.now(timezone.utc)
+    overdue_grace_days = max(0, int(os.getenv("CANVAS_ASSIGNMENT_OVERDUE_GRACE_DAYS", "7")))
+    undated_update_days = max(0, int(os.getenv("CANVAS_NO_DUE_UPDATE_DAYS", "21")))
+    due_at = _parse_canvas_date(assignment.get("due_at"))
+
+    if due_at is not None:
+        return due_at >= now - timedelta(days=overdue_grace_days)
+
+    updated_at = _parse_canvas_date(assignment.get("updated_at"))
+    return updated_at is not None and updated_at >= now - timedelta(days=undated_update_days)
+
+
+def _assignment_sort_key(assignment: dict[str, Any]) -> tuple[int, datetime]:
+    """Sort dated work by urgency, then recent undated work by last update."""
+    due_at = _parse_canvas_date(assignment.get("due_at"))
+    if due_at is not None:
+        return (0, due_at)
+    # Reverse the undated time so more recently edited work appears first.
+    updated_at = _parse_canvas_date(assignment.get("updated_at")) or datetime.min.replace(tzinfo=timezone.utc)
+    return (1, datetime.max.replace(tzinfo=timezone.utc) - (updated_at - datetime.min.replace(tzinfo=timezone.utc)))
+
+
+def _is_recent_canvas_update(item: dict[str, Any], *fields: str, now: datetime | None = None) -> bool:
+    """Keep informational Canvas content out of the digest after it goes stale."""
+    now = now or datetime.now(timezone.utc)
+    update_days = max(0, int(os.getenv("CANVAS_CONTENT_UPDATE_DAYS", "21")))
+    for field in fields:
+        value = _parse_canvas_date(item.get(field))
+        if value is not None:
+            return value >= now - timedelta(days=update_days)
+    return False
+
+
+def _canvas_coursework_window() -> tuple[datetime, datetime]:
+    """Return the past/future window used for current Canvas work."""
+    now = datetime.now(timezone.utc)
+    overdue_days = max(0, int(os.getenv("CANVAS_OVERDUE_LOOKBACK_DAYS", "30")))
+    due_soon_days = max(1, int(os.getenv("CANVAS_DUE_SOON_DAYS", "14")))
+    return now - timedelta(days=overdue_days), now + timedelta(days=due_soon_days)
+
+
+def _submission_is_complete(submission: Any) -> bool:
+    if not isinstance(submission, dict):
+        return False
+    if submission.get("excused"):
+        return True
+    return bool(
+        submission.get("submitted_at")
+        or submission.get("graded_at")
+        or submission.get("workflow_state") in {"submitted", "graded"}
+    )
+
+
+def _submission_state(assignment: dict[str, Any], now: datetime) -> str | None:
+    """Classify work by completion only; Canvas scores are deliberately ignored."""
+    submission = assignment.get("submission") or {}
+    due_at = _parse_canvas_date(assignment.get("due_at"))
+    complete = _submission_is_complete(submission)
+    if isinstance(submission, dict) and submission.get("excused"):
+        return None
+    if isinstance(submission, dict) and submission.get("missing"):
+        return "Missing"
+    if due_at and due_at < now and not complete:
+        return "Overdue"
+    if isinstance(submission, dict) and submission.get("late") and complete:
+        return "Submitted late"
+    if complete:
+        return "Completed"
+    return None
+
+
+def _supported_canvas_study_file(file_data: dict[str, Any]) -> bool:
+    """Keep the nightly study pipeline to formats it can extract safely."""
+    content_type = str(file_data.get("content-type") or file_data.get("content_type") or "").lower()
+    filename = str(file_data.get("display_name") or file_data.get("filename") or "").lower()
+    allowed_extensions = (".pdf", ".docx", ".txt")
+    return (
+        content_type in {
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "text/plain",
+        }
+        or filename.endswith(allowed_extensions)
+    )
 
 
 class CanvasBrowserClient:
@@ -139,6 +250,45 @@ class CanvasBrowserClient:
     def get_json(self, path_or_url: str) -> Any:
         data, _ = self._request_json(path_or_url)
         return data
+
+    def download_file(self, file_id: str | int, destination: str | Path) -> bool:
+        """Download one Canvas file through Firefox's authenticated session.
+
+        File bytes are streamed only from the localhost browser daemon.  The
+        bot never stores or reuses Canvas session cookies outside Firefox.
+        """
+        if not str(file_id).isdigit():
+            raise CanvasSessionError("Canvas file IDs must be numeric.")
+        if not self.use_daemon:
+            raise CanvasSessionError("Canvas file downloads require the persistent browser daemon.")
+        try:
+            response = requests.get(
+                f"{self.daemon_url}/download",
+                params={"file_id": str(file_id)},
+                timeout=180,
+            )
+        except requests.RequestException as exc:
+            raise CanvasSessionError("Canvas browser daemon did not return the requested file.") from exc
+
+        if response.status_code in {401, 403}:
+            raise CanvasSignInRequired("The saved Canvas session has expired.")
+        if response.status_code != 200:
+            try:
+                detail = response.json().get("error", "Canvas file download failed.")
+            except ValueError:
+                detail = "Canvas file download failed."
+            raise CanvasSessionError(detail)
+
+        destination_path = Path(destination)
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with tempfile.NamedTemporaryFile(dir=destination_path.parent, delete=False) as temporary:
+                temporary.write(response.content)
+                temporary_path = Path(temporary.name)
+            temporary_path.replace(destination_path)
+            return True
+        except OSError as exc:
+            raise CanvasSessionError("Could not save the Canvas study file.") from exc
 
     def _connect_to_daemon(self) -> None:
         try:
@@ -625,8 +775,14 @@ def _with_client(operation: Any, unavailable: str = "") -> str:
 
 
 def _get_upcoming_assignments(canvas: CanvasBrowserClient, courses: list[dict[str, Any]] | None = None) -> str:
+    """Return an action-oriented Canvas view with submission completion state."""
     courses = courses if courses is not None else canvas.get_favorite_courses()
-    assignments_text: list[str] = []
+    overdue: list[tuple[datetime, str]] = []
+    due_soon: list[tuple[datetime, str]] = []
+    completed: list[tuple[datetime, str]] = []
+    lookback, upcoming_cutoff = _canvas_coursework_window()
+    now = datetime.now(timezone.utc)
+    per_section_limit = max(1, int(os.getenv("CANVAS_ACTION_ITEMS_LIMIT", "8")))
 
     for course in courses:
         course_id = course.get("id")
@@ -635,26 +791,156 @@ def _get_upcoming_assignments(canvas: CanvasBrowserClient, courses: list[dict[st
             continue
         try:
             assignments = canvas.get_paginated(
-                f"/api/v1/courses/{course_id}/assignments?order_by=updated_at&order=desc&per_page=10",
+                # ``submission`` supplies completion/missing/late state for
+                # the signed-in student. No score is requested or displayed.
+                f"/api/v1/courses/{course_id}/assignments?include[]=submission&order_by=due_at&order=asc&per_page=100",
                 max_pages=1,
             )
-            for assignment in assignments[:10]:
-                assignments_text.append(
-                    f"[{course_name}] {assignment.get('name', 'Untitled')} - "
-                    f"Due: {_short_date(assignment.get('due_at'), 'No due date')} "
-                    f"(Updated: {_short_date(assignment.get('updated_at'), 'Unknown')})"
-                )
+            for assignment in assignments:
+                due_at = _parse_canvas_date(assignment.get("due_at"))
+                state = _submission_state(assignment, now)
+                title = assignment.get("name", "Untitled")
+                due_text = _short_date(assignment.get("due_at"), "No due date")
+                line = f"[{course_name}] {title} — Due: {due_text}"
+                if assignment.get("html_url"):
+                    line += f" [Link: {assignment['html_url']}]"
+
+                # A missing/overdue item stays visible for a manageable
+                # window; ancient prior-year work never floods the plan.
+                if state in {"Missing", "Overdue"} and (due_at is None or due_at >= lookback):
+                    overdue.append((due_at or now, f"{line} · **{state}**"))
+                elif (
+                    due_at is not None
+                    and now <= due_at <= upcoming_cutoff
+                    and state != "Completed"
+                    and state != "Submitted late"
+                ):
+                    due_soon.append((due_at, line))
+                elif state == "Completed":
+                    submitted_at = _parse_canvas_date((assignment.get("submission") or {}).get("submitted_at"))
+                    if submitted_at and submitted_at >= now - timedelta(days=7):
+                        completed.append((submitted_at, f"[{course_name}] {title} · Completed"))
         except CanvasSessionError as exc:
             logger.warning("Could not fetch assignments for %s: %s", course_name, exc)
 
-    if not assignments_text:
-        return "No recent assignments found in your favorite courses!"
-    return "📚 **Recent Canvas Assignments:**\n" + "\n".join(assignments_text)
+    overdue.sort(key=lambda item: item[0])
+    due_soon.sort(key=lambda item: item[0])
+    completed.sort(key=lambda item: item[0], reverse=True)
+    if not overdue and not due_soon and not completed:
+        return "✅ **Canvas: What to do next**\nNo current, missing, or recently completed coursework."
+
+    lines = ["🎯 **Canvas: What to do next**"]
+    if overdue:
+        lines.append("\n🚨 **Missing / overdue**")
+        lines.extend(f"- {line}" for _date, line in overdue[:per_section_limit])
+    if due_soon:
+        lines.append("\n📅 **Due soon**")
+        lines.extend(f"- {line}" for _date, line in due_soon[:per_section_limit])
+    if completed:
+        lines.append("\n✅ **Recently completed**")
+        lines.extend(f"- {line}" for _date, line in completed[:per_section_limit])
+    return "\n".join(lines)
 
 
 def get_upcoming_assignments() -> str:
-    """Fetch recent assignments from the normal ClassLink-authenticated Canvas session."""
+    """Fetch the current Canvas action plan and completion state."""
     return _with_client(_get_upcoming_assignments)
+
+
+def _get_canvas_study_files(
+    canvas: CanvasBrowserClient,
+    courses: list[dict[str, Any]] | None = None,
+) -> list[dict[str, str]]:
+    """Find recently updated PDF/DOCX/text materials suitable for study guides."""
+    courses = courses if courses is not None else canvas.get_favorite_courses()
+    update_days = max(1, int(os.getenv("CANVAS_STUDY_FILE_UPDATE_DAYS", "60")))
+    per_course_limit = max(1, int(os.getenv("CANVAS_STUDY_FILES_PER_COURSE", "3")))
+    max_file_bytes = max(1, int(os.getenv("CANVAS_STUDY_FILE_MAX_MB", "15"))) * 1024 * 1024
+    cutoff = datetime.now(timezone.utc) - timedelta(days=update_days)
+    candidates: list[dict[str, str]] = []
+
+    for course in courses:
+        course_id = course.get("id")
+        course_name = course.get("name", "Unnamed course")
+        if not course_id:
+            continue
+        try:
+            files = canvas.get_paginated(
+                f"/api/v1/courses/{course_id}/files?sort=updated_at&order=desc&per_page=50",
+                max_pages=1,
+            )
+        except CanvasSessionError as exc:
+            logger.info("Could not fetch study files for %s: %s", course_name, exc)
+            continue
+
+        kept = 0
+        for file_data in files:
+            updated_at = _parse_canvas_date(file_data.get("updated_at"))
+            if updated_at is None or updated_at < cutoff or not _supported_canvas_study_file(file_data):
+                continue
+            try:
+                size = int(file_data.get("size") or 0)
+            except (TypeError, ValueError):
+                size = 0
+            if size > max_file_bytes:
+                continue
+            file_id = file_data.get("id")
+            filename = file_data.get("display_name") or file_data.get("filename") or "Canvas material"
+            if not file_id:
+                continue
+            candidates.append({
+                "source": "canvas",
+                "file_id": str(file_id),
+                "title": f"[{course_name}] {filename}",
+                "filename": str(filename),
+                "course": str(course_name),
+                "updated_at": updated_at.isoformat(),
+            })
+            kept += 1
+            if kept >= per_course_limit:
+                break
+
+    return candidates
+
+
+def queue_recent_canvas_study_files() -> int:
+    """Queue new Canvas study materials for the existing nightly extractor."""
+    try:
+        import config
+        with CanvasBrowserClient() as canvas:
+            candidates = _get_canvas_study_files(canvas)
+    except CanvasSessionError as exc:
+        logger.warning("Canvas study-file queue skipped: %s", exc)
+        return 0
+
+    queue_path = Path(config.NIGHTLY_QUEUE_FILE)
+    try:
+        existing = json.loads(queue_path.read_text(encoding="utf-8")) if queue_path.exists() else []
+    except (OSError, json.JSONDecodeError):
+        existing = []
+    if not isinstance(existing, list):
+        existing = []
+
+    known = {
+        (str(item.get("source", "google_drive")), str(item.get("file_id", "")))
+        for item in existing
+        if isinstance(item, dict)
+    }
+    new_items = [
+        item for item in candidates
+        if (item["source"], item["file_id"]) not in known
+    ]
+    if not new_items:
+        return 0
+
+    existing.extend(new_items)
+    queue_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", dir=queue_path.parent, delete=False, encoding="utf-8") as temporary:
+        json.dump(existing, temporary, indent=2)
+        temporary_path = Path(temporary.name)
+    temporary_path.replace(queue_path)
+    logger.info("Queued %d new Canvas study file(s) for nightly extraction.", len(new_items))
+    return len(new_items)
 
 
 def _get_canvas_announcements(canvas: CanvasBrowserClient, courses: list[dict[str, Any]] | None = None) -> str:
@@ -675,8 +961,16 @@ def _get_canvas_announcements(canvas: CanvasBrowserClient, courses: list[dict[st
     if not announcements:
         return "No recent Canvas announcements."
 
+    recent_announcements = [
+        announcement
+        for announcement in announcements
+        if _is_recent_canvas_update(announcement, "posted_at", "updated_at")
+    ]
+    if not recent_announcements:
+        return "No recent Canvas announcements."
+
     lines = ["📢 **Canvas Announcements:**"]
-    for announcement in announcements[:5]:
+    for announcement in recent_announcements[:5]:
         title = announcement.get("title", "No title")
         posted = _short_date(announcement.get("posted_at"), "")
         lines.append(f"- {title}" + (f" (posted {posted})" if posted else ""))
@@ -703,7 +997,8 @@ def _get_canvas_pages(canvas: CanvasBrowserClient, courses: list[dict[str, Any]]
                 f"/api/v1/courses/{course_id}/pages?sort=updated_at&order=desc&per_page=3",
                 max_pages=1,
             )
-            for page in pages[:3]:
+            recent_pages = [page for page in pages if _is_recent_canvas_update(page, "updated_at", "created_at")]
+            for page in recent_pages[:3]:
                 title = page.get("title", "Untitled")
                 updated = _short_date(page.get("updated_at"), "")
                 lines.append(f"- [{course_name}] {title}" + (f" (updated {updated})" if updated else ""))
@@ -717,6 +1012,16 @@ def _get_canvas_pages(canvas: CanvasBrowserClient, courses: list[dict[str, Any]]
 def get_canvas_pages() -> str:
     """Fetch recently updated pages from the normal ClassLink-authenticated Canvas session."""
     return _with_client(_get_canvas_pages, unavailable="")
+
+
+def download_canvas_file(file_id: str | int, output_path: str | Path) -> bool:
+    """Download a queued study file through the live Canvas browser session."""
+    try:
+        with CanvasBrowserClient() as canvas:
+            return canvas.download_file(file_id, output_path)
+    except CanvasSessionError as exc:
+        logger.warning("Could not download Canvas file %s: %s", file_id, exc)
+        return False
 
 
 def get_all_canvas_data() -> str:

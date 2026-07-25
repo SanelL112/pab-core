@@ -7,6 +7,7 @@ from scrapers.google_scraper import download_drive_file
 import tempfile
 import PyPDF2
 import httpx
+from pathlib import Path
 
 load_dotenv()
 
@@ -32,18 +33,36 @@ async def run_nightly_job(bot, chat_id):
     for item in queue:
         title = item['title']
         file_id = item['file_id']
-        
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        source = item.get("source", "google_drive")
+        filename = str(item.get("filename") or title)
+        suffix = Path(filename).suffix.lower()
+        if suffix not in {".pdf", ".docx", ".txt"}:
+            suffix = ".pdf"  # Legacy Google queue items have no filename.
+
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             path = tmp.name
-            
-        if download_drive_file(file_id, path):
+
+        if source == "canvas":
+            from scrapers.canvas_scraper import download_canvas_file
+            downloaded = download_canvas_file(file_id, path)
+        else:
+            downloaded = download_drive_file(file_id, path)
+
+        if downloaded:
             try:
-                reader = PyPDF2.PdfReader(path)
-                text = ""
-                for page in reader.pages:
-                    text += page.extract_text() + "\n"
-                    
-                if len(text.strip()) <= 50:
+                if suffix == ".pdf":
+                    reader = PyPDF2.PdfReader(path)
+                    text = ""
+                    for page in reader.pages:
+                        text += page.extract_text() + "\n"
+                elif suffix == ".docx":
+                    from docx import Document
+                    document = Document(path)
+                    text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+                else:
+                    text = Path(path).read_text(encoding="utf-8", errors="replace")
+
+                if suffix == ".pdf" and len(text.strip()) <= 50:
                     try:
                         import pytesseract
                         from pdf2image import convert_from_path
