@@ -18,8 +18,9 @@ from pathlib import Path
 
 sys.path.insert(0, '/home/sanel/personal-assistant-bot')
 
+from scrapers.canvas_scraper import get_all_canvas_data
 from scrapers.composio_fetcher import (
-    get_all_canvas_data, get_unread_emails,
+    get_unread_emails,
     get_classroom_assignments, get_classroom_announcements,
     get_recent_google_docs
 )

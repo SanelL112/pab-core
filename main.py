@@ -35,8 +35,9 @@ TRANSCRIPT_PATH     = os.getenv(
 user_models = {}
 POLL_INTERVAL       = 2    # seconds between transcript polls
 
-# ── Data source toggle – switch between native scrapers and Composio ──
-USE_COMPOSIO = True  # True = use composio_fetcher (6mo OAuth), False = use existing scrapers (7-day tokens)
+# ── Data source toggle – Composio remains available for Google sources. ──
+# Canvas always uses the local Firefox/ClassLink session in canvas_scraper.py.
+USE_COMPOSIO = True
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -130,13 +131,13 @@ async def _watchdog_impl(context: ContextTypes.DEFAULT_TYPE):
     if is_sleep_window(): return
     chat_id = context.job.chat_id
     # sys.path already set at module level
+    from scrapers.canvas_scraper import get_all_canvas_data
     if USE_COMPOSIO:
         from scrapers.composio_fetcher import (
-            get_all_canvas_data, get_unread_emails,
+            get_unread_emails,
             get_classroom_assignments, get_classroom_announcements
         )
     else:
-        from scrapers.canvas_scraper import get_all_canvas_data
         from scrapers.google_scraper import get_unread_emails, get_classroom_assignments, get_classroom_announcements
     from scrapers.groupme_scraper import get_latest_messages
 
@@ -314,14 +315,14 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
     chat_id = context.job.chat_id
     state = load_state()
 
+    from scrapers.canvas_scraper import get_all_canvas_data
     if USE_COMPOSIO:
         from scrapers.composio_fetcher import (
-            get_all_canvas_data, get_unread_emails,
+            get_unread_emails,
             get_classroom_assignments, get_classroom_announcements,
             get_recent_google_docs
         )
     else:
-        from scrapers.canvas_scraper import get_all_canvas_data
         from scrapers.google_scraper import get_unread_emails, get_classroom_assignments, get_classroom_announcements, get_recent_google_docs
     from scrapers.groupme_scraper import get_latest_messages
     from ai_processor import process_all_sources

@@ -48,9 +48,16 @@ The system doesn't rely on a traditional database. Instead, it uses markdown and
    ```env
    TELEGRAM_BOT_TOKEN=your_telegram_bot_token
    OPENROUTER_API_KEY=your_openrouter_token
-   CANVAS_API_URL=https://canvas.instructure.com
-   CANVAS_API_TOKEN=your_canvas_token
+   # Canvas uses the normal ClassLink session in a persistent Firefox profile.
+   CANVAS_API_URL=https://your-school.instructure.com
+   CANVAS_SSO_ENTRY_URL=https://launchpad.classlink.com/forsyth
+   CLASSLINK_USERNAME=your_classlink_username
+   CLASSLINK_PASSWORD=your_classlink_password
    ```
+
+   Canvas uses one persistent Firefox session rather than a copied browser cookie. With the
+   Firefox desktop available through VNC, start `scripts/canvas_browser_daemon.py` with
+   `DISPLAY=:1`, sign into ClassLink manually, and leave that browser daemon running.
 
 3. **Google API Credentials**:
    Place your `credentials.json` in the root directory to generate a `token.json` file for Google Workspace integration (Classroom, Drive, Gmail).
