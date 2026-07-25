@@ -12,8 +12,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
+import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -34,10 +37,45 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("canvas_browser_daemon")
 
 
+class VirtualDisplay:
+    """Provide a regular Firefox display for unattended system-service use."""
+
+    def __init__(self) -> None:
+        self.process: subprocess.Popen[bytes] | None = None
+
+    def start(self) -> None:
+        if os.environ.get("DISPLAY"):
+            return
+        binary = shutil.which("Xvfb")
+        if not binary:
+            raise RuntimeError("DISPLAY is not set and Xvfb is not installed.")
+        display = os.getenv("CANVAS_VIRTUAL_DISPLAY", ":99")
+        self.process = subprocess.Popen(
+            [binary, display, "-screen", "0", "1440x900x24", "-nolisten", "tcp"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(0.4)
+        if self.process.poll() is not None:
+            raise RuntimeError("Could not start the Canvas virtual display.")
+        os.environ["DISPLAY"] = display
+
+    def close(self) -> None:
+        if self.process and self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+
+
 class BrowserDaemon:
     def __init__(self) -> None:
         self.client = CanvasBrowserClient(headless=False, use_daemon=False)
         self.lock = threading.Lock()
+        self.was_authenticated = False
+        self.last_reauth_attempt = 0.0
+        self.reauth_cooldown = int(os.getenv("CANVAS_REAUTH_COOLDOWN_SECONDS", "900"))
 
     def start(self) -> None:
         self.client._start_browser()
@@ -70,9 +108,31 @@ class BrowserDaemon:
                 return {"authenticated": False, "location": self.location()}
             try:
                 user = self.client.get_current_user()
-                return {"authenticated": bool(user.get("id")), "location": self.location()}
+                authenticated = bool(user.get("id"))
+                self.was_authenticated = self.was_authenticated or authenticated
+                return {"authenticated": authenticated, "location": self.location()}
             except CanvasSessionError:
                 return {"authenticated": False, "location": self.location()}
+
+    def auto_reauthenticate(self) -> None:
+        """Run the ordinary ClassLink → ADFS → Canvas flow without a manual bootstrap."""
+        if not os.getenv("CLASSLINK_USERNAME") or not os.getenv("CLASSLINK_PASSWORD"):
+            logger.warning("Automatic ClassLink sign-in is disabled: credentials are not configured")
+            return
+        if time.monotonic() - self.last_reauth_attempt < self.reauth_cooldown:
+            return
+
+        self.last_reauth_attempt = time.monotonic()
+        logger.info("Attempting normal ClassLink → ADFS → Canvas authentication")
+        try:
+            with self.lock:
+                self.client._sign_in_via_classlink()
+                if not self.client._is_canvas_authenticated():
+                    logger.warning("Automatic ClassLink authentication did not reach Canvas; inspect the VNC browser window")
+        except CanvasSessionError as exc:
+            logger.warning("Automatic ClassLink authentication needs attention in VNC: %s", exc)
+        except Exception:
+            logger.exception("Automatic ClassLink reauthentication failed")
 
     def request(self, path_or_url: str) -> tuple[object, str]:
         target = urlsplit(path_or_url)
@@ -130,22 +190,39 @@ class CanvasDaemonServer(ThreadingHTTPServer):
     daemon: BrowserDaemon
 
 
-def main() -> None:
-    if not os.environ.get("DISPLAY"):
-        raise SystemExit("Set DISPLAY=:1 so the browser is visible through VNC.")
+def monitor_session(daemon: BrowserDaemon, stop_event: threading.Event) -> None:
+    """Check the live browser periodically without blocking local scraper requests."""
+    interval = max(60, int(os.getenv("CANVAS_REAUTH_CHECK_SECONDS", "300")))
+    while not stop_event.wait(interval):
+        try:
+            if not daemon.health().get("authenticated"):
+                daemon.auto_reauthenticate()
+        except Exception:
+            logger.exception("Canvas session monitor failed")
 
+
+def main() -> None:
+    display = VirtualDisplay()
+    display.start()
     daemon = BrowserDaemon()
     daemon.start()
     server = CanvasDaemonServer(("127.0.0.1", 8976), DaemonHandler)
     server.daemon = daemon
-    logger.info("Firefox is open in VNC. Sign into ClassLink and Canvas manually; daemon listening on 127.0.0.1:8976.")
+    logger.info("Canvas browser daemon listening on 127.0.0.1:8976 and beginning automatic ClassLink sign-in.")
+    stop_event = threading.Event()
+    initial_auth = threading.Thread(target=daemon.auto_reauthenticate, daemon=True)
+    initial_auth.start()
+    monitor = threading.Thread(target=monitor_session, args=(daemon, stop_event), daemon=True)
+    monitor.start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         logger.info("Stopping Canvas browser daemon")
     finally:
+        stop_event.set()
         server.server_close()
         daemon.close()
+        display.close()
 
 
 if __name__ == "__main__":

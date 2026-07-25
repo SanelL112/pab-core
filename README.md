@@ -57,7 +57,13 @@ The system doesn't rely on a traditional database. Instead, it uses markdown and
 
    Canvas uses one persistent Firefox session rather than a copied browser cookie. With the
    Firefox desktop available through VNC, start `scripts/canvas_browser_daemon.py` with
-   `DISPLAY=:1`, sign into ClassLink manually, and leave that browser daemon running.
+   `DISPLAY=:1` and leave that browser daemon running. It uses the local ClassLink
+   credentials to complete the ordinary ClassLink/ADFS sign-in flow at startup and when
+   Canvas later expires the session. MFA or CAPTCHA screens still require you.
+
+   For unattended bot operation, install and enable `scripts/canvas-browser.service`. It
+   creates its own Xvfb display, starts Firefox, and restarts automatically after boot or
+   failure; the bot's Canvas scraper communicates with it over localhost.
 
 3. **Google API Credentials**:
    Place your `credentials.json` in the root directory to generate a `token.json` file for Google Workspace integration (Classroom, Drive, Gmail).

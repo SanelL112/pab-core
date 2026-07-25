@@ -187,11 +187,14 @@ class CanvasBrowserClient:
                 "Could not start Firefox for Canvas. Ensure Firefox and geckodriver/Selenium Manager are available."
             ) from exc
 
-    def _is_canvas_authenticated(self) -> bool:
+    def _is_canvas_authenticated(self, *, navigate_to_canvas: bool = True) -> bool:
         assert self.driver is not None
         try:
-            self.driver.switch_to.default_content()
-            self.driver.get(CANVAS_API_URL)
+            if navigate_to_canvas:
+                self.driver.switch_to.default_content()
+                self.driver.get(CANVAS_API_URL)
+            elif urlsplit(self.driver.current_url).netloc != urlsplit(CANVAS_API_URL).netloc:
+                return False
             user = self.get_current_user()
             return bool(user.get("id"))
         except CanvasSessionError:
@@ -277,7 +280,10 @@ class CanvasBrowserClient:
         self.canvas_app_opened = self._open_canvas_app_if_visible()
         deadline = time.monotonic() + self.login_timeout
         while time.monotonic() < deadline:
-            if self._is_canvas_authenticated():
+            # Do not navigate this new tab while ClassLink is still completing its SSO
+            # redirect. Navigating it to the Canvas root here cancels the handoff and
+            # leaves the browser on Canvas's ordinary username/password screen.
+            if self._is_canvas_authenticated(navigate_to_canvas=False):
                 return
             time.sleep(1)
 
@@ -484,6 +490,7 @@ class CanvasBrowserClient:
     def _open_canvas_app_if_visible(self) -> bool:
         assert self.driver is not None
         try:
+            from selenium.webdriver.common.action_chains import ActionChains
             from selenium.webdriver.support.ui import WebDriverWait
         except ImportError:
             return False
@@ -521,7 +528,9 @@ class CanvasBrowserClient:
                 )
             self.canvas_app_target = self._safe_element_description(app)
             self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", app)
-            app.click()
+            # LaunchPad's app tile uses pointer events.  An Actions click reproduces the
+            # normal user gesture more faithfully than a DOM ``element.click()`` call.
+            ActionChains(self.driver).move_to_element(app).pause(0.15).click().perform()
             WebDriverWait(self.driver, 30).until(
                 lambda d: len(d.window_handles) > len(handles_before)
                 or urlsplit(d.current_url).netloc.endswith("instructure.com")

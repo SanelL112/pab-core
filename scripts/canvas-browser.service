@@ -1,0 +1,17 @@
+[Unit]
+Description=Persistent Canvas ClassLink browser daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sanel
+WorkingDirectory=/home/sanel/personal-assistant-bot
+Environment=HOME=/home/sanel
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/sanel/personal-assistant-bot/venv/bin/python /home/sanel/personal-assistant-bot/scripts/canvas_browser_daemon.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
