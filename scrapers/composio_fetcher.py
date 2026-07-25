@@ -17,6 +17,7 @@ import http.client
 import os
 import re
 import time
+import datetime
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,26 @@ def _strip_html(text: str) -> str:
     return text.strip()
 
 
+def _classroom_work_is_actionable(work: dict, now: datetime.datetime | None = None) -> bool:
+    """Keep overdue coursework from endlessly re-entering the task pipeline."""
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    overdue_grace = max(0, int(os.getenv("GOOGLE_CLASSROOM_ASSIGNMENT_OVERDUE_GRACE_DAYS", "7")))
+    undated_update_days = max(0, int(os.getenv("GOOGLE_CLASSROOM_NO_DUE_UPDATE_DAYS", "30")))
+    due = work.get("dueDate", {}) or {}
+    try:
+        due_day = datetime.date(int(due["year"]), int(due["month"]), int(due["day"]))
+    except (KeyError, TypeError, ValueError):
+        due_day = None
+    if due_day is not None:
+        return due_day >= now.date() - datetime.timedelta(days=overdue_grace)
+
+    try:
+        updated = datetime.datetime.fromisoformat(work.get("updateTime", "").replace("Z", "+00:00"))
+        return updated >= now - datetime.timedelta(days=undated_update_days)
+    except (AttributeError, ValueError):
+        return False
+
+
 def _get_active_courses() -> list:
     """Fetch active Canvas courses with caching.
     Returns list of {id, name} dicts. Cache lives 7 days.
@@ -183,9 +204,6 @@ def get_classroom_assignments() -> str:
     if not courses:
         return "No active Google Classroom courses found."
 
-    import datetime
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
-
     result = ["🏫 **Google Classroom Assignments (via Composio):**"]
     for course in courses:
         course_id = str(course.get("id", ""))
@@ -202,21 +220,13 @@ def get_classroom_assignments() -> str:
                 cw_data = r2.get("data", {})
                 works = cw_data.get("response_data", cw_data.get("courseWork", []))
                 for work in works:
+                    if not _classroom_work_is_actionable(work):
+                        continue
                     title = work.get("title", "Untitled")
                     due_date = work.get("dueDate", {}) or {}
                     due_str = "No due date"
                     if due_date.get("year"):
                         due_str = f"{due_date['year']}-{due_date.get('month',0):02d}-{due_date.get('day',0):02d}"
-
-                    # Filter: skip stuff older than 30 days
-                    update_time = work.get("updateTime", "")
-                    if update_time:
-                        try:
-                            updated = datetime.datetime.fromisoformat(update_time.replace("Z", "+00:00"))
-                            if updated < cutoff:
-                                continue
-                        except Exception:
-                            pass
 
                     result.append(f"[{course_name}] {title} — Due: {due_str}")
             else:

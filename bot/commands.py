@@ -17,6 +17,45 @@ import time
 
 logger = logging.getLogger(__name__)
 
+
+def _pending_task(state: dict, short_id: str) -> dict | None:
+    """Resolve both the new rich task state and legacy priority-only IDs."""
+    task = state.get("pending_tasks", {}).get(short_id)
+    if isinstance(task, dict) and task.get("page_id"):
+        return task
+    page_id = state.get("pending_priorities", {}).get(short_id)
+    return {"page_id": page_id, "title": short_id} if page_id else None
+
+
+def _update_pending_task(short_id: str, **changes) -> None:
+    def mutate(state):
+        task = state.setdefault("pending_tasks", {}).get(short_id)
+        if isinstance(task, dict):
+            task.update(changes)
+        # Keep the backwards-compatible mapping alive for /p users.
+        if task and task.get("page_id"):
+            state.setdefault("pending_priorities", {})[short_id] = task["page_id"]
+
+    update_state(mutate)
+
+
+def _render_task_control(task: dict, confirmation: str | None = None) -> str:
+    """Render the current state after a Telegram task button is pressed."""
+    from scrapers.notion_client import priority_emoji
+
+    priority = task.get("priority", "medium")
+    source = task.get("source") or "Unknown source"
+    if task.get("course"):
+        source += f" • {task['course']}"
+    text = (
+        f"{priority_emoji(priority)} **{task.get('title', 'Untitled task')}**\n"
+        f"📌 {source}\n"
+        f"📅 Due: {task.get('due_date') or 'No due date'}\n"
+        f"Priority: **{priority.capitalize()}**\n"
+        f"Status: **{task.get('status', 'Not started')}**"
+    )
+    return text + (f"\n\n{confirmation}" if confirmation else "\n\nChoose a priority or update its status:")
+
 @require_auth
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -214,16 +253,16 @@ async def priority_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     state = load_state()
-    page_id = state.get("pending_priorities", {}).get(short_id)
-    if not page_id:
+    task = _pending_task(state, short_id)
+    if not task:
         await context.bot.send_message(chat_id=chat_id, text=f"❌ Could not find pending task with ID `{short_id}`.", parse_mode="Markdown")
         return
 
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from scrapers.notion_client import update_notion_task
     
-    if await asyncio.to_thread(update_notion_task, page_id, priority=priority):
-        update_state(lambda current: current.setdefault("pending_priorities", {}).pop(short_id, None))
+    if await asyncio.to_thread(update_notion_task, task["page_id"], priority=priority):
+        _update_pending_task(short_id, priority=priority)
         await context.bot.send_message(chat_id=chat_id, text=f"✅ Task priority updated to **{priority.capitalize()}** in Notion!", parse_mode="Markdown")
     else:
         await context.bot.send_message(chat_id=chat_id, text="❌ Failed to update Notion.")
@@ -293,10 +332,48 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 from scrapers.notion_client import update_notion_task
                 state = load_state()
-                page_id = state.get("pending_priorities", {}).get(tid)
-                if page_id and await asyncio.to_thread(update_notion_task, page_id, priority=prio):
-                    update_state(lambda current: current.setdefault("pending_priorities", {}).pop(tid, None))
-                    await query.edit_message_text(f"✅ Task `{tid}` priority set to **{prio}**")
+                task = _pending_task(state, tid)
+                if task and await asyncio.to_thread(update_notion_task, task["page_id"], priority=prio):
+                    _update_pending_task(tid, priority=prio)
+                    task["priority"] = prio
+                    await query.edit_message_text(
+                        _render_task_control(task, f"✅ Priority set to **{prio.capitalize()}** in Notion."),
+                        parse_mode="Markdown",
+                        reply_markup=get_task_actions_keyboard(tid),
+                    )
+                else:
+                    await query.edit_message_text(f"❌ Could not update `{tid}`")
+            except Exception as e:
+                await query.edit_message_text(f"❌ Error: {e}")
+        return
+    elif data.startswith("task_status:"):
+        parts = data.split(":")
+        if len(parts) == 3:
+            tid, status_key = parts[1], parts[2]
+            status = {"in_progress": "In progress", "done": "Done"}.get(status_key)
+            if not status:
+                await query.edit_message_text("❌ Unknown task status.")
+                return
+            try:
+                from scrapers.notion_client import update_notion_task
+                state = load_state()
+                task = _pending_task(state, tid)
+                if task and await asyncio.to_thread(update_notion_task, task["page_id"], status=status):
+                    _update_pending_task(tid, status=status)
+                    task["status"] = status
+                    if status == "Done":
+                        # The completed message stays as confirmation, while
+                        # its stale controls are removed.
+                        await query.edit_message_text(
+                            _render_task_control(task, "✅ Marked Done in Notion."),
+                            parse_mode="Markdown",
+                        )
+                    else:
+                        await query.edit_message_text(
+                            _render_task_control(task, "▶️ Marked In progress in Notion."),
+                            parse_mode="Markdown",
+                            reply_markup=get_task_actions_keyboard(tid),
+                        )
                 else:
                     await query.edit_message_text(f"❌ Could not update `{tid}`")
             except Exception as e:
@@ -409,6 +486,27 @@ async def classroom_pdfs_command(update: Update, context: ContextTypes.DEFAULT_T
             text=f"❌ Error downloading PDFs: {e}"
         )
 
+
+@require_auth
+async def canvas_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current Canvas work and completion state without an LLM."""
+    msg = await update.message.reply_text("🎯 Checking Canvas coursework and completion status...")
+    try:
+        from scrapers.canvas_scraper import get_upcoming_assignments
+        result = await asyncio.to_thread(get_upcoming_assignments)
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=msg.message_id,
+            text=result,
+            parse_mode="Markdown",
+        )
+    except Exception as exc:
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=msg.message_id,
+            text=f"⚠️ Canvas check failed: {exc}",
+        )
+
 @require_auth
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show all available commands organized by category."""
@@ -417,6 +515,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "**Core & Assistant**\n"
         "• `/help` - Show this menu\n"
         "• `/summary` - Manual data digest trigger\n"
+        "• `/canvas` - Missing work, due-soon work, and completion status\n"
         "• `/models` - List & switch AI models\n"
         "• `/bash <cmd>` - Run bash commands directly\n"
         "• `/p <num>` - Adjust bot priority queue\n\n"
@@ -670,7 +769,7 @@ from utils import (
     restore_backup, list_backups,
 )
 from inline_keyboards import (
-    get_new_tasks_keyboard, get_digest_topic_keyboard,
+    get_new_tasks_keyboard, get_task_actions_keyboard, get_digest_topic_keyboard,
     get_study_guide_keyboard, get_photo_response_keyboard,
     get_quick_actions_keyboard,
 )

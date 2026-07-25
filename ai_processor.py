@@ -74,22 +74,49 @@ def pi_classify_sync(items: list[dict]) -> list[dict] | None:
 
 
 DIGEST_ASSEMBLY_PROMPT = (
-    "You are Sanel Lathiya's personal assistant bot. "
-    "Below are pre-processed summaries from each data source. "
-    "Assemble them into ONE beautifully formatted Markdown digest message to send via Telegram.\n\n"
+    "You are generating Sanel's Telegram briefing from the supplied source summaries. "
+    "Produce the finished briefing directly; do not describe how to make one.\n\n"
     "Rules:\n"
-    "- Use emoji section headers: 📚 Canvas, 🏫 Google Classroom, 📢 Classroom Announcements, 📧 Gmail, 💬 GroupMe\n"
-    "- Keep each section concise. Skip sections that say 'No urgent updates'.\n"
-    "- End with a friendly one-liner.\n"
-    "- Return ONLY the Markdown text, no JSON, no explanation.\n\n"
+    "- Never apologize, refuse, say you cannot help, or offer a hypothetical summary.\n"
+    "- Start with ⚡ **Needs attention** only when there is an actionable deadline, test, or request.\n"
+    "- Then use short emoji section headers only for sources with useful new information: 📚 Canvas, 🏫 Google Classroom, 📢 Announcements, 📧 Gmail, 💬 GroupMe.\n"
+    "- Use at most 3 bullets per section. Summarize announcements; never paste a raw wall of text.\n"
+    "- Exclude 'no updates', stale, informational-only, and error messages.\n"
+    "- If nothing needs attention, return exactly: ✅ All caught up — no new actionable updates.\n"
+    "- Return Markdown followed by the two required JSON lines below. Do not add commentary after them.\n\n"
     "Summaries:\n{summaries}\n\n"
-    "At the very end, return two JSON objects on their own lines:\n"
+    "At the end, return these two JSON lines:\n"
     "1. A JSON list of specific upcoming subjects/topics the user has tests, quizzes, or heavy assignments for, in this exact format:\n"
     "STUDY_TOPICS_JSON:[\"Calculus Limits\", \"Photosynthesis\"]\n"
-    "2. A JSON list of tasks in this exact format:\n"
-    "TASKS_JSON:[{{\"id\":\"...\",\"title\":\"...\",\"source\":\"...\",\"due_date\":null,\"priority\":\"medium\",\"status\":\"Not started\",\"start_value\":0,\"end_value\":100}}]\n"
+    "2. A JSON list of actionable tasks in this exact format:\n"
+    "TASKS_JSON:[{{\"id\":\"...\",\"title\":\"...\",\"source\":\"...\",\"course\":null,\"url\":null,\"due_date\":null,\"priority\":\"medium\",\"status\":\"Not started\",\"start_value\":0,\"end_value\":100}}]\n"
+    "Only create a task for work the user must act on. Never turn old, expired, completed, "
+    "informational, attendance, or announcement-only items into tasks. Preserve an assignment Link as url and "
+    "the bracketed Canvas course name as course when present.\n"
+    "Priority guide: high = overdue, due within 3 days, a test, or a major submission; "
+    "medium = due within 7 days; low = later, optional, club/informational, or no due date. "
     "CRITICAL: If you cannot confidently determine the 'priority', 'status', 'start_value', or 'end_value' from the text, set that specific field to 'unknown'."
 )
+
+
+MODEL_FAILURE_MARKERS = (
+    "local inference unavailable",
+    "cloud fallback disabled",
+    "all models failed",
+    "cannot assemble",
+    "can't assemble",
+    "i can't assemble",
+    "i'm sorry, but i can't",
+    "i am sorry, but i can't",
+)
+
+
+def _is_unusable_model_output(output: str | None) -> bool:
+    """Recognize failures/refusals that must never reach a Telegram digest."""
+    if not output or not output.strip():
+        return True
+    normalized = output.lower()
+    return any(marker in normalized for marker in MODEL_FAILURE_MARKERS)
 
 # ── agy helper ────────────────────────────────────────────────────────────────
 
@@ -276,7 +303,14 @@ def process_source(name: str, data: str, skip_llm_filter: bool = False, force_re
         logger.info(f"Calling agy flash for {name} classification ({len(prompt)} chars)...")
         response = call_agy(prompt, timeout=60, model="flash")
 
-        if not response or "NO_IMPORTANT_UPDATES" in response.upper():
+        if _is_unusable_model_output(response):
+            # Do not cache an error string such as "Local inference
+            # unavailable" as the source summary.  Raw source data is still
+            # better than losing a due date; assemble_digest has a safe
+            # deterministic formatter if its own model call is unavailable.
+            logger.warning("LLM summary for %s was unavailable; preserving source data for fallback.", name)
+            summary = data[:8000]
+        elif "NO_IMPORTANT_UPDATES" in response.upper():
             summary = f"No urgent {name} updates."
         elif "[ASK_USER]" in response:
             summary = f"{response}\n\nRAW DATA:\n{data}"
@@ -297,6 +331,123 @@ def process_source(name: str, data: str, skip_llm_filter: bool = False, force_re
 
 
 # ── Final assembly ────────────────────────────────────────────────────────────
+
+_EMPTY_SOURCE_MARKERS = (
+    "no recent ",
+    "no urgent ",
+    "no active ",
+    "no unread ",
+    "no new ",
+    "no important ",
+    "no canvas data",
+    "not configured",
+    "error fetching",
+    "error connecting",
+    "local inference unavailable",
+    "cloud fallback disabled",
+)
+
+_SOURCE_LABELS = {
+    "canvas": "📚 **Canvas**",
+    "classroom": "🏫 **Google Classroom**",
+    "classroom_announcements": "📢 **Announcements**",
+    "gmail": "📧 **Gmail**",
+    "groupme": "💬 **GroupMe**",
+    "gdocs": "📄 **Google Docs**",
+}
+
+
+def _compact_digest_lines(text: str, limit: int = 3) -> list[str]:
+    """Turn raw scraper output into a few safe, readable Telegram bullets."""
+    import re
+
+    lines: list[str] = []
+    for raw_line in (text or "").splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line:
+            continue
+        normalized = line.lower().lstrip("-• ")
+        if any(marker in normalized for marker in _EMPTY_SOURCE_MARKERS):
+            continue
+        # Drop source headings—the digest supplies consistent headings itself.
+        if normalized.startswith(("canvas assignments", "google classroom assignments", "recent google docs")):
+            continue
+        line = line.lstrip("-• ")
+        if len(line) > 220:
+            line = line[:217].rstrip() + "…"
+        if line not in lines:
+            lines.append(line)
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _fallback_tasks(summaries: dict[str, str]) -> list[dict]:
+    """Recover dated Canvas/Classroom tasks when the digest model is offline."""
+    import re
+    from datetime import date, timedelta
+
+    task_sources = {"canvas": "Canvas", "classroom": "Google Classroom"}
+    due_pattern = re.compile(r"\bDue:\s*(\d{4}-\d{2}-\d{2})")
+    course_pattern = re.compile(r"^\s*(?:[-•]\s*)?\[([^\]]+)\]\s*(.*)$")
+    tasks: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    overdue_cutoff = date.today() - timedelta(days=7)
+
+    for source_key, source_name in task_sources.items():
+        for line in (summaries.get(source_key) or "").splitlines():
+            due_match = due_pattern.search(line)
+            course_match = course_pattern.match(line)
+            if not due_match or not course_match:
+                continue
+            try:
+                due_date = date.fromisoformat(due_match.group(1))
+            except ValueError:
+                continue
+            if due_date < overdue_cutoff:
+                continue
+            course, title = course_match.groups()
+            title = title[:due_match.start() - course_match.start(2)].strip()
+            title = title.rstrip(" -—(").strip()
+            if not title or (title, due_date.isoformat()) in seen:
+                continue
+            seen.add((title, due_date.isoformat()))
+            tasks.append({
+                "id": f"fallback:{source_key}:{len(tasks)}",
+                "title": title,
+                "source": source_name,
+                "course": course,
+                "url": None,
+                "due_date": due_date.isoformat(),
+                "priority": "unknown",
+                "status": "Not started",
+                "start_value": 0,
+                "end_value": 100,
+            })
+    return tasks
+
+
+def _deterministic_digest(summaries: dict[str, str]) -> tuple[str, list[dict]]:
+    """Provide a compact, useful briefing without relying on an LLM."""
+    tasks = _fallback_tasks(summaries)
+    sections: list[str] = []
+    if tasks:
+        action_lines = []
+        for task in tasks[:5]:
+            action_lines.append(f"• {task['title']} — due {task['due_date']}")
+        sections.append("⚡ **Needs attention**\n" + "\n".join(action_lines))
+
+    for source_key, label in _SOURCE_LABELS.items():
+        lines = _compact_digest_lines(summaries.get(source_key, ""))
+        # Dated coursework is already shown in Needs attention.
+        if source_key in {"canvas", "classroom"}:
+            lines = [line for line in lines if "due:" not in line.lower()]
+        if lines:
+            sections.append(label + "\n" + "\n".join(f"• {line}" for line in lines))
+
+    if not sections:
+        return "✅ All caught up — no new actionable updates.", tasks
+    return "\n\n".join(sections), tasks
 
 def assemble_digest(summaries: dict) -> dict:
     """Assemble per-source summaries into a final digest + task list via agy."""
@@ -333,30 +484,33 @@ def assemble_digest(summaries: dict) -> dict:
     logger.info("Assembling final digest via agy...")
     output = call_agy(prompt, timeout=3600)
 
-    if not output:
-        return {"tasks": [], "digest": "", "topics": []}
-
     # Split tasks JSON and topics JSON from the digest text
     tasks = []
     topics = []
-    digest = output
-    
-    import re as _re
-    tasks_match = _re.search(r'TASKS_JSON:(.*?)(?:STUDY_TOPICS_JSON:|$)', digest, _re.DOTALL)
-    if tasks_match:
-        try:
-            tasks = json.loads(tasks_match.group(1).strip())
-        except Exception as e:
-            logger.debug("Malformed tasks JSON from LLM (left empty): %r", e)
-        digest = digest.replace('TASKS_JSON:' + tasks_match.group(1), '').strip()
+    if _is_unusable_model_output(output):
+        logger.warning("Digest model was unavailable or refused; using deterministic briefing fallback.")
+        digest, tasks = _deterministic_digest(summaries)
+    else:
+        digest = output
 
-    topics_match = _re.search(r'STUDY_TOPICS_JSON:(.*?)(?:TASKS_JSON:|$)', digest, _re.DOTALL)
-    if topics_match:
-        try:
-            topics = json.loads(topics_match.group(1).strip())
-        except Exception as e:
-            logger.debug("Malformed topics JSON from LLM (left empty): %r", e)
-        digest = digest.replace('STUDY_TOPICS_JSON:' + topics_match.group(1).split('\n')[0], '').strip()
+        import re as _re
+        tasks_match = _re.search(r'TASKS_JSON:(.*?)(?:STUDY_TOPICS_JSON:|$)', digest, _re.DOTALL)
+        if tasks_match:
+            try:
+                tasks = json.loads(tasks_match.group(1).strip())
+            except Exception as e:
+                logger.debug("Malformed tasks JSON from LLM (left empty): %r", e)
+            digest = digest.replace('TASKS_JSON:' + tasks_match.group(1), '').strip()
+
+        topics_match = _re.search(r'STUDY_TOPICS_JSON:(.*?)(?:TASKS_JSON:|$)', digest, _re.DOTALL)
+        if topics_match:
+            try:
+                topics = json.loads(topics_match.group(1).strip())
+            except Exception as e:
+                logger.debug("Malformed topics JSON from LLM (left empty): %r", e)
+            digest = digest.replace('STUDY_TOPICS_JSON:' + topics_match.group(1).split('\n')[0], '').strip()
+
+    import re as _re
 
     # ── Deduplication: bullet-level comparison using persistent hash set ────
     # Uses seen_bullets.json to track ALL bullets ever seen, preventing

@@ -1,6 +1,6 @@
 # Pre-Cached Research: Quadratic Formula
 
-### Source: https://duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.mashupmath.com%2Fblog%2Fquadratic%2Dformula%2Dexamples&rut=f736f960823fe67c438f8da4e9f8932402c75494e247d4f6c9e803d1b7be3830
+### Source: https://duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.mashupmath.com%2Fblog%2Fquadratic%2Dformula%2Dexamples&rut=9b6d7ba21b1d5b6fa7e0ad44b8ae4395500155eb3fb41b151ae6dca69a31ac28
 The quadratic formula is a mathematical tool used to solve quadratic equations. It states that for any quadratic equation of the form ax^2 + bx + c = 0:
 
 x = (-b ± √(b^2 - 4ac)) / (2a)
@@ -25,7 +25,7 @@ So the solutions to the quadratic equation are x = (-5 + √109) / 6 and x = (-5
 
 The quadratic formula is a useful tool for solving equations of the form ax^2 + bx + c = 0, which can be used to find the values of x that satisfy the equation.
 
-### Source: https://duckduckgo.com/l/?uddg=https%3A%2F%2Fmathmonks.com%2Fquadratic%2Dequation&rut=bc4ea793fbed684b433c1b234d008dd638aeab89f1ef7c0c3b9b375911bb2be0
+### Source: https://duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.albert.io%2Fblog%2Fquadratic%2Dformula%2F&rut=c6a52d9b0db5f6b49f98897d380b4979529e9587caf7483e52b41d9b50b4cdab
 The quadratic formula is a mathematical tool used to solve quadratic equations. It states that for any quadratic equation of the form ax^2 + bx + c = 0:
 
 x = (-b ± √(b^2 - 4ac)) / (2a)
@@ -50,7 +50,7 @@ So the solutions to the quadratic equation are x = (-5 + √109) / 6 and x = (-5
 
 The quadratic formula is a useful tool for solving equations of the form ax^2 + bx + c = 0, which can be used to find the values of x that satisfy the equation.
 
-### Source: https://duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.albert.io%2Fblog%2Fquadratic%2Dformula%2F&rut=6e07b5f0230e99541a62d90b0c1dfbf51987bcb84f85a3fac680572d72bd266d
+### Source: https://duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.purplemath.com%2Fmodules%2Fquadform.htm&rut=48cf68374f84f69987a2f02590d5b7fa4eceb8afbc949f60cb5356ac11779f76
 The quadratic formula is a mathematical tool used to solve quadratic equations. It states that for any quadratic equation of the form ax^2 + bx + c = 0:
 
 x = (-b ± √(b^2 - 4ac)) / (2a)

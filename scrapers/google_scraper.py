@@ -3,6 +3,7 @@ import logging
 import warnings
 import time as _time
 import threading
+import datetime
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -28,6 +29,28 @@ logging.getLogger('google_auth_oauthlib').setLevel(logging.ERROR)
 logging.getLogger('google.auth').setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
+
+
+def _classroom_work_is_actionable(work: dict, now: datetime.datetime | None = None) -> bool:
+    """Exclude old coursework before it reaches the task extractor."""
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    overdue_grace = max(0, int(os.getenv("GOOGLE_CLASSROOM_ASSIGNMENT_OVERDUE_GRACE_DAYS", "7")))
+    undated_update_days = max(0, int(os.getenv("GOOGLE_CLASSROOM_NO_DUE_UPDATE_DAYS", "30")))
+    due = work.get("dueDate", {}) or {}
+    try:
+        due_day = datetime.date(int(due["year"]), int(due["month"]), int(due["day"]))
+    except (KeyError, TypeError, ValueError):
+        due_day = None
+
+    if due_day is not None:
+        return due_day >= now.date() - datetime.timedelta(days=overdue_grace)
+
+    update_time = work.get("updateTime", "")
+    try:
+        updated = datetime.datetime.fromisoformat(update_time.replace("Z", "+00:00"))
+        return updated >= now - datetime.timedelta(days=undated_update_days)
+    except (AttributeError, ValueError):
+        return False
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = [
@@ -152,9 +175,6 @@ def get_classroom_assignments() -> str:
         if not courses:
             return "No active Google Classroom courses found."
 
-        import datetime
-        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
-
         output = []
         for course in courses:
             try:
@@ -167,14 +187,8 @@ def get_classroom_assignments() -> str:
                 works = coursework.get('courseWork', [])
 
                 for work in works:
-                    update_time = work.get('updateTime', '')
-                    if update_time:
-                        try:
-                            updated = datetime.datetime.fromisoformat(update_time.replace('Z', '+00:00'))
-                            if updated < cutoff:
-                                continue
-                        except Exception:
-                            pass
+                    if not _classroom_work_is_actionable(work):
+                        continue
 
                     title = work.get('title', 'Untitled')
                     due_date = work.get('dueDate', {})

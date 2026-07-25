@@ -46,10 +46,12 @@ def load_state() -> dict:
                 state = json.load(f)
                 if "pending_priorities" not in state:
                     state["pending_priorities"] = {}
+                if "pending_tasks" not in state:
+                    state["pending_tasks"] = {}
                 if "user_models" not in state:
                     state["user_models"] = {}
                 return state
-    return {"seen_tasks": [], "seen_alerts": [], "pending_priorities": {}, "user_models": {}}
+    return {"seen_tasks": [], "seen_alerts": [], "pending_priorities": {}, "pending_tasks": {}, "user_models": {}}
 
 
 def save_state(state):
@@ -74,7 +76,7 @@ def update_state(mutator) -> dict:
     """
     with _state_lock:
         # Load logic (inline to avoid double locking since load_state takes the lock)
-        state = {"seen_tasks": [], "seen_alerts": [], "pending_priorities": {}, "user_models": {}}
+        state = {"seen_tasks": [], "seen_alerts": [], "pending_priorities": {}, "pending_tasks": {}, "user_models": {}}
         if os.path.exists(STATE_FILE):
             try:
                 with open(STATE_FILE, "r") as f:
@@ -86,6 +88,8 @@ def update_state(mutator) -> dict:
         # Ensure default keys
         if "pending_priorities" not in state:
             state["pending_priorities"] = {}
+        if "pending_tasks" not in state:
+            state["pending_tasks"] = {}
         if "user_models" not in state:
             state["user_models"] = {}
 

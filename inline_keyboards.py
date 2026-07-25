@@ -28,6 +28,25 @@ def get_new_tasks_keyboard(task_ids: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+def get_task_actions_keyboard(task_id: str) -> InlineKeyboardMarkup:
+    """Controls for one newly synced Notion task.
+
+    One task per Telegram message means choosing a priority does not hide the
+    controls for every other task in that digest.
+    """
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔴 High", callback_data=f"task_prio:{task_id}:high"),
+            InlineKeyboardButton("🟡 Medium", callback_data=f"task_prio:{task_id}:medium"),
+            InlineKeyboardButton("🔵 Low", callback_data=f"task_prio:{task_id}:low"),
+        ],
+        [
+            InlineKeyboardButton("▶️ Start", callback_data=f"task_status:{task_id}:in_progress"),
+            InlineKeyboardButton("✅ Done", callback_data=f"task_status:{task_id}:done"),
+        ],
+    ])
+
+
 def get_digest_topic_keyboard(topics: list) -> InlineKeyboardMarkup:
     """
     Keyboard for detected study topics.

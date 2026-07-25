@@ -13,11 +13,11 @@ from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 from bot.security import require_auth
-from bot.commands import model_command, summary_command, bash_command, priority_command, ping_command, stats_command, backup_command, restore_command, correlations_command, classroom_pdfs_command, help_command, server_command, errors_command, handle_callback
+from bot.commands import model_command, summary_command, bash_command, priority_command, ping_command, stats_command, backup_command, restore_command, correlations_command, classroom_pdfs_command, canvas_command, help_command, server_command, errors_command, handle_callback
 
 import config
 import tempfile
-from inline_keyboards import get_digest_topic_keyboard
+from inline_keyboards import get_digest_topic_keyboard, get_task_actions_keyboard
 from utils import correlate_items, enforce_all_rotations, create_backup
 from voice_handler import transcribe_voice
 from bot.runtime import _track_task, _cleanup_background_tasks
@@ -326,7 +326,7 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
         from scrapers.google_scraper import get_unread_emails, get_classroom_assignments, get_classroom_announcements, get_recent_google_docs
     from scrapers.groupme_scraper import get_latest_messages
     from ai_processor import process_all_sources
-    from scrapers.notion_client import add_task_to_notion, update_notion_task
+    from scrapers.notion_client import add_task_to_notion, determine_task_priority, priority_emoji
 
     logger.info("Background job: Scraping sources...")
 
@@ -384,13 +384,17 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
         successful_tasks = []
         for task in new_tasks:
             task_title = task.get("title", "").strip().lower()
+            priority = determine_task_priority(task.get("due_date"), task.get("priority"))
             try:
                 page_id = await asyncio.to_thread(
                     add_task_to_notion,
                     title=task.get("title"),
                     source=task.get("source"),
                     due_date=task.get("due_date"),
-                    priority="medium",
+                    url=task.get("url"),
+                    course=task.get("course"),
+                    task_type=task.get("task_type"),
+                    priority=priority,
                     status="Not started",
                 )
             except Exception as e:
@@ -401,20 +405,25 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
                 logger.warning("Notion did not confirm task insertion: %s", task.get("title"))
                 continue
 
-            successful_tasks.append(task)
             from bot.state import update_state
             update_state(lambda s, title=task_title: s.setdefault("seen_tasks", []).append(title))
 
+            # ``True`` is the legacy signal from the Notion deduplicator that
+            # an active row already exists. It is successful, but has no page
+            # ID to attach interactive Telegram controls to.
+            if not isinstance(page_id, str):
+                continue
+            successful_tasks.append((task, page_id, priority))
+
         if successful_tasks:
             tasks_str = "".join(
-                f"✅ **{task.get('title')}** (Source: {task.get('source')})\n"
-                for task in successful_tasks
+                f"{priority_emoji(priority)} **{task.get('title')}** — {priority.capitalize()}\n"
+                for task, _page_id, priority in successful_tasks
             )
             msg_text = (
-                "🚨 **NEW TASKS ADDED TO NOTION** 🚨\n\n"
+                "🗂️ **NEW TASKS SYNCED TO NOTION**\n\n"
                 f"{tasks_str}\n"
-                "I have automatically synced these to your Notion Tracker! "
-                "Reply with their priority (high/medium/low) or current progress so I can update them."
+                "Each task below has controls to adjust its priority or mark it started/done."
             )
             try:
                 await context.bot.send_message(
@@ -425,6 +434,71 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 await context.bot.send_message(chat_id=chat_id, text=msg_text)
 
+            # Keep the page IDs and display metadata locally so each Telegram
+            # control can update the matching Notion row without another LLM
+            # pass. Cap this small interaction cache to prevent state growth.
+            pending_entries = []
+            for index, (task, page_id, priority) in enumerate(successful_tasks, start=1):
+                short_id = f"T{page_id.replace('-', '')[-6:].upper()}"
+                pending_entries.append((short_id, task, page_id, priority, index))
+
+            def _record_pending_tasks(current):
+                pending_tasks = current.setdefault("pending_tasks", {})
+                legacy_ids = current.setdefault("pending_priorities", {})
+                now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                for short_id, task, page_id, priority, _index in pending_entries:
+                    pending_tasks[short_id] = {
+                        "page_id": page_id,
+                        "title": task.get("title", "Untitled task"),
+                        "source": task.get("source") or "Unknown source",
+                        "course": task.get("course"),
+                        "due_date": task.get("due_date"),
+                        "priority": priority,
+                        "status": "Not started",
+                        "created_at": now,
+                    }
+                    legacy_ids[short_id] = page_id
+
+                # Old task controls are no longer useful after a few months.
+                if len(pending_tasks) > 100:
+                    keep = sorted(
+                        pending_tasks.items(),
+                        key=lambda item: item[1].get("created_at", ""),
+                        reverse=True,
+                    )[:100]
+                    current["pending_tasks"] = dict(keep)
+                    current["pending_priorities"] = {
+                        key: value["page_id"] for key, value in keep if value.get("page_id")
+                    }
+
+            update_state(_record_pending_tasks)
+
+            for short_id, task, _page_id, priority, _index in pending_entries:
+                source_line = task.get("source") or "Unknown source"
+                if task.get("course"):
+                    source_line += f" • {task['course']}"
+                due_line = task.get("due_date") or "No due date"
+                task_message = (
+                    f"{priority_emoji(priority)} **{task.get('title', 'Untitled task')}**\n"
+                    f"📌 {source_line}\n"
+                    f"📅 Due: {due_line}\n"
+                    f"Priority: **{priority.capitalize()}**\n\n"
+                    "Choose a priority or update its status:"
+                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=task_message,
+                        parse_mode="Markdown",
+                        reply_markup=get_task_actions_keyboard(short_id),
+                    )
+                except Exception:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=task_message.replace("**", ""),
+                        reply_markup=get_task_actions_keyboard(short_id),
+                    )
+
             history_file = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
                 f"chat_history_{chat_id}_notion.txt",
@@ -434,13 +508,14 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
 
     # 2. Telegram Digest
     digest = ai_result.get("digest", "")
-    if digest and digest != "Nothing to report right now!":
+    quiet_digest = digest.strip().startswith("✅ All caught up")
+    if digest and digest != "Nothing to report right now!" and not quiet_digest:
         try:
             with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "latest_digest.txt"), "w") as f:
                 f.write(digest)
         except Exception:
             pass
-        digest_msg = f"📰 **Periodic Digest**\n\n{digest}"
+        digest_msg = f"📋 **Briefing**\n\n{digest}"
         max_len = 4096
         for i in range(0, len(digest_msg), max_len):
             chunk = digest_msg[i:i+max_len]
@@ -996,6 +1071,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("restore", restore_command))
     app.add_handler(CommandHandler("correlations", correlations_command))
     app.add_handler(CommandHandler("classroom", classroom_pdfs_command))
+    app.add_handler(CommandHandler("canvas", canvas_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("server", server_command))
     app.add_handler(CommandHandler("errors", errors_command))
