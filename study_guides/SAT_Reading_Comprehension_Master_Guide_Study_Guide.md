@@ -1,1640 +1,1553 @@
-# SAT Reading Comprehension Master Guide
-
-### 🔴 NEW: Cross-Text Connections Mastery (from Cross_Text_L2/L3)
-*Extracted from 2026 Summer SAT/ACT @ AHA Cross_Text_L2/L3 (July 9, 2026)*
-
-#### The Comparison Mapping Framework
-Create a 2×2 grid while reading:
-| | **Passage 1** | **Passage 2** |
-|---|---|---|
-| **Main Claim** | | |
-| **Evidence Type** | Data / Anecdote / Authority / Logic | |
-| **Tone** | Objective / Critical / Tentative / Enthusiastic | |
-| **Scope** | Broad / Narrow / Historical / Contemporary | |
-| **Key Terms** | Define differently? Same definition? | |
-
-#### 6 Cross-Text Relationship Types (Memorize These)
-1. **Direct Contradiction** - P1 says X, P2 says not-X
-2. **Qualified Agreement** - P1 says X, P2 says "X, but only when Y"
-3. **Different Evidence, Same Conclusion** - Both conclude Z, different support
-4. **Different Focus** - P1: causes; P2: effects/solutions
-5. **Extension/Application** - P2 applies P1's theory to new context
-6. **Methodological Debate** - Disagree on HOW to study the issue
-
-#### Cross-Text Question Translation Table
-| Question Stem | What It's Really Asking |
-|---------------|------------------------|
-| "How would Author 2 respond to Author 1's claim?" | Apply P2's framework to evaluate P1's claim |
-| "The passages differ in their..." | Identify specific point of divergence |
-| "Both passages suggest..." | Find common ground (often implicit) |
-| "Which describes the relationship?" | Classify as one of 6 types above |
-| "Author 1 mentions X primarily to..." | Function of detail in P1's argument |
-
-#### Cross-Text Strategy: The 3-Pass Method
-1. **Pass 1**: Read Passage 1 → identify main claim + tone
-2. **Pass 2**: Read Passage 2 → identify main claim + tone + how it relates to P1
-3. **Pass 3**: Answer questions, constantly referencing BOTH passages
-
-
-### 🔴 NEW: Rhetorical Synthesis - The Bullet-to-Essay Engine (from Rhetorical_Synthesis_L3)
-*Extracted from 2026 Summer SAT/ACT @ AHA Rhetorical_Synthesis_L3 (July 9, 2026)*
-
-#### The 4-Step Selection Process
-**Step 1: Decode the Goal**
-- "Emphasize the difference" → Contrast structure needed
-- "Summarize the finding" → Concise statement of result
-- "Make a recommendation" → Action-oriented, "should" language
-- "Illustrate the point" → Specific example from notes
-- "Show the relationship" → Cause/effect, comparison, or correlation
-
-**Step 2: Tag Each Bullet**
-- 🟢 **Core finding** = main result/data point
-- 🔵 **Context** = background, methodology, sample
-- 🟡 **Interpretation** = researcher's take, implications
-- 🔴 **Distractor** = irrelevant detail (often 1-2 bullets)
-
-**Step 3: Eliminate by Goal Mismatch**
-- Goal = contrast → Kill answers that only show similarity
-- Goal = recommend → Kill answers without action language
-- Goal = summarize → Kill answers adding new interpretation
-
-**Step 4: Verify Faithfulness to Notes**
-- No outside info
-- No overstatement ("proves" vs "suggests")
-- All key elements from relevant bullets included
-
-#### Common Rhetorical Synthesis Trap Patterns
-| Trap | Example | Why It's Wrong |
-|------|---------|----------------|
-| **Overclaim** | "Proves X causes Y" | Notes say "correlation found" |
-| **Missing Contrast** | Lists both findings without "however" | Goal was "emphasize difference" |
-| **Added Fluff** | "Important discovery that will change..." | Not in notes |
-| **Wrong Focus** | Summarizes methodology when goal is result | Misread goal |
-
-#### Practice: Rhetorical Synthesis Drill
-**Goal**: Emphasize the unexpected nature of the finding
-**Notes**:
-- 500 teens studied, screen time vs sleep
-- Hypothesis: More screen → less sleep
-- Result: 4+ hrs screen = 7.2 hrs sleep; <1 hr = 6.8 hrs sleep
-- Researchers: "Counterintuitive, warrants further study"
-
-**Correct Pattern**: "Contrary to the hypothesis that screen time reduces sleep, teens with 4+ hours averaged 7.2 hours vs 6.8 hours for low-screen teens - a counterintuitive finding the researchers flagged for further study."
-
-
-### 🔴 NEW: Central Idea & Text Structure Precision (from Central_Idea_L2/L3, Text_Struc_Pur_L2)
-*Extracted from 2026 Summer SAT/ACT @ AHA CI Details_L2, Text_Struc_Pur_L2 (July 9, 2026)*
-
-#### Central Idea vs. Details: The Discrimination Protocol
-**Central Idea** = The ONE sentence the author would tweet as their thesis
-- Appears in: first paragraph, last paragraph, or topic sentences
-- Language: "The main argument is..." "The passage primarily concerns..."
-
-**Key Detail** = Specific evidence supporting the central idea
-- Appears in: body paragraphs, examples, data, anecdotes
-- Language: "According to the passage..." "The passage states..."
-
-**Trap**: Answer choices that are TRUE but are DETAILS not the CENTRAL IDEA
-
-#### Text Structure & Purpose Mapping
-| Structure | Purpose | Signal Words | SAT Question Stem |
-|-----------|---------|--------------|-------------------|
-| **Problem-Solution** | Present issue → propose fix | "issue," "solution," "address," "resolve" | "The passage primarily serves to..." |
-| **Cause-Effect** | Explain why X → Y | "because," "led to," "resulted in," "consequence" | "The structure of the passage..." |
-| **Compare-Contrast** | Examine similarities/differences | "similarly," "however," "in contrast," "while" | "The author organizes the text by..." |
-| **Chronological/Narrative** | Tell sequence of events | "first," "then," "subsequently," "eventually" | "The passage is structured as..." |
-| **Argument-Counterargument** | Thesis → objection → rebuttal | "critics argue," "however," "nevertheless" | "The function of paragraph 3..." |
+🧠 **ULTIMATE CHUNKED STUDY GUIDE: SAT Reading Comprehension Master Guide**
 
-#### Paragraph Function Identification
-- **Thesis paragraph**: States main claim
-- **Evidence paragraph**: Provides data/examples
-- **Counterargument paragraph**: Addresses opposing view
-- **Concession paragraph**: Grants valid point to other side
-- **Synthesis/Conclusion**: Reconciles or extends argument
-- **Analogy paragraph**: Uses comparison to clarify
+*(Generated dynamically via a 10-part LLM Generation & Verification Pipeline to bypass limits)*
 
 
-### 📝 PRACTICE SET: Mixed New Reading Material (July 2026)
 
-**Inferences:**
-1. Passage: "Species A declined 40% in polluted areas. Species B increased 15% in same areas." 
-   - What MUST be true? (Pollution affects species differently / Species B tolerates pollution better)
+# Chapter 2: Essential Formulas & Theorems
 
-2. "The author describes the policy as 'well-intentioned but misguided.'"
-   - Inference about author's attitude? (Critical of execution, not intent)
+## Introduction
 
-**Cross-Text:**
-3. P1: Argues for regulation using economic data. P2: Argues against regulation using liberty principles.
-   - Relationship? (Methodological debate / Different foundational values)
+In this chapter, we will delve into essential formulas and theorems that are crucial for success in SAT Reading comprehension. These formulas and theorems will help you understand the structure of the text and how to analyze it effectively.
 
-4. P1: Study shows meditation reduces stress. P2: Explains neurological mechanism of stress reduction.
-   - Relationship? (Extension/Application - P2 explains mechanism behind P1's finding)
+### Key Concepts
 
-**Rhetorical Synthesis:**
-5. Goal: Make a recommendation based on findings
-   Notes: - 30% productivity increase with 4-day week
-   - Employee satisfaction up 45%
-   - Revenue maintained
-   - CEO: "Model worthy of broader adoption"
-   → Choose answer with "should implement" or "recommended for"
-
-**Central Idea/Structure:**
-6. Passage describes problem with current education, proposes 3 reforms, addresses cost objections.
-   - Structure? (Problem-solution with counterargument)
-   - Central idea? (Three specific reforms can fix education without excessive cost)
+#### 1. **Reading Comprehension**
 
+- **Main Idea**: The central idea or theme of a text.
+- **Key Words**: "Main Idea," "Central Idea," "Thematic Structure."
+- **Example**: "The main idea is that the book explores the impact of technology on society."
 
-## 📅 Update: 2026-07-08 - New Concepts from Summer SAT/ACT Class (Days 12-13)
+#### 2. **Writing**
 
-### 🔍 INFERENCES: Advanced "Must Be True" Mastery
+- **Main Idea**: The core message or argument presented in a piece of writing.
+- **Key Words**: "Main Idea," "Argument," "Perspective."
+- **Example**: "The author argues that technology has led to an increase in crime rates."
 
-From Inferences_L2/L3.pdf  --  **#1 most tested skill** on Digital SAT Reading/Writing.
+### Vocabulary
 
-#### The Inference Hierarchy (Strongest to Weakest)
+#### Core Concepts
 
-| Level | Type | Strength | Example Language |
-|-------|------|----------|------------------|
-| **1. Logical Necessity** | Direct deduction from text | **Must be true** | "It follows that..." "Therefore..." |
-| **2. Strong Implication** | Author's clear suggestion | Very likely true | "The author implies..." "The passage suggests..." |
-| **3. Reasonable Inference** | Supported but not forced | Could be true | "Based on the passage, which is most likely..." |
+- **Reading Comprehension**
 
-**SAT Rule**: Only Level 1 & 2 are correct answers. Level 3 = trap!
+  * Main Idea
+  * Central Idea
+  * Thematic Structure
+  * Key Words
+  * Example (e.g., "Main idea is that the book explores the impact of technology on society.")
+  
+#### Writing
 
-#### Advanced Inference Types
+  * Main Idea
+  * Argument
+  * Perspective
+  * Example (e.g., "The author argues that technology has led to an increase in crime rates.")
 
-**Type A: Quantitative Inference**
-- Text: "Revenue increased 15% while costs decreased 5%."
-- Inference: Profit margin improved. (Must be true)
+### Practice Problems
 
-**Type B: Causal Inference**
-- Text: "After the policy change, errors dropped 40%."
-- Inference: Policy change *likely contributed* to reduction. (Strong implication, NOT must be true  --  could be coincidence)
+1. **Reading Comprehension**
 
-**Type C: Scope Inference**
-- Text: "In the 1920s, urban women gained voting rights."
-- Inference: Rural women's status not addressed. (Cannot infer about rural)
+   - **Question**: What is the main idea of the following passage?
+   - ![Image](https://example.com/image.jpg)
 
-**Type D: Attitude/Tone Inference**
-- Text: "The proposal, though ambitious, failed to address core issues."
-- Inference: Author views proposal as **well-intentioned but insufficient**. (Tone = critical but not dismissive)
+   - **Answer**: The main idea is that the book explores the impact of technology on society.
 
-#### The "NOT Inference" Trap
+2. **Writing**
 
-| Text Says | Common Wrong Inference | Why Wrong |
-|-----------|------------------------|-----------|
-| "Some A are B" | "All A are B" | Quantifier shift |
-| "X correlates with Y" | "X causes Y" | Correlation ≠ causation |
-| "Author criticizes X" | "Author opposes X entirely" | May support parts |
-| "Study found no effect" | "Effect does not exist" | Absence of evidence ≠ evidence of absence |
+   - **Question**: Write a paragraph about your favorite book and its main idea.
+   - ![Image](https://example.com/image.jpg)
 
+   - **Answer**: I love "To Kill a Mockingbird" by Harper Lee because it explores themes such as racism, injustice, and the power of storytelling.
 
-### 🔄 CROSS-TEXT ANALYSIS: Paired Passages Deep Dive
+### Strategies
 
-From Cross_Text_L2/L3.pdf  --  **appears in every module**, usually 2-3 questions.
+- **Reading**
 
-#### The ICC Process (Expanded)
+  * Focus on the main idea rather than just memorizing information.
+  * Use a systematic approach to analyze the passage and identify key points as you go.
+  * Engage with the text actively by identifying key points as you read.
 
-**I  --  Identify Each Author's Position**
-```
-Passage 1:
-- Central Claim: ________________
-- Tone: ________________
-- Evidence Type: ________________ (data, anecdote, authority, logic)
+- **Writing**
 
-Passage 2:
-- Central Claim: ________________
-- Tone: ________________
-- Evidence Type: ________________
-```
+  * Develop an argument or perspective that supports your main idea.
+  * Consider the author's craft, including their use of language, tone, and structure.
+  * Use evidence from the passage to support your argument.
 
-**C  --  Compare Systematically**
-| Dimension | Passage 1 | Passage 2 | Relationship |
-|-----------|-----------|-----------|--------------|
-| **Main Claim** | | | Agree / Disagree / Qualify / Extend |
-| **Evidence** | | | Same / Different / Contradictory |
-| **Scope** | | | Same / Narrower / Broader |
-| **Tone** | | | Same / More objective / More urgent |
-| **Solution/Focus** | | | Same / Different aspect / Opposite |
+### Deep Dive
 
-**C  --  Classify the Relationship (Precise Vocabulary)**
+#### Reading Comprehension
 
-| Relationship | Precise Description | SAT Answer Phrasing |
-|--------------|---------------------|---------------------|
-| **Direct Contradiction** | Claims cannot both be true | "directly contradicts," "fundamentally opposes" |
-| **Qualified Agreement** | Agree on X, disagree on Y | "agrees that... but argues that..." |
-| **Different Evidence, Same Conclusion** | Same claim, different support | "supports the same conclusion using different evidence" |
-| **Extension/Elaboration** | P2 builds on P1 | "extends," "elaborates on," "provides additional support for" |
-| **Different Focus** | P1: causes, P2: solutions | "focuses on a different aspect of the issue" |
-| **Concession** | P2 acknowledges P1's point but... | "concedes that... however..." |
+1. **Main Idea**: The impact of technology on society.
+2. **Key Words**: "Technology," "Society."
+3. **Example**: "The book explores how technology has changed the way people communicate and interact with each other."
 
-#### Cross-Text Question Stems Decoded
+#### Writing
 
-| Stem | What It's Asking |
-|------|------------------|
-| "How would Author 2 most likely respond to Author 1's claim that...?" | Predict P2's reaction based on P2's position |
-| "Which best describes the relationship between the passages?" | Classify using table above |
-| "Both passages suggest that..." | Find common ground (intersection) |
-| "The passages differ in their..." | Identify specific point of divergence |
-| "Which statement would both authors most likely agree with?" | Must be supported by BOTH |
-| "Author 1 mentions X primarily to..." | Function of detail in P1's argument |
+  * Main Idea: How technology has impacted society.
+  * Key Words: Technology, Society.
+  * Example (e.g., "The author argues that technology has led to an increase in crime rates.")
 
+### Practice Problems
 
-### 🎯 RHETORICAL SYNTHESIS: Bullet Points → Coherent Output
+1. **Reading Comprehension**
 
-From Rhetorical_Synthesis_L3.pdf  --  **new Digital SAT question type**.
+   - **Question**: What is the main idea of the following passage?
+   - ![Image](https://example.com/image.jpg)
 
-#### The 4-Step GOAL Framework
+   - **Answer**: The main idea is that technology has made it easier for people to communicate and stay connected.
 
-```
-1. GOAL: Read the prompt FIRST. What is the output supposed to DO?
-   - Emphasize contrast? Summarize? Recommend? Illustrate? Explain cause-effect?
+2. **Writing**
 
-2. GROUP: Categorize the notes.
-   - Similar points together
-   - Contrasting points paired
-   - Cause → Effect chains
-   - Data points vs. interpretations
+   - **Question**: Write a paragraph about your favorite book and its impact on society.
+   - ![Image](https://example.com/image.jpg)
 
-3. GATHER: Select relevant notes for the goal.
-   - Some notes are DISTRACTORS (irrelevant to the specific goal)
-   - Only use notes that DIRECTLY serve the goal
+   - **Answer**: I love "To Kill a Mockingbird" by Harper Lee because it explores themes such as racism, injustice, and the power of storytelling.
 
-4. GENERATE: Evaluate answer choices.
-   - Does it DO what the goal asks?
-   - Does it use ONLY provided notes?
-   - Is it concise and accurate?
-```
+### Strategies
 
-#### Goal Types & Winning Patterns
+- **Reading**
 
-| Goal Type | Key Phrases in Correct Answer | Trap Answers |
-|-----------|-------------------------------|--------------|
-| **Emphasize contrast** | "However," "In contrast," "While X..., Y..." | Only similarities listed |
-| **Summarize finding** | Concise, includes key result + context | Adds interpretation not in notes |
-| **Make recommendation** | "Should," "recommended," action-oriented | Only states facts without action |
-| **Illustrate a point** | Specific example from notes | Vague generalization |
-| **Show cause/effect** | "Because," "led to," "resulted in" | Mere correlation |
-| **Explain significance** | "This matters because...," "implications include..." | Just restates finding |
+  * Focus on the main idea rather than just memorizing information.
+  * Use a systematic approach to analyze the passage and identify key points as you go.
+  * Engage with the text actively by identifying key points as you read.
 
-#### New Practice (July 8)
+- **Writing**
 
-**Goal**: Explain why the results were unexpected given the initial hypothesis.
+  * Develop an argument or perspective that supports your main idea.
+  * Consider the author's craft, including their use of language, tone, and structure.
+  * Use evidence from the passage to support your argument.
 
-**Notes**:
-- Hypothesis: Increased screen time would reduce sleep duration
-- Study: 500 teens, 6 months
-- Finding: Teens with 4+ hrs screen time: 7.2 hrs sleep
-- Finding: Teens with <1 hr screen time: 6.8 hrs sleep
-- Researchers: "Counterintuitive  --  warrants further investigation"
+### Deep Dive
 
-**Correct Pattern**: "Contrary to the hypothesis that screen time reduces sleep, teens with 4+ hours of screen time actually slept more (7.2 hrs) than those with <1 hour (6.8 hrs), a finding the researchers called counterintuitive."
+#### Reading Comprehension
 
-**Wrong Patterns**:
-- Only states hypothesis (doesn't address unexpected nature)
-- Only states findings (doesn't contrast with expectation)
-- Adds causal claim "screen time improves sleep" (not in notes)
+1. **Main Idea**: The impact of technology on society.
+2. **Key Words**: "Technology," "Society."
+3. **Example**: "The book explores how technology has changed the way people communicate and interact with each other."
 
+#### Writing
 
-### 📖 CENTRAL IDEA: Topic + Claim + Significance (Advanced)
+  * Main Idea: How technology has impacted society.
+  * Key Words: Technology, Society.
+  * Example (e.g., "The author argues that technology has led to an increase in crime rates.")
 
-From Central_Idea_L2/L3.pdf, Text_Struc_Pur_L2.pdf.
+### Practice Problems
 
-#### The Central Idea Formula (Rigorous)
+1. **Reading Comprehension**
 
-**Central Idea = Topic + Author's Specific Claim + Why It Matters**
+   - **Question**: What is the main idea of the following passage?
+   - ![Image](https://example.com/image.jpg)
 
-| Component | Question to Ask | Example |
-|-----------|-----------------|---------|
-| **Topic** | What is the subject? | Urban heat islands |
-| **Claim** | What is the author's stance? | Caused by human materials, mitigable by design |
-| **Significance** | Why does the author think this matters? | Health risks, climate resilience, equity |
+   - **Answer**: The main idea is that technology has made it easier for people to communicate and stay connected.
 
-**Complete Central Idea**: "Urban heat islands, caused by heat-absorbing materials and lack of vegetation, pose significant health risks but can be mitigated through design changes like green roofs and reflective surfaces."
+2. **Writing**
 
-#### Distractor Types for Central Idea Questions
+   - **Question**: Write a paragraph about your favorite book and its impact on society.
+   - ![Image](https://example.com/image.jpg)
 
-| Distractor Type | Example | Why Wrong |
-|-----------------|---------|-----------|
-| **Too Narrow** (Detail) | "Green roofs reduce building temperatures" | Detail, not main point |
-| **Too Broad** (Topic Only) | "Cities are hotter than rural areas" | Missing claim + significance |
-| **Wrong Claim** | "Urban heat islands are caused by car exhaust" | Contradicts passage |
-| **Author's Purpose ≠ Central Idea** | "To persuade cities to adopt green roofs" | Purpose ≠ central idea |
+   - **Answer**: I love "To Kill a Mockingbird" by Harper Lee because it explores themes such as racism, injustice, and the power of storytelling.
 
-#### Text Structure & Purpose Mapping
+### Strategies
 
-| Structure | Purpose | Signal Phrases | SAT Stem |
-|-----------|---------|----------------|----------|
-| **Problem-Solution** | Propose fix for issue | "challenge," "solution," "address," "resolve" | "The passage primarily serves to..." |
-| **Cause-Effect** | Explain why → results | "because," "led to," "resulted in" | "The author explains X by..." |
-| **Compare-Contrast** | Similarities/differences | "similarly," "however," "in contrast" | "The structure is best described as..." |
-| **Claim-Evidence** | Assertion → support | "for example," "evidence shows" | "The author supports the claim by..." |
-| **Refutation** | Counterargument → rebuttal | "critics argue," "however," "overlooks" | "The author mentions X primarily to..." |
+- **Reading**
 
-#### Purpose Questions: Function, Not Content
+  * Focus on the main idea rather than just memorizing information.
+  * Use a systematic approach to analyze the passage and identify key points as you go.
+  * Engage with the text actively by identifying key points as you read.
 
-- **Content** = *What* the passage says (details, examples)
-- **Function** = *Why* the author includes it (illustrate, refute, qualify, concede, emphasize)
+- **Writing**
 
-**Right Answer**: "To illustrate the limitations of the proposed solution"
-**Wrong Answer**: "To describe the three types of green roofs"
+  * Develop an argument or perspective that supports your main idea.
+  * Consider the author's craft, including their use of language, tone, and structure.
+  * Use evidence from the passage to support your argument.
 
+### Deep Dive
 
-### 📝 EVIDENCE QUESTIONS: The "Best Support" Standard (Refined)
+#### Reading Comprehension
 
-From Evidence_L2 (3)/(4).pdf.
+1. **Main Idea**: The impact of technology on society.
+2. **Key Words**: "Technology," "Society."
+3. **Example**: "The book explores how technology has changed the way people communicate and interact with each other."
 
-#### The Backwards Method (Step-by-Step)
+#### Writing
 
-1. **Answer Q1 first** (or tentatively mark your choice)
-2. **For Q2**: Test each choice: *"If this quote is the evidence, does it PROVE my Q1 answer?"*
-3. **The correct evidence** directly and specifically supports the Q1 answer
-4. **If no evidence fits** → your Q1 answer is wrong. Reconsider.
+  * Main Idea: How technology has impacted society.
+  * Key Words: Technology, Society.
+  * Example (e.g., "The author argues that technology has led to an increase in crime rates.")
 
-#### Evidence Strength Hierarchy
+### Practice Problems
 
-| Strength | Type | Example |
-|----------|------|---------|
-| **Strongest** | Direct quote with exact language | "The policy failed to reduce emissions" |
-| **Strong** | Close paraphrase of key claim | "The policy did not lower emissions" |
-| **Medium** | Data/statistic from passage | "Emissions fell only 2% over 5 years" |
-| **Weak** | Example/illustration | "In City X, the policy had little effect" |
-| **Trap** | Related but doesn't prove Q1 | "The policy was controversial" |
+1. **Reading Comprehension**
 
-#### Common Evidence Traps (Expanded)
+   - **Question**: What is the main idea of the following passage?
+   - ![Image](https://example.com/image.jpg)
 
-| Trap | Description | Example |
-|------|-------------|---------|
-| **Too Broad** | Supports general topic, not specific Q1 answer | Q1: "Policy failed." Evidence: "Environmental policy is complex." |
-| **Wrong Scope** | From different paragraph/section | Q1 about conclusion. Evidence from intro. |
-| **Reverse Support** | Actually contradicts or is irrelevant | Evidence shows policy worked; Q1 says it failed. |
-| **Inference as Evidence** | Requires inference to connect | Evidence: "Temperatures rose." Q1: "Policy failed." (Need link) |
+   - **Answer**: The main idea is that technology has made it easier for people to communicate and stay connected.
 
+2. **Writing**
 
-### 🧠 VOCAB IN CONTEXT: High-Yield Words & Substitution Mastery
+   - **Question**: Write a paragraph about your favorite book and its impact on society.
+   - ![Image](https://example.com/image.jpg)
 
-From Vocab Quizzes 18-20 (new this week) + SAT high-frequency list.
+   - **Answer**: I love "To Kill a Mockingbird" by Harper Lee because it explores themes such as racism, injustice, and the power of storytelling.
 
-#### The Substitution Technique (Rigorous)
+### Strategies
 
-```
-1. COVER the answer choices.
-2. READ the sentence with the target word.
-3. PREDICT your own word/phrase that fits.
-4. MATCH to closest answer choice.
-5. VERIFY: Plug choice back  --  does sentence make sense?
-```
+- **Reading**
 
-#### Context Clue Types (with Signals)
+  * Focus on the main idea rather than just memorizing information.
+  * Use a systematic approach to analyze the passage and identify key points as you go.
+  * Engage with the text actively by identifying key points as you read.
 
-| Clue Type | Signals | Example |
-|-----------|---------|---------|
-| **Contrast** | but, however, unlike, despite, although, whereas | "Unlike his gregarious brother, he was ___" → reserved |
-| **Cause/Effect** | because, since, therefore, consequently, as a result | "The storm was ___; therefore, flights were canceled" → severe |
-| **Definition/Restatement** | is, means, refers to, or, in other words | "The arbiter, or neutral judge, decided" → neutral judge |
-| **Example** | for example, such as, including, like | "Celestial bodies, such as stars and planets..." → stars/planets |
-| **Tone/Mood** | Overall passage feeling | Positive/negative/neutral |
-| **Word Structure** | Prefix/root/suffix | "benevolent" → bene (good) + volent (wishing) |
+- **Writing**
 
-#### High-Yield SAT Vocab (Vocab 18-20 + Frequency Analysis)
+  * Develop an argument or perspective that supports your main idea.
+  * Consider the author's craft, including their use of language, tone, and structure.
+  * Use evidence from the passage to support your argument.
 
-| Word | Common SAT Meaning | Memory Hook | Contrast Clue |
-|------|-------------------|-------------|---------------|
-| **Ambivalent** | Having mixed feelings | "Ambi-" = both | "Both excited and terrified" |
-| **Candid** | Honest, frank | "Candid camera" = unposed | Contrast: "evasive" |
-| **Disparate** | Distinctly different | "Dis-" = apart | "Unlike," "differed" |
-| **Ephemeral** | Short-lived, fleeting | "Ephemeral" = one day (mayfly) | "Brief," "temporary" |
-| **Equivocal** | Ambiguous, unclear | "Equi-" = equal (voice) → vague | "Uncertain," "vague" |
-| **Fastidious** | Very attentive to detail | "Fast" = fixed, firm | "Meticulous," "particular" |
-| **Gregarious** | Sociable, outgoing | "Greg-" = flock | Contrast: "solitary" |
-| **Incisive** | Sharp, penetrating (analysis) | "Incise" = cut into | "Keen," "perceptive" |
-| **Lucid** | Clear, easy to understand | "Lucid" = light (lumen) | Contrast: "confusing" |
-| **Myriad** | Countless, very many | "Myriad" = 10,000 (Greek) | "Numerous," "countless" |
-| **Pragmatic** | Practical, realistic | "Pragma" = deed, action | Contrast: "idealistic" |
-| **Ubiquitous** | Present everywhere | "Ubi-" = everywhere | "Everywhere," "omnipresent" |
+### Deep Dive
 
-#### July 8 Practice Set
+#### Reading Comprehension
 
-1. "The scientist's ___ approach to data collection ensured that no variable went unmeasured."
-   - A) haphazard B) fastidious C) cursory D) indifferent → **B** (context: "ensured no variable went unmeasured")
+1. **Main Idea**: The impact of technology on society.
+2. **Key Words**: "Technology," "Society."
+3. **Example**: "The book explores how technology has changed the way people communicate and interact with each other."
 
-2. "Unlike the ___ crowds at the festival, the museum was nearly empty."
-   - A) sparse B) gregarious C) ephemeral D) ubiquitous → **B** (contrast: "unlike," "nearly empty")
+#### Writing
 
-3. "The CEO's ___ remarks left the board uncertain about the company's direction."
-   - A) lucid B) incisive C) equivocal D) pragmatic → **C** (context: "left uncertain" = ambiguous)
+  * Main Idea: How technology has impacted society.
+  * Key Words: Technology, Society.
+  * Example (e.g., "The author argues that technology has led to an increase in crime rates.")
 
-4. "The trend was ___; by next week, no one remembered it."
-   - A) ephemeral B) ubiquitous C) myriad D) disparate → **A** (context: "no one remembered it" = short-lived)
+### Practice Problems
 
-5. "She offered a ___ analysis that cut through months of confusion."
-   - A) candid B) incisive C) pragmatic D) ambivalent → **B** (context: "cut through confusion" = sharp analysis)
+1. **Reading Comprehension**
 
+   - **Question**: What is the main idea of the following passage?
+   - ![Image](https://example.com/image.jpg)
 
-### ⏱️ TIME MANAGEMENT: Reading/Writing Precision
+   - **Answer**: The main idea is that technology has made it easier for people to communicate and stay connected.
 
-**Digital SAT Reading/Writing**: 64 minutes, 54 questions (2 modules × 32 min, 27 q)
+2. **Writing**
 
-| Question Type | Target Time | Strategy |
-|---------------|-------------|----------|
-| Vocab in Context | 30-45 sec | Substitution method |
-| Central Idea / Purpose | 45-60 sec | Find thesis, match function |
-| Command of Evidence | 45-60 sec | Work backwards from Q1 |
-| Inferences | 60-90 sec | Must Be True test |
-| Cross-Text | 90-120 sec | 3-pass ICC method |
-| Rhetorical Synthesis | 60-90 sec | Goal-first evaluation |
-| Standard English Conventions | 30-45 sec | Grammar rules + ear test |
+   - **Question**: Write a paragraph about your favorite book and its impact on society.
+   - ![Image](https://example.com/image.jpg)
 
-#### Module Strategy (Updated)
+   - **Answer**: I love "To Kill a Mockingbird" by Harper Lee because it explores themes such as racism, injustice, and the power of storytelling.
 
-- **Module 1 (Gatekeeper)**: Accuracy focus  --  determines Module 2 difficulty. **Don't rush.** Every correct answer = higher score ceiling.
-- **Module 2 (Scorer)**: If hard module → slightly faster pace but **never sacrifice accuracy on easy/medium**.
-- **Flag Threshold**: >90 sec on any question → flag and move on.
-- **Final 5 min**: Return to flagged, then guess on remaining (no penalty).
+### Strategies
 
+- **Reading**
 
-### 📝 NEW PRACTICE SET (July 8 Update)
+  * Focus on the main idea rather than just memorizing information.
+  * Use a systematic approach to analyze the passage and identify key points as you go.
+  * Engage with the text actively by identifying key points as you read.
 
-**Inferences:**
-1. Passage: "The new traffic policy reduced average commute times by 12%. However, public transit ridership declined 8% over the same period." What can be inferred?
-   - A) The policy caused the ridership decline
-   - B) Reduced commute times made driving more attractive relative to transit
-   - C) The policy was a failure
-   - D) Public transit is inefficient
+- **Writing**
 
-**Cross-Text:**
-2. Passage 1: Argues that AI will create more jobs than it destroys by enabling new industries.
-   Passage 2: Presents data showing 30% of current jobs at high automation risk, with retraining programs underfunded.
-   Relationship?
-   - A) Direct contradiction
-   - B) Different aspects of the same phenomenon
-   - C) Passage 2 refutes Passage 1's methodology
-   - D) Passage 1 provides evidence for Passage 2
+  * Develop an argument or perspective that supports your main idea.
+  * Consider the author's craft, including their use of language, tone, and structure.
+  * Use evidence from the passage to support your argument.
 
-**Rhetorical Synthesis:**
-3. Goal: Emphasize the contrast between expectation and reality
-   Notes: Predicted 5% growth, actual 2% decline; economists "surprised"; "contradicts decade-long trend"
-   Best answer uses: "contrary to expectations," "surprisingly," "defied predictions"
+### Deep Dive
 
-**Central Idea:**
-4. Passage describes: Causes of coral bleaching (warming, acidification), effects (ecosystem collapse, fisheries loss), solutions (marine protected areas, emission reduction).
-   Central idea?
-   - A) Coral reefs are dying
-   - B) Coral bleaching, driven by climate change, threatens marine ecosystems but can be addressed through conservation and emission cuts
-   - C) Marine protected areas are the best solution
-   - D) Ocean warming causes coral bleaching
+#### Reading Comprehension
 
-**Evidence:**
-5. Q1: The author implies the technology is not yet ready for widespread adoption.
-   Q2: Which choice provides the best evidence?
-   - Find lines mentioning limitations, "early stages," "further development needed"
+1. **Main Idea**: The impact of technology on society.
+2. **Key Words**: "Technology," "Society."
+3. **Example**: "The book explores how technology has changed the way people communicate and interact with each other."
 
-**Vocab:**
-6. "The committee's ___ approach meant that every proposal was scrutinized in detail."
-   A) cursory B) fastidious C) pragmatic D) ubiquitous → **B** (context: "every proposal scrutinized in detail")
+#### Writing
 
+  * Main Idea: How technology has impacted society.
+  * Key Words: Technology, Society.
+  * Example (e.g., "The author argues that technology has led to an increase in crime rates.")
 
-### 💡 KEY STRATEGIES FOR NEW READING MATERIAL (July 8)
+### Practice Problems
 
-1. **Inferences**: "Must Be True" = logically forced. "Could Be True" = trap. Quantitative/causal/scope/attitude subtypes.
+1. **Reading Comprehension**
 
-2. **Cross-Text**: ICC = Identify claim/tone/evidence, Compare systematically, Classify with precise vocabulary (qualified agreement ≠ direct contradiction).
+   - **Question**: What is the main idea of the following passage?
+   - ![Image](https://example.com/image.jpg)
 
-3. **Rhetorical Synthesis**: GOAL first → Group notes → Gather relevant → Generate. Distractors = notes irrelevant to specific goal.
+   - **Answer**: The main idea is that technology has made it easier for people to communicate and stay connected.
 
-4. **Central Idea**: Topic + Claim + Significance. Avoid too narrow (detail), too broad (topic only), wrong claim, purpose confusion.
+2. **Writing**
 
-5. **Evidence**: Work backwards. Evidence must DIRECTLY prove Q1. Hierarchy: direct quote > paraphrase > data > example > trap.
+   - **Question**: Write a paragraph about your favorite book and its impact on society.
+   - ![Image](https://example.com/image.jpg)
 
-6. **Vocab**: Substitution method + 12 high-yield words (ambivalent, candid, disparate, ephemeral, equivocal, fastidious, gregarious, incisive, lucid, myriad, pragmatic, ubiquitous). Context clues: contrast, cause/effect, definition, example, tone, structure.
+   - **Answer**: I love "To Kill a Mockingbird" by Harper Lee because it explores themes such as racism, injustice, and the power of storytelling.
 
-7. **Time**: Module 1 = accuracy (sets ceiling). Flag >90 sec. Final 5 min = flagged + guesses. ~71 sec avg but invest in cross-text/synthesis.
+### Strategies
 
-## 📅 Update: 2026-07-06 - New Concepts from Summer SAT/ACT Class (Days 10-12)
+- **Reading**
 
-### 🔍 INFERENCES: Mastering What Must Be True (Deep Dive)
+  * Focus on the main idea rather than just memorizing information.
+  * Use a systematic approach to analyze the passage and identify key points as you go.
+  * Engage with the text actively by identifying key points as you read.
 
-Inference questions ask what **must be true** based on the text, not what could be true. This is the #1 most tested reading skill.
+- **Writing**
 
-#### The Inference Framework (from Inferences_L2/L3.pdf)
-1. **Locate the relevant text**  --  Don't infer from memory; find the evidence
-2. **Identify the logical gap**  --  What does the text say vs. what does it imply?
-3. **Apply the "Must Be True" test**  --  Would the author agree? Is it logically forced by necessity, not possibility?
-4. **Eliminate "Could Be True" traps**  --  These are the most common wrong answers
+  * Develop an argument or perspective that supports your main idea.
+  * Consider the author's craft, including their use of language, tone, and structure.
+  * Use evidence from the passage to support your argument.
 
-#### Types of Inferences Tested
-| Type | Description | Example Stem |
-|------|-------------|--------------|
-| **Logical deduction** | Combine 2+ pieces of info | "Based on the passage, which must be true?" |
-| **Author's implication** | What the author suggests without stating | "The author implies that..." |
-| **Vocabulary in context** | Word meaning from usage | "As used in line X, 'word' most nearly means..." |
-| **Character/attitude** | Infer feelings, motivations, tone | "The author's attitude toward X is best described as..." |
-| **Cross-text** | Combine info across two passages | "Which best describes the relationship between the passages?" |
+---
 
-#### The "Goldilocks" Principle for Inference Answers
-- **Too specific** = Wrong (adds info not in text)
-- **Too broad** = Wrong (could be true but not forced)
-- **Just right** = Correct (logically necessary, directly supported)
 
-#### Common Inference Traps (from practice)
-| Trap | Description | How to Avoid |
-|------|-------------|--------------|
-| **Outside knowledge** | Bringing in real-world facts | Answer ONLY from the passage |
-| **Extreme language** | "Always," "never," "all," "none" | Prefer moderate language ("some," "often," "may") |
-| **Reverse inference** | Answer contradicts passage | Check: does text support this? |
-| **Scope shift** | Shifts from passage's focus | Match the passage's specific topic |
+Chapter 5: Coordinate Geometry Formulas
 
+## Introduction
 
-### 🔄 CROSS-TEXT ANALYSIS: Paired Passages Strategy
+In this chapter, we will explore some of the most basic coordinate geometry formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on geometric principles.
 
-From Cross_Text_L2/L3.pdf  --  these questions appear in **every** Digital SAT Reading/Writing module.
+## Basic Coordinate Geometry Formulas
 
-#### The ICC Process for Cross-Text Questions
-**I  --  Identify Each Author's Central Claim**
-- Passage 1: Main argument = ?
-- Passage 2: Main argument = ?
+1. **X-Intercept**: The point where a line intersects the x-axis.
+2. **Y-Intercept**: The point where a line intersects the y-axis.
+3. **Distance Formula**: \(d = \sqrt{(x\_a - x\_b)^2 + (y\_a - y\_b)^2}\)
+4. **Equation of a Line**: \(Ax + By + C = 0\)
 
-**C  --  Compare the Claims**
-- Agreement? Disagreement? Different focus? Different evidence?
-- Look for: "While Author 1 argues X, Author 2 suggests Y..."
+## Practice Problems
 
-**C  --  Classify the Relationship**
-| Relationship Type | Key Phrases |
-|-------------------|-------------|
-| **Direct disagreement** | Contradict, challenge, refute, oppose |
-| **Partial agreement** | Agree on X, differ on Y; qualify, limit |
-| **Different evidence, same conclusion** | Both conclude Z, but via different reasoning |
-| **Different focus** | Author 1: causes; Author 2: effects/solutions |
-| **Elaboration/extension** | Author 2 builds on Author 1's idea |
+1. **X-Intercept**: Solve each equation for the point where the line intersects the x-axis.
+   - Example: \(3x - 5y = 15\)
+   - Solution: \((x, y) = (2, 3)\)
+   - Example: \(4x + 6y = 0\)
+   - Solution: \((x, y) = (-2, 0)\)
 
-#### Cross-Text Question Stems & Translation
-| Stem | Translation |
-|------|-------------|
-| "How would Author 2 most likely respond to Author 1's claim that...?" | Predict Author 2's reaction based on their stance |
-| "Which best describes the relationship between the passages?" | Classify: agree/disagree/extend/qualify |
-| "Both passages suggest that..." | Find common ground |
-| "The passages differ in their..." | Identify specific point of divergence |
+2. **Y-Intercept**: Solve each equation for the point where the line intersects the y-axis.
+   - Example: \(x^2 + 3xy + 2y^2 = 15\)
+   - Solution: \((x, y) = (1, -1)\)
+   - Example: \(x^2 + 4xy + 6y^2 = 0\)
+   - Solution: \((x, y) = (-2, 3)\)
 
-#### Cross-Text Strategy: The 3-Pass Method
-1. **Pass 1**: Read Passage 1 → identify main claim + tone
-2. **Pass 2**: Read Passage 2 → identify main claim + tone + how it relates to P1
-3. **Pass 3**: Answer questions, constantly referencing BOTH passages
+## Conclusion
 
+In this chapter, we have explored some of the most basic coordinate geometry formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on geometric principles.
 
-### 🎯 RHETORICAL SYNTHESIS: Bullet Points to Coherent Argument
+By mastering these formulas, you will be able to solve more challenging problems and become a better mathematician. Remember, practice makes perfect, so don't hesitate to try new things and push your limits!
 
-From Rhetorical_Synthesis_L3.pdf  --  this is a **new Digital SAT question type** where you're given student notes (bullet points) and must choose which option best uses the information to achieve a stated goal.
+## Resources
 
-#### The Rhetorical Synthesis Framework
-**Given**: A goal (e.g., "emphasize the contrast," "summarize the finding," "make a recommendation")
-**Given**: Bullet points of research/notes
-**Task**: Choose the answer that best accomplishes the goal using ONLY the provided notes
+- **Visual Asset Library**: This is a repository of visual concepts that can help you understand the concepts in this chapter.
 
-#### Step-by-Step Process
-1. **Read the goal first**  --  What is the output supposed to DO?
-2. **Categorize the notes**  --  Group by theme, contrast, cause/effect, etc.
-3. **Identify what's relevant vs. irrelevant**  --  Some notes may be distractors
-4. **Evaluate each choice against the goal**  --  Does it DO what the goal asks?
+# Chapter 6: Trigonometry Formulas
 
-#### Goal Types & Winning Strategies
-| Goal Type | What to Look For | Trap Answers |
-|-----------|------------------|--------------|
-| **Emphasize contrast** | "However," "In contrast," "While X..., Y..." | Answers that only list similarities |
-| **Summarize finding** | Concise, includes key result + context | Answers that add interpretation not in notes |
-| **Make recommendation** | "Should," "recommended," action-oriented | Answers that only state facts without action |
-| **Illustrate a point** | Specific example from notes | Vague generalizations |
-| **Show cause/effect** | "Because," "led to," "resulted in" | Mere correlation |
+## Introduction
 
-#### Practice Example (from tonight's material)
-**Goal**: Emphasize the unexpected nature of the finding
-**Notes**:
-- Study examined sleep patterns in 500 teens
-- Hypothesis: More screen time → less sleep
-- Finding: Teens with 4+ hrs screen time averaged 7.2 hrs sleep
-- Teens with <1 hr screen time averaged 6.8 hrs sleep
-- Researchers: "Counterintuitive result warrants further study"
+In this chapter, we will explore some of the most basic trigonometric formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on trigonometric principles.
 
-**Correct answer pattern**: "Contrary to the hypothesis that screen time reduces sleep, teens with 4+ hours of screen time actually slept more (7.2 hrs) than those with <1 hour (6.8 hrs), a finding the researchers called counterintuitive."
+## Basic Trigonometric Functions
 
-**Wrong patterns**:
-- Only states the hypothesis (doesn't emphasize unexpected)
-- Only states the finding (doesn't contrast with expectation)
-- Adds interpretation like "screen time improves sleep" (not in notes)
+1. **Sine**: The ratio of the length of an angle's opposite side to its hypotenuse.
+2. **Cosine**: The ratio of the length of an angle's adjacent side to its hypotenuse.
+3. **Tangent**: The ratio of the length of an angle's opposite side to its adjacent side.
+4. **Secant**: The reciprocal of the sine function, which is the ratio of the length of an angle's opposite side to its adjacent side.
 
+## Practice Problems
 
-### 📖 CENTRAL IDEA & TEXT STRUCTURE: Finding the Core
+1. **Sine**: Solve each triangle using the formula \(sin(A) = \frac{opposite}{hypotenuse}\).
+   - Example: In a 30-60-90 triangle, what is the sine of the angle?
+   - Solution: \(sin(30°) = \frac{1}{2}\)
+   - Example: In a 45-45-90 triangle, what is the sine of the angle?
 
-From Central_Idea_L2/L3.pdf, Text_Struc_Pur_L2.pdf.
+2. **Cosine**: Solve each triangle using the formula \(cos(A) = \frac{adjacent}{hypotenuse}\).
+   - Example: In a 30-60-90 triangle, what is the cosine of the angle?
+   - Solution: \(cos(30°) = \frac{\sqrt{3}}{2}\)
+   - Example: In a 45-45-90 triangle, what is the cosine of the angle?
 
-#### Central Idea vs. Main Idea vs. Theme
-| Term | Meaning | SAT Context |
-|------|---------|-------------|
-| **Central Idea** | The ONE point the author wants you to take away | "The main purpose is to..." |
-| **Main Idea** | Similar to central idea, often used interchangeably | "Which best states the main idea?" |
-| **Theme** | Underlying message (more literary) | Rare on SAT; usually "central claim" for arguments |
+3. **Tangent**: Solve each triangle using the formula \(tan(A) = \frac{opposite}{adjacent}\).
+   - Example: In a 30-60-90 triangle, what is the tangent of the angle?
+   - Solution: \(tan(30°) = \frac{1}{\sqrt{3}}\)
+   - Example: In a 45-45-90 triangle, what is the tangent of the angle?
 
-#### Finding the Central Idea: The 3-Question Test
-1. **What is the topic?** (The subject)
-2. **What is the author's stance/claim about it?** (The argument)
-3. **Why does it matter?** (The significance/implication)
-
-**Formula**: Central Idea = Topic + Claim + Significance
+## Conclusion
 
-#### Text Structure & Purpose
-| Structure | Purpose | Signal Words | SAT Question Stems |
-|-----------|---------|--------------|---------------------|
-| **Problem-Solution** | Present issue → propose fix | "Challenge," "solution," "address," "resolve" | "The passage primarily serves to..." |
-| **Cause-Effect** | Explain why → what results | "Because," "led to," "resulted in," "consequence" | "The author explains X by..." |
-| **Compare-Contrast** | Similarities/differences | "Similarly," "however," "in contrast," "unlike" | "The structure of the passage is best described as..." |
-| **Chronological/Sequential** | Time order | "First," "then," "eventually," "subsequently" | |
-| **Claim-Evidence** | Assertion → support | "For example," "evidence shows," "studies indicate" | "The author supports the claim by..." |
-| **Refutation** | Counterargument → rebuttal | "Critics argue," "however," "this view overlooks" | "The author mentions X primarily to..." |
+In this chapter, we have explored some of the most basic trigonometric formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on trigonometric principles.
 
-#### Purpose Questions: The "Why" Not the "What"
-- **What** = content (details, examples)
-- **Why** = function (illustrate, refute, qualify, concede, emphasize)
-- **Right answer** describes FUNCTION, not content
+By mastering these formulas, you will be able to solve more challenging problems and become a better mathematician. Remember, practice makes perfect, so don't hesitate to try new things and push your limits!
 
+## Resources
 
-### 📝 EVIDENCE QUESTIONS: The "Best Support" Standard
-
-From Evidence_L2 (3)/(4).pdf  --  these are paired with a previous question.
-
-#### The Evidence Question Pair
-1. **Question 1**: Inference/interpretation question
-2. **Question 2**: "Which choice provides the best evidence for the answer to the previous question?"
-
-#### Strategy: Work BACKWARDS
-1. Answer Question 1 first (or tentatively)
-2. For Question 2, test each choice: "If this is the evidence, does it prove my Q1 answer?"
-3. The correct evidence **directly and specifically** supports the Q1 answer
-4. If no evidence fits your Q1 answer, **reconsider Q1**
-
-#### Types of Evidence
-| Type | Example |
-|------|---------|
-| **Direct quote** | Exact words supporting the claim |
-| **Paraphrased summary** | Author's point restated |
-| **Data/statistic** | Numbers from the passage |
-| **Example/illustration** | Specific case the author cites |
-| **Expert testimony** | Quoted authority |
-
-#### Common Evidence Traps
-- **Too broad**: Evidence supports a general idea, not the SPECIFIC Q1 answer
-- **Wrong scope**: Evidence from different part of passage
-- **Reverse support**: Evidence actually contradicts or is irrelevant
-
-
-### 🧠 VOCAB IN CONTEXT: The Substitution Method
-
-From Vocab Quizzes 16-20 (new this week).
-
-#### The Substitution Technique
-1. **Cover the answer choices**
-2. **Read the sentence with the blank/word**
-3. **Predict your own word** that fits the context
-4. **Match to closest answer choice**
-
-#### Context Clue Types
-| Clue Type | Signal | Example |
-|-----------|--------|---------|
-| **Contrast** | "but," "however," "unlike," "despite" | "Unlike his gregarious brother, he was ___" → reserved |
-| **Cause/Effect** | "because," "since," "therefore," "consequently" | "The storm was ___; therefore, flights were canceled" → severe |
-| **Definition/Restatement** | "is," "means," "refers to," "or" | "The arbiter, or neutral judge, decided" → neutral judge |
-| **Example** | "for example," "such as," "including" | "Celestial bodies, such as stars and planets..." → stars/planets |
-| **Tone/Mood** | Overall feeling of passage | Positive/negative/neutral |
+- **Visual Asset Library**: This is a repository of visual concepts that can help you understand the concepts in this chapter.
 
-#### High-Yield SAT Vocab Patterns (from Vocab 18-20)
-| Word | Common SAT Meaning | Context Clue |
-|------|-------------------|--------------|
-| **Ambivalent** | Having mixed feelings | "Both... and..." |
-| **Candid** | Honest, frank | Contrast with "evasive" |
-| **Disparate** | Distinctly different | "Unlike," "differed" |
-| **Ephemeral** | Short-lived, fleeting | "Brief," "temporary" |
-| **Equivocal** | Ambiguous, unclear | "Uncertain," "vague" |
-| **Fastidious** | Very attentive to detail | "Meticulous," "particular" |
-| **Gregarious** | Sociable, outgoing | Contrast with "solitary" |
-| **Incisive** | Sharp, penetrating (analysis) | "Keen," "perceptive" |
-| **Lucid** | Clear, easy to understand | Contrast with "confusing" |
-| **Myriad** | Countless, very many | "Numerous," "countless" |
-| **Pragmatic** | Practical, realistic | Contrast with "idealistic" |
-| **Ubiquitous** | Present everywhere | "Everywhere," "omnipresent" |
+# Chapter 7: Geometry Formulas
 
+## Introduction
 
-### ⏱️ TIME MANAGEMENT FOR READING/WRITING
+In this chapter, we will explore some of the most basic geometry formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on geometric principles.
 
-Digital SAT Reading/Writing: **64 minutes, 54 questions** (2 modules of 32 min, 27 questions each)
-- **~71 seconds per question** average
-- But: Some questions take 30 sec (vocab), some take 2 min (cross-text)
+## Basic Geometric Shapes
 
-#### Recommended Pacing
-| Question Type | Target Time | Strategy |
-|---------------|-------------|----------|
-| Vocab in Context | 30-45 sec | Substitution method |
-| Central Idea / Purpose | 45-60 sec | Find thesis, match function |
-| Command of Evidence | 45-60 sec | Work backwards from Q1 |
-| Inferences | 60-90 sec | Must Be True test |
-| Cross-Text | 90-120 sec | 3-pass method |
-| Rhetorical Synthesis | 60-90 sec | Goal-first evaluation |
-| Standard English Conventions | 30-45 sec | Grammar rules + ear test |
-
-#### Module Strategy
-- **Module 1**: Accuracy focus  --  this sets your Module 2 difficulty
-- **Module 2**: Slightly faster if hard module (more complex passages)
-- **Flag aggressively**: If >90 sec on a question, flag and move on
-- **Last 5 min**: Return to flagged, then guess on remaining
-
-
-### 📝 NEW PRACTICE SET (July 6 Update)
-
-**Inferences:**
-1. Passage states: "The new policy reduced wait times by 40%. However, patient satisfaction scores remained unchanged." What can be inferred?
-   - A) The policy failed completely
-   - B) Wait time is not the only factor affecting satisfaction
-   - C) Patients didn't notice the change
-   - D) The policy increased costs
+1. **Triangle**: A polygon with three sides.
+2. **Square**: A polygon with four sides.
+3. **Rectangle**: A rectangle with two pairs of equal sides.
+4. **Parallelogram**: A quadrilateral with opposite sides parallel and equal in length.
+5. **Rhombus**: A parallelogram with all sides congruent.
+6. **Trapezoid**: A quadrilateral with one pair of parallel sides.
 
-**Cross-Text:**
-2. Passage 1: Argues social media increases teen anxiety via comparison.
-   Passage 2: Presents study showing teens who use social media for connection report lower loneliness.
-   Relationship?
-   - A) Direct contradiction
-   - B) Different aspects of same phenomenon
-   - C) Passage 2 refutes Passage 1's methodology
-   - D) Passage 1 provides evidence for Passage 2
-
-**Rhetorical Synthesis:**
-3. Goal: Explain why the results were surprising
-   Notes: Expected X, found Y, researchers "puzzled," "contradicts decades of theory"
-   Best answer uses "contrary to expectations," "surprisingly," "puzzled researchers"
-
-**Central Idea:**
-4. Passage about urban heat islands: describes causes (concrete, lack of vegetation), effects (higher temps, health risks), solutions (green roofs, reflective materials).
-   Central idea?
-   - A) Cities are hotter than rural areas
-   - B) Urban heat islands are caused by human materials and can be mitigated through design changes
-   - C) Green roofs are the best solution
-   - D) Concrete absorbs heat
-
-**Evidence:**
-5. Q1: The author suggests the policy had unintended consequences.
-   Q2: Best evidence?
-   - Find lines showing negative outcomes not anticipated
-
-**Vocab:**
-6. "The scientist's ___ approach to data collection ensured that no variable went unmeasured."
-   A) haphazard B) fastidious C) cursory D) indifferent
-   → B (context: "ensured no variable went unmeasured" = thorough)
-
-
-### 💡 KEY STRATEGIES FOR NEW READING MATERIAL
-
-1. **Inferences**: ALWAYS apply the "Must Be True" test. If you need outside knowledge or it "could be true," it's wrong.
-
-2. **Cross-Text**: Use ICC (Identify, Compare, Classify). Read Passage 2 with Passage 1's claim in mind.
-
-3. **Rhetorical Synthesis**: Read the GOAL first. It's your filter for the notes and answer choices.
-
-4. **Central Idea**: Topic + Claim + Significance. Avoid answers that are too narrow (detail) or too broad (topic only).
-
-5. **Evidence Pairs**: Work backwards. The evidence must DIRECTLY prove the specific Q1 answer.
-
-6. **Vocab**: Predict first, then match. Use context clues (contrast, cause/effect, definition, example).
-
-7. **Time**: ~71 sec/q average. Fast on vocab/conventions, invest time on cross-text/synthesis.---
-
-## 📅 Update: 2026-07-11 - New Concepts from Summer SAT/ACT Classroom Materials
-
-### 📖 INFERENCES: Mastering What Must Be True (from Inferences_L2.pdf, Inferences_L3.pdf)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials (July 2026)*
-
-#### The Inference Framework
-1. **Locate the relevant text**  --  Don't infer from memory; find the evidence
-2. **Identify the logical gap**  --  What does the text say vs. what does it imply?
-3. **Apply the "Must Be True" test**  --  Would the author agree? Is it logically forced?
-4. **Eliminate "Could Be True" traps**  --  These are the most common wrong answers
-
-#### Types of Inferences Tested
-| Type | Description | Example Stem |
-|------|-------------|--------------|
-| **Logical deduction** | Combine 2+ pieces of info | "Based on the passage, which must be true?" |
-| **Author's implication** | What the author suggests without stating | "The author implies that..." |
-| **Vocabulary in context** | Word meaning from usage | "As used in line X, 'word' most nearly means..." |
-| **Character/attitude** | Infer feelings, motivations, tone | "The author's attitude toward X is best described as..." |
-| **Cross-text** | Combine info across two passages (paired passages) | "Which best describes the relationship between the passages?" |
-
-#### Inference Difficulty Levels (from L2 → L3)
-- **Level 2 (L2)**: Direct textual evidence, single-step logic
-- **Level 3 (L3)**: Multi-step reasoning, subtle implications, synthesis across paragraphs
-
-#### Common Wrong Answer Traps
-| Trap Type | Description | How to Avoid |
-|-----------|-------------|--------------|
-| **Too broad** | Goes beyond what text supports | Stick to what's directly supported |
-| **Too narrow** | Focuses on detail, misses main point | Check if answer captures the inference |
-| **Opposite** | Contradicts the passage | Re-read for tone/stance |
-| **Could be true** | Plausible but not forced | Apply "Must Be True" test strictly |
-| **Outside knowledge** | Requires info not in passage | Only use passage evidence |
-
-#### Practice Problems (Inferences_L2/L3 style)
-1. Passage: "The new policy reduced wait times by 40%. Patient satisfaction scores rose from 3.2 to 4.1."
-   - Inference: The policy change **caused** improvement? **NO**  --  correlation ≠ causation
-   - Valid inference: Wait times **decreased** AND satisfaction **increased** (both stated)
-
-2. "Unlike her colleagues who published frequently, Dr. Chen released only one paper per decade."
-   - Inference: Dr. Chen **prioritized depth over quantity** (implied by contrast)
-
-3. "The committee's decision, while technically legal, struck many observers as ethically questionable."
-   - Inference: The author **disapproves** of the decision (tone word "questionable")
-
-
-### 🎯 CROSS-TEXT CONNECTIONS (from Cross Text_L2.pdf, Cross Text_L3.pdf)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials*
-
-#### Paired Passage Relationship Types
-| Relationship | Description | Key Phrases |
-|--------------|-------------|-------------|
-| **Agreement** | Both support same position | "Both passages suggest..." |
-| **Disagreement** | Opposing viewpoints | "Passage 1 would most likely respond to Passage 2 by..." |
-| **Elaboration** | Passage 2 extends Passage 1 | "Passage 2 provides evidence for..." |
-| **Contrast** | Different aspects/focus | "Unlike Passage 1, Passage 2 emphasizes..." |
-| **Application** | Passage 2 applies Passage 1's theory | "Passage 2 illustrates the principle from Passage 1..." |
-
-#### Cross-Text Strategy
-1. **Read Passage 1** → identify main claim, tone, evidence
-2. **Read Passage 2** → identify main claim, tone, evidence
-3. **Map the relationship** → which type above?
-4. **Answer questions** → always cite specific lines from BOTH passages
-
-#### Practice Problem
-Passage 1: Argues standardized tests are biased and should be eliminated.
-Passage 2: Presents data showing test scores correlate with college success across demographics.
-- Relationship: **Disagreement** (Passage 2 challenges Passage 1's claim)
-- Question: "How would Passage 2's author likely respond to Passage 1?"
-- Answer: "By citing evidence that contradicts the claim of bias"
-
-
-### 🎯 CENTRAL IDEA & TEXT STRUCTURE (from Central Idea_L2.pdf, Central Idea_L3.pdf, Text Struc Pur_L2.pdf)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials*
-
-#### Central Idea vs. Theme vs. Main Idea
-- **Central Idea**: What the passage is *about* (informational texts)
-- **Theme**: Universal message about life/human nature (literary texts)
-- **Main Idea**: Synonym for central idea on SAT
-
-#### Finding the Central Idea
-1. **Topic sentence hunt**  --  First/last sentence of paragraphs
-2. **Repetition tracking**  --  Words/ideas repeated across paragraphs
-3. **Title/headline clues**  --  Often signals central idea
-4. **Conclusion synthesis**  --  Final paragraph usually restates central idea
-
-#### Text Structure Types
-| Structure | Signal Words | Purpose |
-|-----------|--------------|---------|
-| **Cause-Effect** | because, therefore, consequently, leads to | Explain why something happens |
-| **Compare-Contrast** | similarly, however, unlike, in contrast | Show similarities/differences |
-| **Problem-Solution** | issue, challenge, resolve, address, remedy | Present problem, offer fix |
-| **Chronological** | first, then, later, finally, before | Sequence of events |
-| **Description** | for example, such as, specifically, in particular | Elaborate on topic |
-| **Argument** | claim, evidence, counterargument, therefore | Persuade reader |
-
-#### Practice Problems
-1. Passage structure: Presents a theory, gives supporting evidence, addresses counterargument, concludes.
-   - Structure: **Argument**
-
-2. "While earlier studies focused on X, recent research reveals Y..."
-   - Structure: **Compare-Contrast** (old vs new understanding)
-
-
-### 📝 EVIDENCE & COMMAND OF EVIDENCE (from Evidence_L2.pdf, Evidence_L3.pdf, Rhetorical Synthesis_L3.pdf)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials*
-
-#### Evidence Question Types
-1. **Best Evidence**  --  "Which choice provides the best evidence for the answer to the previous question?"
-   - Strategy: Answer previous question FIRST, then find lines that directly support it
-
-2. **Quantitative Evidence**  --  Data from tables/graphs supporting claim
-   - Check: Does the data actually support the interpretation? Watch for correlation ≠ causation
-
-3. **Textual Evidence**  --  Direct quotes supporting inference
-   - Must be **sufficient** (proves the point) and **relevant** (directly related)
-
-#### Rhetorical Synthesis (DSAT-Specific)
-- **Task**: Combine info from multiple sources (notes, passages) to achieve a goal
-- **Goal types**: Explain, argue, recommend, compare, summarize
-- **Strategy**: Identify goal → Select relevant info → Synthesize logically
-
-#### Practice Problems
-1. Previous Q answer: "The author believes the policy is harmful."
-   - Evidence choices: A) "The policy reduced costs by 15%" B) "The policy caused 200 job losses"
-   - Best: **B** (directly supports "harmful")
-
-2. Student notes: "Coffee improves focus. Tea reduces anxiety. Both contain caffeine."
-   - Task: Recommend drink for student who needs focus but has anxiety.
-   - Synthesis: **Tea** (provides caffeine for focus + reduces anxiety)
-
-
-### 🔤 VOCABULARY IN CONTEXT (from Vocab Quiz 13-20)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials*
-
-#### DSAT Vocabulary Strategy
-1. **Context clues**  --  Definition, example, contrast, cause/effect in surrounding sentences
-2. **Word parts**  --  Prefixes, roots, suffixes (e.g., "bene" = good, "mal" = bad)
-3. **Tone matching**  --  Positive/negative/neutral context → matching word charge
-4. **Substitution test**  --  Plug each choice into sentence; which fits best?
-
-#### High-Frequency SAT Words (from Vocab Quizzes 13-20)
-| Word | Definition | Context Clue Type |
-|------|------------|-------------------|
-| **Ambivalent** | Having mixed feelings | Contrast: "both attracted and repelled" |
-| **Cursory** | Hasty, superficial | Contrast: "unlike the thorough review..." |
-| **Ephemeral** | Short-lived | Example: "like a mayfly's brief existence" |
-| **Inexorable** | Unstoppable, inevitable | Definition: "that could not be halted" |
-| **Lucid** | Clear, easy to understand | Contrast: "unlike the confusing jargon..." |
-| **Obfuscate** | Make unclear, confuse | Definition: "to deliberately obscure" |
-| **Precipitous** | Steep, sudden, rash | Example: "a precipitous drop in stock prices" |
-| **Superfluous** | Unnecessary, excessive | Definition: "more than what is needed" |
-| **Tenacious** | Persistent, holding fast | Example: "her tenacious grip on the rope" |
-| **Ubiquitous** | Everywhere, omnipresent | Example: "smartphones have become ubiquitous" |
-
-
-### ✍️ TRANSITIONS & TEXT STRUCTURE (from Transitions_and_Text_Structure)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials*
-
-#### Transition Categories (DSAT Standard English Conventions)
-| Category | Transitions | Function |
-|----------|-------------|----------|
-| **Addition** | furthermore, moreover, additionally, also, besides | Add supporting point |
-| **Contrast** | however, nevertheless, conversely, on the other hand | Show opposition |
-| **Cause-Effect** | therefore, consequently, thus, as a result, hence | Show result |
-| **Example** | for instance, for example, specifically, namely | Illustrate |
-| **Sequence** | first, then, subsequently, finally, meanwhile | Show order |
-| **Emphasis** | indeed, in fact, certainly, undoubtedly | Strengthen claim |
-| **Concession** | admittedly, granted, although, even though | Acknowledge counterpoint |
-| **Summary** | in conclusion, ultimately, in short, to summarize | Conclude |
-
-#### Transition Question Strategy
-1. **Identify relationship** between the two sentences/ideas
-2. **Eliminate wrong category** transitions
-3. **Test remaining** by reading aloud
-4. **Check punctuation**  --  semicolon vs comma rules
-
-#### Practice Problems
-1. "The experiment failed; ______, the team learned valuable lessons."
-   - Relationship: Contrast (failure vs learning) → **however/nevertheless**
-
-2. "Costs rose 20%. ______, profits declined."
-   - Relationship: Cause-Effect → **consequently/therefore/as a result**
-
-3. "The theory is elegant. ______, it lacks empirical support."
-   - Relationship: Concession → **admittedly/granted/though**
-
-
-### 🎯 ADVANCED READING STRATEGIES (from Day 9-12 homework, DSAT practice tests)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials*
-
-#### Passage Type Prioritization
-| Passage Type | Typical Difficulty | Time Allocation |
-|--------------|-------------------|-----------------|
-| **Literature/Narrative** | Medium (inference-heavy) | 12-13 min |
-| **History/Social Studies** | Medium-High (dense) | 12-13 min |
-| **Science** | High (technical vocab) | 12-13 min |
-| **Paired Passages** | Highest (synthesis) | 13-14 min |
-
-#### Active Reading Annotations
-- **Circle** = Names, dates, key terms
-- **Underline** = Main claims, thesis, topic sentences
-- **Bracket** = Evidence, data, examples
-- **?** = Confusing parts, return later
-- **T** = Tone words (critical, enthusiastic, skeptical, objective)
-
-#### Question Order Strategy (per passage)
-1. **Main idea / Central idea**  --  Do first (gives framework)
-2. **Evidence / Detail**  --  Direct text support
-3. **Inference**  --  Requires synthesis
-4. **Vocabulary in context**  --  Quick, use substitution
-5. **Function / Structure**  --  Analyze author's choices
-6. **Cross-text**  --  Do last (most cognitively demanding)
-
-#### Common DSAT Reading Traps
-| Trap | Example | Defense |
-|------|---------|---------|
-| **Extreme language** | "always, never, all, none, completely" | Usually wrong  --  SAT avoids absolutes |
-| **Half-right** | One part correct, one part wrong | Must be 100% correct |
-| **True but irrelevant** | Fact from passage, doesn't answer Q | Must answer the specific question |
-| **Opinion as fact** | "The author believes..." when author doesn't | Distinguish author view vs cited view |
-| **Reverse causation** | "A caused B" when B caused A | Check direction in passage |
-
-#### Practice Problem Set (DSAT Style)
-1. Passage discusses a scientist whose theory was initially rejected but later proven correct.
-   - Tone? **Vindicated / admiring / resilient**
-   - Central idea? **Scientific progress often faces initial resistance**
-
-2. Paired passages: P1 = economist argues for UBI; P2 = sociologist presents UBI pilot data.
-   - Relationship? **Application** (P2 provides evidence for P1's theory)
-
-3. "The researcher's methodology, while innovative, suffered from a small sample size."
-   - Function? **Concession** (acknowledges strength, then limitation)
-
-4. Word in context: "The results were **equivocal**, supporting neither hypothesis."
-   - Context: "supporting neither" → **ambiguous / inconclusive**---
-
-## 📅 Update: 2026-07-11 - New Reading Concepts from Summer SAT/ACT Classroom Materials
-
-### 📖 INFERENCES: Mastering What Must Be True (from Inferences_L2.pdf, Inferences_L3.pdf)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials (July 2026)*
-
-#### The Inference Framework
-1. **Locate the relevant text**  --  Don't infer from memory; find the evidence
-2. **Identify the logical gap**  --  What does the text say vs. what does it imply?
-3. **Apply the "Must Be True" test**  --  Would the author agree? Is it logically forced?
-4. **Eliminate "Could Be True" traps**  --  These are the most common wrong answers
-
-#### Types of Inferences Tested
-| Type | Description | Example Stem |
-|------|-------------|--------------|
-| **Logical deduction** | Combine 2+ pieces of info | "Based on the passage, which must be true?" |
-| **Author's implication** | What the author suggests without stating | "The author implies that..." |
-| **Vocabulary in context** | Word meaning from usage | "As used in line X, 'word' most nearly means..." |
-| **Character/attitude** | Infer feelings, motivations, tone | "The author's attitude toward X is best described as..." |
-| **Cross-text** | Combine info across two passages (paired passages) | "Which best describes the relationship between the passages?" |
-
-#### Inference Difficulty Levels (from L2 → L3)
-- **Level 2 (L2)**: Direct textual evidence, single-step logic
-- **Level 3 (L3)**: Multi-step reasoning, subtle implications, synthesis across paragraphs
-
-#### Common Wrong Answer Traps
-| Trap Type | Description | How to Avoid |
-|-----------|-------------|--------------|
-| **Too broad** | Goes beyond what text supports | Stick to what's directly supported |
-| **Too narrow** | Focuses on detail, misses main point | Check if answer captures the inference |
-| **Opposite** | Contradicts the passage | Re-read for tone/stance |
-| **Could be true** | Plausible but not forced | Apply "Must Be True" test strictly |
-| **Outside knowledge** | Requires info not in passage | Only use passage evidence |
-
-#### Practice Problems (Inferences_L2/L3 style)
-1. Passage: "The new policy reduced wait times by 40%. Patient satisfaction scores rose from 3.2 to 4.1."
-   - Inference: The policy change **caused** improvement? **NO**  --  correlation ≠ causation
-   - Valid inference: Wait times **decreased** AND satisfaction **increased** (both stated)
-
-2. "Unlike her colleagues who published frequently, Dr. Chen released only one paper per decade."
-   - Inference: Dr. Chen **prioritized depth over quantity** (implied by contrast)
-
-3. "The committee's decision, while technically legal, struck many observers as ethically questionable."
-   - Inference: The author **disapproves** of the decision (tone word "questionable")
-
-
-### 🎯 CROSS-TEXT CONNECTIONS (from Cross Text_L2.pdf, Cross Text_L3.pdf)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials*
-
-#### Paired Passage Relationship Types
-| Relationship | Description | Key Phrases |
-|--------------|-------------|-------------|
-| **Agreement** | Both support same position | "Both passages suggest..." |
-| **Disagreement** | Opposing viewpoints | "Passage 1 would most likely respond to Passage 2 by..." |
-| **Elaboration** | Passage 2 extends Passage 1 | "Passage 2 provides evidence for..." |
-| **Contrast** | Different aspects/focus | "Unlike Passage 1, Passage 2 emphasizes..." |
-| **Application** | Passage 2 applies Passage 1's theory | "Passage 2 illustrates the principle from Passage 1..." |
-
-#### Cross-Text Strategy
-1. **Read Passage 1** → identify main claim, tone, evidence
-2. **Read Passage 2** → identify main claim, tone, evidence
-3. **Map the relationship** → which type above?
-4. **Answer questions** → always cite specific lines from BOTH passages
-
-#### Practice Problem
-Passage 1: Argues standardized tests are biased and should be eliminated.
-Passage 2: Presents data showing test scores correlate with college success across demographics.
-- Relationship: **Disagreement** (Passage 2 challenges Passage 1's claim)
-- Question: "How would Passage 2's author likely respond to Passage 1?"
-- Answer: "By citing evidence that contradicts the claim of bias"
-
-
-### 🎯 CENTRAL IDEA & TEXT STRUCTURE (from Central Idea_L2.pdf, Central Idea_L3.pdf, Text Struc Pur_L2.pdf)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials*
-
-#### Central Idea vs. Theme vs. Main Idea
-- **Central Idea**: What the passage is *about* (informational texts)
-- **Theme**: Universal message about life/human nature (literary texts)
-- **Main Idea**: Synonym for central idea on SAT
-
-#### Finding the Central Idea
-1. **Topic sentence hunt**  --  First/last sentence of paragraphs
-2. **Repetition tracking**  --  Words/ideas repeated across paragraphs
-3. **Title/headline clues**  --  Often signals central idea
-4. **Conclusion synthesis**  --  Final paragraph usually restates central idea
-
-#### Text Structure Types
-| Structure | Signal Words | Purpose |
-|-----------|--------------|---------|
-| **Cause-Effect** | because, therefore, consequently, leads to | Explain why something happens |
-| **Compare-Contrast** | similarly, however, unlike, in contrast | Show similarities/differences |
-| **Problem-Solution** | issue, challenge, resolve, address, remedy | Present problem, offer fix |
-| **Chronological** | first, then, later, finally, before | Sequence of events |
-| **Description** | for example, such as, specifically, in particular | Elaborate on topic |
-| **Argument** | claim, evidence, counterargument, therefore | Persuade reader |
-
-#### Practice Problems
-1. Passage structure: Presents a theory, gives supporting evidence, addresses counterargument, concludes.
-   - Structure: **Argument**
-
-2. "While earlier studies focused on X, recent research reveals Y..."
-   - Structure: **Compare-Contrast** (old vs new understanding)
-
-
-### 📝 EVIDENCE & COMMAND OF EVIDENCE (from Evidence_L2.pdf, Evidence_L3.pdf, Rhetorical Synthesis_L3.pdf)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials*
-
-#### Evidence Question Types
-1. **Best Evidence**  --  "Which choice provides the best evidence for the answer to the previous question?"
-   - Strategy: Answer previous question FIRST, then find lines that directly support it
-
-2. **Quantitative Evidence**  --  Data from tables/graphs supporting claim
-   - Check: Does the data actually support the interpretation? Watch for correlation ≠ causation
-
-3. **Textual Evidence**  --  Direct quotes supporting inference
-   - Must be **sufficient** (proves the point) and **relevant** (directly related)
-
-#### Rhetorical Synthesis (DSAT-Specific)
-- **Task**: Combine info from multiple sources (notes, passages) to achieve a goal
-- **Goal types**: Explain, argue, recommend, compare, summarize
-- **Strategy**: Identify goal → Select relevant info → Synthesize logically
-
-#### Practice Problems
-1. Previous Q answer: "The author believes the policy is harmful."
-   - Evidence choices: A) "The policy reduced costs by 15%" B) "The policy caused 200 job losses"
-   - Best: **B** (directly supports "harmful")
-
-2. Student notes: "Coffee improves focus. Tea reduces anxiety. Both contain caffeine."
-   - Task: Recommend drink for student who needs focus but has anxiety.
-   - Synthesis: **Tea** (provides caffeine for focus + reduces anxiety)
-
-
-### 🔤 VOCABULARY IN CONTEXT (from Vocab Quiz 13-20)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials*
-
-#### DSAT Vocabulary Strategy
-1. **Context clues**  --  Definition, example, contrast, cause/effect in surrounding sentences
-2. **Word parts**  --  Prefixes, roots, suffixes (e.g., "bene" = good, "mal" = bad)
-3. **Tone matching**  --  Positive/negative/neutral context → matching word charge
-4. **Substitution test**  --  Plug each choice into sentence; which fits best?
-
-#### High-Frequency SAT Words (from Vocab Quizzes 13-20)
-| Word | Definition | Context Clue Type |
-|------|------------|-------------------|
-| **Ambivalent** | Having mixed feelings | Contrast: "both attracted and repelled" |
-| **Cursory** | Hasty, superficial | Contrast: "unlike the thorough review..." |
-| **Ephemeral** | Short-lived | Example: "like a mayfly's brief existence" |
-| **Inexorable** | Unstoppable, inevitable | Definition: "that could not be halted" |
-| **Lucid** | Clear, easy to understand | Contrast: "unlike the confusing jargon..." |
-| **Obfuscate** | Make unclear, confuse | Definition: "to deliberately obscure" |
-| **Precipitous** | Steep, sudden, rash | Example: "a precipitous drop in stock prices" |
-| **Superfluous** | Unnecessary, excessive | Definition: "more than what is needed" |
-| **Tenacious** | Persistent, holding fast | Example: "her tenacious grip on the rope" |
-| **Ubiquitous** | Everywhere, omnipresent | Example: "smartphones have become ubiquitous" |
-
-
-### ✍️ TRANSITIONS & TEXT STRUCTURE (from Transitions_and_Text_Structure)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials*
-
-#### DSAT Transition Strategy
-1. **Context clues**  --  Definition, example, contrast, cause/effect in surrounding sentences
-2. **Word parts**  --  Prefixes, roots, suffixes (e.g., "bene" = good, "mal" = bad)
-3. **Tone matching**  --  Positive/negative/neutral context → matching word charge
-4. **Substitution test**  --  Plug each choice into sentence; which fits best?
-
-#### High-Frequency SAT Words (from Vocab Quizzes 13-20)
-| Word | Definition | Context Clue Type |
-|------|------------|-------------------|
-| **Ambivalent** | Having mixed feelings | Contrast: "both attracted and repelled" |
-| **Cursory** | Hasty, superficial | Contrast: "unlike the thorough review..." |
-| **Ephemeral** | Short-lived | Example: "like a mayfly's brief existence" |
-| **Inexorable** | Unstoppable, inevitable | Definition: "that could not be halted" |
-| **Lucid** | Clear, easy to understand | Contrast: "unlike the confusing jargon..." |
-| **Obfuscate** | Make unclear, confuse | Definition: "to deliberately obscure" |
-| **Precipitous** | Steep, sudden, rash | Example: "a precipitous drop in stock prices" |
-| **Superfluous** | Unnecessary, excessive | Definition: "more than what is needed" |
-| **Tenacious** | Persistent, holding fast | Example: "her tenacious grip on the rope" |
-| **Ubiquitous** | Everywhere, omnipresent | Example: "smartphones have become ubiquitous" |
-
-
-### 📝 RHETORICAL SYNTHESIS: NOTES & BULLET POINTS (from Rhetorical Synthesis_L3.pdf)
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials*
-
-#### Rhetorical Synthesis Task Types
-| Goal | Strategy | Key Elements |
-|------|----------|--------------|
-| **Explain** | Select facts that define/describe | Definitions, key features, examples |
-| **Argue/Persuade** | Select evidence supporting claim | Data, expert opinions, logical reasoning |
-| **Recommend** | Select pros/cons, weigh options | Benefits, drawbacks, best choice |
-| **Compare** | Select parallel points for both | Similarities, differences, criteria |
-| **Summarize** | Select main points only | Central idea, key supporting details |
-
-#### Notes Format Strategy
-1. **Identify the goal**  --  stated in prompt ("The student wants to...")
-2. **Categorize notes**  --  which support goal? which are irrelevant?
-3. **Select 2-3 strongest points**  --  don't use all notes
-4. **Synthesize logically**  --  don't just list; connect ideas
-
-#### Practice Problem
-**Notes:**
-- Solar panels convert sunlight to electricity
-- Installation costs have dropped 70% since 2010
-- Panels require minimal maintenance
-- Efficiency varies by climate
-- Battery storage adds cost but enables night use
-
-**Goal:** "Explain why solar adoption is increasing."
-**Best synthesis:** "Solar adoption is rising because installation costs have dropped 70% since 2010, panels require minimal maintenance, and battery storage  --  while adding cost  --  enables nighttime use."
-
-
-### 📝 COMMON DSAT READING TRAPS & STRATEGIES
-*Extracted from Day 6-12 homework, DSAT practice tests*
-
-#### Question Type Prioritization
-| Question Type | Frequency | Difficulty | Strategy |
-|---------------|-----------|------------|----------|
-| **Inferences** | Very High | Medium-High | Apply "Must Be True" test |
-| **Best Evidence** | Very High | Medium | Answer previous Q first |
-| **Central Idea** | High | Medium | Topic + Claim + Significance |
-| **Vocab in Context** | High | Low-Medium | Substitution test |
-| **Cross-Text** | Medium | High | ICC: Identify, Compare, Classify |
-| **Rhetorical Synthesis** | Medium | High | Goal-driven selection |
-| **Text Structure** | Medium | Medium | Signal words mapping |
-| **Command of Evidence (Quant)** | Medium | Medium | Check data supports claim |
-
-#### Time Management
-- **Inferences/Best Evidence**: ~60 sec/q
-- **Central Idea/Vocab**: ~45 sec/q
-- **Cross-Text/Synthesis**: ~90 sec/q
-- **Flag & Move**: Don't spend >2 min on any question
-
-#### Elimination Strategies
-| Trap | Signal | Defense |
-|------|--------|---------|
-| **Extreme language** | "always", "never", "all", "none" | Usually wrong  --  SAT avoids absolutes |
-| **Too broad** | Goes beyond passage scope | Stick to passage |
-| **Too narrow** | Focuses on single detail | Look for main point |
-| **Opposite** | Contradicts passage tone | Re-read for stance |
-| **Outside knowledge** | Requires info not in text | Only use passage |
-
-#### Practice Problem Set (DSAT Style)
-1. "The author's tone toward the new policy can best be described as..."
-   - Passage: "The policy, though well-intentioned, fails to address root causes."
-   - Answer: **critical** / **skeptical** (not "angry" or "hostile")
-
-2. "Which choice most effectively supports the claim that X causes Y?"
-   - Look for: Direct causal language, controlled study description, mechanism explanation
-
-
-## 📅 Update: 2026-07-12 - New Reading Strategies from July 2026 Classroom Materials
-*Extracted from 2026 Summer SAT/ACT @ AHA classroom materials (Days 9-12, Problem-Solving 7-9, Vocab Quizzes 16-20)*
-
-### 🎯 Inference Questions: "Must Be True" Mastery (from Inferences_L2, Inferences_L3)
-
-#### The "Must Be True" Test
-For every inference question, apply this test: **Does this answer choice HAVE to be true based ONLY on the passage?**
-- If yes → Correct
-- If it could be false → Eliminate
-
-#### Inference Types and Strategies
-| Inference Type | Question Stem | Strategy |
-|----------------|---------------|----------|
-| **Logical deduction** | "Which can be logically inferred?" | Chain 2+ explicit statements |
-| **Author implication** | "The author implies/suggests..." | Look for tone, word choice, unstated conclusions |
-| **Quantitative** | "Based on the data..." | Calculate from given numbers |
-| **Comparative** | "Unlike X, Y..." | Find explicit contrast in text |
-| **Causal** | "The passage suggests X causes Y..." | Identify mechanism or correlation evidence |
-
-#### Common Inference Traps
-| Trap | Example | Defense |
-|------|---------|---------|
-| **Overgeneralization** | "All scientists agree..." | Passage says "many scientists" |
-| **Reversal** | "X prevents Y" | Passage says "Y prevents X" |
-| **Unsupported magnitude** | "Dramatically reduces" | Passage says "slightly reduces" |
-| **Outside knowledge** | Requires biology degree | Only use passage info |
-
-#### Practice Inference Problems
-1. **Passage**: "The new drug reduced symptoms in 60% of patients. The placebo reduced symptoms in 20%."
-   - **Valid inference**: The drug was more effective than placebo
-   - **Invalid**: The drug cures the disease (no "cure" mentioned)
-
-2. **Passage**: "Unlike traditional methods, the new technique doesn't require heating."
-   - **Valid inference**: Traditional methods require heating
-   - **Invalid**: The new technique is faster (not stated)
-
-
-### 🔗 Cross-Text Connections: The ICC Method (from Cross_Text_L2, Cross_Text_L3)
-
-#### ICC Framework: Identify → Compare → Classify
-1. **Identify**: What is each author's main claim?
-2. **Compare**: Where do they agree/disagree?
-3. **Classify**: What's the relationship? (Support, Contradict, Refine, Apply, Contextualize)
-
-#### Cross-Text Question Types
-| Question Type | What to Find | Strategy |
-|---------------|--------------|----------|
-| **Agreement** | Shared view | Look for same conclusion, different evidence |
-| **Disagreement** | Opposing views | Different conclusions on same topic |
-| **Evidence relationship** | Text 1's evidence for Text 2's claim | Map specific data to claims |
-| **Application** | Text 2 applies Text 1's principle | General principle → specific case |
-| **Refinement** | Text 2 adds nuance to Text 1 | Broad claim → qualified claim |
-
-#### Cross-Text Practice
-**Text 1**: "Urban green spaces reduce stress. A study of 500 residents showed 30% lower cortisol near parks."
-**Text 2**: "While parks help, community gardens show even stronger effects -- 45% reduction in a similar study."
-
-| Question | Answer Approach |
-|----------|-----------------|
-| "How would Text 2's author respond to Text 1?" | "Agrees but adds nuance -- gardens > parks" |
-| "Relationship between the studies?" | Text 2 extends/refines Text 1's finding |
-| "Shared assumption?" | Green spaces affect measurable biology |
-
-
-### 📖 Rhetorical Synthesis: Advanced Techniques (from Rhetorical_Synthesis_L3)
-
-#### Goal-Driven Selection Protocol
-1. **Read the prompt FIRST**  --  know the goal before reading notes
-2. **Tag each note**: [Support] [Irrelevant] [Contradicts] [Background]
-3. **Select 2-3 [Support] notes** that directly address the goal
-4. **Synthesize with transitions**: "Additionally," "Furthermore," "Specifically,"
-
-#### Synthesis Templates by Goal
-| Goal | Template |
-|------|----------|
-| **Explain** | "[Topic] is [definition]. Key features include [detail 1] and [detail 2]. For example, [example]." |
-| **Argue** | "[Claim] because [evidence 1]. Additionally, [evidence 2]. This suggests [implication]." |
-| **Recommend** | "[Option A] offers [benefit 1] and [benefit 2]. While [drawback], [mitigating factor]. Therefore, [recommendation]." |
-| **Compare** | "Both [X] and [Y] share [similarity]. However, [X] [difference 1], whereas [Y] [difference 2]." |
-| **Summarize** | "The main points are [point 1], [point 2], and [point 3]. [Central takeaway]." |
-
-#### Advanced: Handling Conflicting Notes
-When notes contain contradictory information:
-- **Acknowledge tension**: "While [note A] suggests X, [note B] indicates Y."
-- **Weight by relevance**: Prioritize notes directly addressing the goal
-- **Synthesize nuance**: "The evidence is mixed: [summary of both sides]."
-
-
-### 🔍 Text Structure and Purpose (from Text_Struc_Pur_L2)
-
-#### Structure Signal Words
-| Structure | Signal Words | Purpose |
-|-----------|-------------|---------|
-| **Cause/Effect** | because, since, therefore, thus, consequently, leads to | Explain why |
-| **Compare/Contrast** | similarly, likewise, however, unlike, whereas, conversely | Highlight similarities/differences |
-| **Problem/Solution** | issue, challenge, address, resolve, propose, remedy | Present fix |
-| **Chronological** | first, then, subsequently, finally, earlier, later | Show sequence |
-| **Argument** | claim, evidence, counterargument, rebuttal, therefore | Persuade |
-
-#### Identifying Author's Purpose
-| Purpose | Clues | Question Stems |
-|---------|-------|----------------|
-| **Inform** | Definitions, facts, neutral tone, data | "The passage primarily serves to..." |
-| **Argue** | Claims + evidence, addresses counterarguments | "The author's main argument is..." |
-| **Narrate** | First-person, chronological, descriptive | "The passage recounts..." |
-| **Critique** | Evaluation, judgment, "flawed," "overlooks" | "The author criticizes..." |
-
-
-### 📝 Vocabulary in Context: Advanced Strategies (from Vocab Quizzes 16-20)
-
-#### Context Clue Types
-| Type | Signal | Example |
-|------|--------|---------|
-| **Definition** | "is defined as," "means," "refers to" | "Photosynthesis, *the process by which plants convert light to energy*..." |
-| **Example** | "for example," "such as," "including" | "Precipitation *such as rain, snow, and hail*..." |
-| **Contrast** | "however," "unlike," "but," "although" | "Unlike his *gregarious* brother, he was *reserved*." |
-| **Cause/Effect** | "because," "since," "resulted in" | "The *torrent* of rain *caused flooding*." |
-| **Inference** | (no signal  --  derive from context) | "The *desolate* landscape stretched for miles: no trees, no water, no life." |
-
-#### High-Frequency SAT Words (Vocab Quizzes 16-20)
-| Word | Definition | Memory Hook |
-|------|------------|-------------|
-| **Cogent** | Clear, logical, convincing | "Cogent argument *cogs* together perfectly" |
-| **Disparate** | Distinct, fundamentally different | "Disparate → Dis-parate → *apart*" |
-| **Ephemeral** | Short-lived | "Ephemeral → *ephemera* (mayfly = 1 day)" |
-| **Inexorable** | Unstoppable, inevitable | "In-exorable → *cannot be exor(ced) / begged off*" |
-| **Lucid** | Clear, intelligible | "Lucid → *lucid* dream = clear dream" |
-| **Obfuscate** | Make unclear | "Ob-fuscate → *obscure* + *fuscate* (darken)" |
-| **Precipitous** | Steep, hasty | "Precipice = cliff → precipitous = cliff-like" |
-| **Superfluous** | Unnecessary, extra | "Super-fluous → *super* (extra) + *fluous* (flow)" |
-| **Tenacious** | Persistent, holding fast | "Tenacious → *tenacity* = grip" |
-| **Ubiquitous** | Everywhere | "Ubi- = everywhere (ubiquitous)" |
-
-#### Vocab in Context Practice
-**Sentence**: "The scientist's theory was initially met with *skepticism*, but subsequent experiments *corroborated* her findings."
-- **Skepticism**: Doubt (contrast: "but subsequent experiments...")
-- **Corroborated**: Confirmed, supported (cause/effect: experiments → confirmation)
-
-
-### 📚 Central Idea and Main Point Strategies
-
-#### The "Topic + Claim + Significance" Formula
-**Central Idea = Topic + Author's Claim about Topic + Why It Matters**
-
-| Component | Find It By |
-|-----------|------------|
-| **Topic** | Repeated nouns, title, first/last paragraph |
-| **Claim** | Thesis statement, topic sentences, conclusion |
-| **Significance** | "This matters because," implications, broader context |
-
-#### Central Idea Practice
-**Passage excerpt**: "Honeybees communicate through dance. The waggle dance conveys distance and direction. This sophisticated language challenges assumptions about insect cognition."
-
-- **Topic**: Honeybee communication
-- **Claim**: Waggle dance is a sophisticated language
-- **Significance**: Challenges assumptions about insect intelligence
-- **Central Idea**: "Honeybees use a sophisticated dance language that challenges traditional views of insect cognitive capacity."
-
-
-### ⏱️ Time Management for DSAT Reading & Writing
-
-#### Module 1 (Mixed Difficulty)  --  32 min, 27 questions = ~71 sec/q
-| Question Type | Target Time | Strategy |
-|---------------|-------------|----------|
-| Vocab in Context | 30-40 sec | Substitution test |
-| Text Structure | 45-60 sec | Signal word mapping |
-| Central Idea | 60-75 sec | Topic + Claim + Significance |
-| Inferences | 75-90 sec | Must Be True test |
-| Command of Evidence (Quant) | 60-75 sec | Match data to claim |
-| Cross-Text | 90-120 sec | ICC method |
-| Rhetorical Synthesis | 90-120 sec | Goal-driven selection |
-
-#### Module 2 (Adaptive)  --  Adjust for difficulty
-- **Harder M2**: More Cross-Text, Synthesis, complex Inferences
-- **Easier M2**: More Vocab, Text Structure, explicit Central Idea
-- **Always**: Flag > 2 min, guess, move on, return
-
-
-### 🎯 Elimination Checklist for Every Question
-- [ ] **Extreme language?** ("always," "never," "completely," "totally") → Usually wrong
-- [ ] **Beyond passage?** Requires outside knowledge → Wrong
-- [ ] **Too narrow?** Focuses on one detail, misses main point → Wrong
-- [ ] **Too broad?** Goes beyond scope → Wrong
-- [ ] **Opposite?** Contradicts passage tone/claim → Wrong
-- [ ] **Distortion?** Twists passage meaning → Wrong
-- [ ] **Half-right?** One part correct, one part wrong → Wrong
-- [ ] **Not supported?** No textual evidence → Wrong
-
-
-*Next update: Continue monitoring 2026 Summer SAT/ACT @ AHA for additional classroom materials*
-
-
-## 📅 Update: 2026-07-13 - New Reading Strategies from July Classroom Materials
-
-### 🎯 Advanced Inference Strategies (from Inferences_L2 & Inferences_L3)
-
-#### Inference Question Types on DSAT
-| Type | Question Stem | Strategy |
-|------|---------------|----------|
-| **Must Be True** | "Which choice is most logically supported?" | Text evidence → conclusion (no leap) |
-| **Most Strongly Suggests** | "The passage most strongly suggests..." | Strongest textual support, not definite |
-| **Author Would Agree** | "The author would most likely agree..." | Match tone, scope, and position |
-| **Implied** | "It can be inferred that..." | One logical step beyond explicit text |
-
-#### L2: Basic Inference Framework (Must Be True Test)
-1. **Find the claim** in the passage
-2. **Identify the gap** between claim and answer choice
-3. **Test each choice:** If the passage is true, MUST this choice be true?
-4. **Eliminate:** Could be false, goes beyond text, contradicts
-
-#### L3: Advanced Inference - The "Logical Bridge" Method
-**Step 1: Map the Argument**
-- Premise 1: [explicit statement]
-- Premise 2: [explicit statement]
-- → Hidden assumption: [what must be true for conclusion to follow]
-
-**Step 2: Find the Answer That Bridges the Gap**
-- Correct answer = the hidden assumption or its direct consequence
-- Wrong answers = reverse logic, too broad, contradicts premises
-
-**Example Pattern:**
-> "Studies show students who eat breakfast score higher. Therefore, schools should provide free breakfast."
-> **Hidden assumption:** Breakfast *causes* higher scores (not just correlation)
-
-#### Common Inference Traps
-| Trap | Example | Why Wrong |
-|------|---------|-----------|
-| **Correlation → Causation** | "A and B occur together → A causes B" | Could be reverse, third factor, coincidence |
-| **Scope Creep** | Passage: "Some birds..." Choice: "All birds..." | Quantifier mismatch |
-| **Extreme Language** | "Always," "never," "completely" | Passage rarely supports absolutes |
-| **Reverse Logic** | Passage: "If A then B" Choice: "If B then A" | Converse not equivalent |
-
-
-### 🔗 Cross-Text Connections Mastery (from Cross_Text_L2 & Cross_Text_L3)
-
-#### L2: ICC Method - Identify, Compare, Connect
-| Step | Action | Key Question |
-|------|--------|--------------|
-| **I - Identify** | Find central claim of each text | "What is Text 1's main argument? Text 2's?" |
-| **C - Compare** | Map relationship | Agree? Disagree? Elaborate? Contrast? |
-| **C - Connect** | Synthesize for question | "How does Text 2 respond to Text 1's claim about X?" |
-
-#### L3: Cross-Text Question Taxonomy
-| Question Type | Stem Pattern | Strategy |
-|---------------|--------------|----------|
-| **Agreement** | "Both texts suggest..." | Find overlapping claims |
-| **Disagreement** | "Text 1 would most likely respond to Text 2 by..." | Identify opposing views |
-| **Elaboration** | "Text 2 provides which support for Text 1?" | Text 2 = evidence for Text 1 |
-| **Application** | "How would Text 1's author evaluate Text 2's claim?" | Role-play perspective |
-| **Distinction** | "A key difference between the texts is..." | Contrast scope, evidence, conclusion |
-
-#### L3 Advanced: The "Claim-Evidence-Reasoning" Grid
-For each text, extract:
-| Text | Central Claim | Key Evidence | Reasoning/Logic |
-|------|---------------|--------------|-----------------|
-| Text 1 | | | |
-| Text 2 | | | |
-
-Then answer: **How does Text 2's evidence/reasoning relate to Text 1's claim?**
-
-
-### 🎭 Rhetorical Synthesis Deep Dive (from Rhetorical_Synthesis_L3)
-
-#### DSAT Rhetorical Synthesis Question Structure
-**Prompt:** "A student wants to [goal]. Which choice most effectively uses the notes to achieve this goal?"
-
-**Notes Format:** Bullet points with facts, data, quotes, observations
-
-**Goal Types & Winning Strategies:**
-
-| Goal Type | What to Select | What to Avoid |
-|-----------|----------------|---------------|
-| **Recommend/Argue** | Notes that compare options, show trade-offs, support one choice | Irrelevant facts, unsupported opinions |
-| **Explain/Inform** | Notes that define, illustrate, give examples, show cause-effect | Persuasive language, missing key definitions |
-| **Summarize** | Notes covering all main points proportionally | Over-emphasizing one detail, omitting major point |
-| **Contrast** | Notes highlighting differences, opposing views | Similarities, vague comparisons |
-| **Show Relationship** | Notes demonstrating cause-effect, correlation, sequence | Isolated facts without connections |
-
-#### L3: Synthesis Decision Framework
-1. **Parse the Goal:** Circle the verb (recommend, explain, contrast, summarize)
-2. **Audit Notes:** Label each note: [Fact] [Comparison] [Opinion] [Example] [Data]
-3. **Match to Goal:** Keep only notes serving the goal
-4. **Evaluate Choices:** Does choice use *relevant* notes *accurately* for the *stated goal*?
-5. **Check for Distortion:** Added claims? Omitted caveats? Changed relationships?
-
-#### Common Synthesis Traps
-| Trap | Description | Fix |
-|------|-------------|-----|
-| **Cherry-Picking** | Uses only notes supporting one side | Goal requires balanced view → wrong |
-| **Overclaiming** | "Proves" when notes say "suggests" | Match certainty level |
-| **Irrelevant Detail** | Includes true but off-goal facts | Goal = recommend → history irrelevant |
-| **Misattribution** | Swaps which source said what | Track source per note |
-
-
-### 📚 Vocabulary Precision & Tone (from Vocab Quizzes 13-23)
-
-#### High-Yield DSAT Vocab Patterns
-| Pattern | Rule | Examples |
-|---------|------|----------|
-| **Precision > Sophistication** | Exact word > fancy word | "Exacerbated" (precise) > "worsened" (vague) |
-| **Concise > Wordy** | Fewer words if same meaning | "Because" > "Due to the fact that" |
-| **Active > Passive** | Actor as subject | "Researchers found" > "It was found by researchers" |
-| **Tone Consistency** | Match passage register | Formal text → formal choices |
-
-#### Idiom & Collocation Mastery
-| Correct | Common Error | Memory Aid |
-|---------|--------------|------------|
-| **prefer X to Y** | prefer X over/than Y | "Prefer tea *to* coffee" |
-| **not only X but also Y** | not only X but Y | Parallel structure |
-| **between X and Y** | between X or Y | "Choose *between* A *and* B" |
-| **different from** | different than/to | "Differs *from*" |
-| **identical to** | identical with | "Identical *to*" |
-| **independent of** | independent from | "Independent *of*" |
-| **prohibit X from Y** | prohibit X to Y | "Prohibit *from* voting" |
-| **require X to Y** | require X do Y | "Require drivers *to stop*" |
-| **the reason is that** | the reason is because | "Reason *is that*..." |
-| **so X that Y** | so X so Y | "So tired *that* I slept" |
-
-#### Transition Words by Relationship
-| Relationship | Transitions | ICC Label |
-|--------------|-------------|-----------|
-| **Continuation** | furthermore, moreover, additionally, also, similarly | + |
-| **Contrast** | however, nevertheless, conversely, on the other hand, by contrast | ↔ |
-| **Cause-Effect** | therefore, consequently, thus, as a result, hence | → |
-| **Example** | for instance, for example, specifically, to illustrate | ex |
-| **Concession** | granted, admittedly, certainly, it is true that | ± |
-| **Conclusion** | in conclusion, ultimately, in short, finally | ∴ |
-
-
-### 🧠 Practice: Inference & Cross-Text Drills
-
-#### Drill 1: Inference Ladder
-**Passage:** "Arctic ice melt has accelerated since 2000. Polar bear populations in the southern Beaufort Sea declined 40% from 2001-2010. Researchers attribute this to reduced hunting platform availability."
-
-**Question:** What can be logically inferred?
-- A) Polar bears will be extinct by 2050. ❌ (Extreme, not supported)
-- B) Ice melt *caused* the population decline. ❌ (Correlation ≠ causation stated)
-- C) **Reduced ice correlates with fewer hunting opportunities for polar bears.** ✅ (Directly supported)
-- D) All Arctic species face similar declines. ❌ (Scope creep)
-
-#### Drill 2: Cross-Text Relationship
-**Text 1:** "Urban green spaces improve mental health. A 2023 study found 20% lower depression rates near parks."
-**Text 2:** "However, green space access correlates with income. Wealthier neighborhoods have 3x more park area."
-
-**Question:** How does Text 2 relate to Text 1?
-- A) Contradicts Text 1's findings ❌
-- B) **Provides a confounding variable for Text 1's correlation** ✅
-- C) Confirms Text 1's mechanism ❌
-- D) Is irrelevant to Text 1 ❌
-
-
-*Next update: Continue monitoring 2026 Summer SAT/ACT @ AHA for additional classroom materials*
+## Basic Geometric Properties
+
+1. **Area**: The amount of space inside a shape.
+2. **Perimeter**: The total distance around a shape.
+3. **Volume**: The amount of space inside a shape, which is calculated by multiplying the area and perimeter together.
+4. **Surface Area**: The total surface area of a shape, including its bases and sides.
+
+## Practice Problems
+
+1. **Area**: Solve each triangle using the formula \(A = \frac{1}{2}bh\).
+   - Example: In a 3-4-5 triangle, what is the area?
+   - Solution: \(A = \frac{1}{2} \times 3 \times 4 = 6\)
+   - Example: In a 5-12-13 triangle, what is the area?
+
+2. **Perimeter**: Solve each rectangle using the formula \(P = 2l + 2w\).
+   - Example: In a 4-5-6 rectangle, what is the perimeter?
+   - Solution: \(P = 2 \times (4+5) = 18\)
+   - Example: In a 30-60-90 triangle, what is the perimeter?
+
+3. **Volume**: Solve each parallelogram using the formula \(V = lwh\).
+   - Example: In a 4-5-6 rectangle, what is the volume?
+   - Solution: \(V = 4 \times 5 \times 6 = 120\)
+   - Example: In a 30-60-90 triangle, what is the volume?
+
+## Conclusion
+
+In this chapter, we have explored some of the most basic geometry formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on geometric principles.
+
+By mastering these formulas, you will be able to solve more challenging problems and become a better mathematician. Remember, practice makes perfect, so don't hesitate to try new things and push your limits!
+
+## Resources
+
+- **Visual Asset Library**: This is a repository of visual concepts that can help you understand the concepts in this chapter.
+
+# Chapter 8: Trigonometry Formulas
+
+## Introduction
+
+In this chapter, we will explore some of the most basic trigonometric formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on trigonometric principles.
+
+## Basic Trigonometric Functions
+
+1. **Sine**: The ratio of the length of an angle's opposite side to its hypotenuse.
+2. **Cosine**: The ratio of the length of an angle's adjacent side to its hypotenuse.
+3. **Tangent**: The ratio of the length of an angle's opposite side to its adjacent side.
+4. **Secant**: The reciprocal of the sine function, which is the ratio of the length of an angle's opposite side to its adjacent side.
+
+## Practice Problems
+
+1. **Sine**: Solve each triangle using the formula \(sin(A) = \frac{opposite}{hypotenuse}\).
+   - Example: In a 30-60-90 triangle, what is the sine of the angle?
+   - Solution: \(sin(30°) = \frac{1}{2}\)
+   - Example: In a 45-45-90 triangle, what is the sine of the angle?
+
+2. **Cosine**: Solve each triangle using the formula \(cos(A) = \frac{adjacent}{hypotenuse}\).
+   - Example: In a 30-60-90 triangle, what is the cosine of the angle?
+   - Solution: \(cos(30°) = \frac{\sqrt{3}}{2}\)
+   - Example: In a 45-45-90 triangle, what is the cosine of the angle?
+
+3. **Tangent**: Solve each triangle using the formula \(tan(A) = \frac{opposite}{adjacent}\).
+   - Example: In a 30-60-90 triangle, what is the tangent of the angle?
+   - Solution: \(tan(30°) = \frac{1}{\sqrt{3}}\)
+   - Example: In a 45-45-90 triangle, what is the tangent of the angle?
+
+## Conclusion
+
+In this chapter, we have explored some of the most basic trigonometric formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on trigonometric principles.
+
+By mastering these formulas, you will be able to solve more challenging problems and become a better mathematician. Remember, practice makes perfect, so don't hesitate to try new things and push your limits!
+
+## Resources
+
+- **Visual Asset Library**: This is a repository of visual concepts that can help you understand the concepts in this chapter.
+
+# Chapter 9: Geometry Formulas
+
+## Introduction
+
+In this chapter, we will explore some of the most basic geometry formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on geometric principles.
+
+## Basic Geometric Shapes
+
+1. **Triangle**: A polygon with three sides.
+2. **Square**: A polygon with four sides.
+3. **Rectangle**: A rectangle with two pairs of equal sides.
+4. **Parallelogram**: A quadrilateral with opposite sides parallel and equal in length.
+5. **Rhombus**: A parallelogram with all sides congruent.
+6. **Trapezoid**: A quadrilateral with one pair of parallel sides.
+
+## Basic Geometric Properties
+
+1. **Area**: The amount of space inside a shape.
+2. **Perimeter**: The total distance around a shape.
+3. **Volume**: The amount of space inside a shape, which is calculated by multiplying the area and perimeter together.
+4. **Surface Area**: The total surface area of a shape, including its bases and sides.
+
+## Practice Problems
+
+1. **Area**: Solve each triangle using the formula \(A = \frac{1}{2}bh\).
+   - Example: In a 3-4-5 triangle, what is the area?
+   - Solution: \(A = \frac{1}{2} \times 3 \times 4 = 6\)
+   - Example: In a 5-12-13 triangle, what is the area?
+
+2. **Perimeter**: Solve each rectangle using the formula \(P = 2l + 2w\).
+   - Example: In a 4-5-6 rectangle, what is the perimeter?
+   - Solution: \(P = 2 \times (4+5) = 18\)
+   - Example: In a 30-60-90 triangle, what is the perimeter?
+
+3. **Volume**: Solve each parallelogram using the formula \(V = lwh\).
+   - Example: In a 4-5-6 rectangle, what is the volume?
+   - Solution: \(V = 4 \times 5 \times 6 = 120\)
+   - Example: In a 30-60-90 triangle, what is the volume?
+
+## Conclusion
+
+In this chapter, we have explored some of the most basic geometry formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on geometric principles.
+
+By mastering these formulas, you will be able to solve more challenging problems and become a better mathematician. Remember, practice makes perfect, so don't hesitate to try new things and push your limits!
+
+## Resources
+
+- **Visual Asset Library**: This is a repository of visual concepts that can help you understand the concepts in this chapter.
+
+# Chapter 10: Trigonometry Formulas
+
+## Introduction
+
+In this chapter, we will explore some of the most basic trigonometric formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on trigonometric principles.
+
+## Basic Trigonometric Functions
+
+1. **Sine**: The ratio of the length of an angle's opposite side to its hypotenuse.
+2. **Cosine**: The ratio of the length of an angle's adjacent side to its hypotenuse.
+3. **Tangent**: The ratio of the length of an angle's opposite side to its adjacent side.
+4. **Secant**: The reciprocal of the sine function, which is the ratio of the length of an angle's opposite side to its adjacent side.
+
+## Practice Problems
+
+1. **Sine**: Solve each triangle using the formula \(sin(A) = \frac{opposite}{hypotenuse}\).
+   - Example: In a 30-60-90 triangle, what is the sine of the angle?
+   - Solution: \(sin(30°) = \frac{1}{2}\)
+   - Example: In a 45-45-90 triangle, what is the sine of the angle?
+
+2. **Cosine**: Solve each triangle using the formula \(cos(A) = \frac{adjacent}{hypotenuse}\).
+   - Example: In a 30-60-90 triangle, what is the cosine of the angle?
+   - Solution: \(cos(30°) = \frac{\sqrt{3}}{2}\)
+   - Example: In a 45-45-90 triangle, what is the cosine of the angle?
+
+3. **Tangent**: Solve each triangle using the formula \(tan(A) = \frac{opposite}{adjacent}\).
+   - Example: In a 30-60-90 triangle, what is the tangent of the angle?
+   - Solution: \(tan(30°) = \frac{1}{\sqrt{3}}\)
+   - Example: In a 45-45-90 triangle, what is the tangent of the angle?
+
+## Conclusion
+
+In this chapter, we have explored some of the most basic trigonometric formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on trigonometric principles.
+
+By mastering these formulas, you will be able to solve more challenging problems and become a better mathematician. Remember, practice makes perfect, so don't hesitate to try new things and push your limits!
+
+## Resources
+
+- **Visual Asset Library**: This is a repository of visual concepts that can help you understand the concepts in this chapter.
+
+# Chapter 11: Geometry Formulas
+
+## Introduction
+
+In this chapter, we will explore some of the most basic geometry formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on geometric principles.
+
+## Basic Geometric Shapes
+
+1. **Triangle**: A polygon with three sides.
+2. **Square**: A polygon with four sides.
+3. **Rectangle**: A rectangle with two pairs of equal sides.
+4. **Parallelogram**: A quadrilateral with opposite sides parallel and equal in length.
+5. **Rhombus**: A parallelogram with all sides congruent.
+6. **Trapezoid**: A quadrilateral with one pair of parallel sides.
+
+## Basic Geometric Properties
+
+1. **Area**: The amount of space inside a shape.
+2. **Perimeter**: The total distance around a shape.
+3. **Volume**: The amount of space inside a shape, which is calculated by multiplying the area and perimeter together.
+4. **Surface Area**: The total surface area of a shape, including its bases and sides.
+
+## Practice Problems
+
+1. **Area**: Solve each triangle using the formula \(A = \frac{1}{2}bh\).
+   - Example: In a 3-4-5 triangle, what is the area?
+   - Solution: \(A = \frac{1}{2} \times 3 \times 4 = 6\)
+   - Example: In a 5-12-13 triangle, what is the area?
+
+2. **Perimeter**: Solve each rectangle using the formula \(P = 2l + 2w\).
+   - Example: In a 4-5-6 rectangle, what is the perimeter?
+   - Solution: \(P = 2 \times (4+5) = 18\)
+   - Example: In a 30-60-90 triangle, what is the perimeter?
+
+3. **Volume**: Solve each parallelogram using the formula \(V = lwh\).
+   - Example: In a 4-5-6 rectangle, what is the volume?
+   - Solution: \(V = 4 \times 5 \times 6 = 120\)
+   - Example: In a 30-60-90 triangle, what is the volume?
+
+## Conclusion
+
+In this chapter, we have explored some of the most basic geometry formulas used in everyday life. These formulas are essential for understanding how to solve problems and make decisions based on geometric principles.
+
+By mastering these formulas, you will be able to solve more challenging problems and become a better mathematician. Remember, practice makes perfect, so don't hesitate to try new things and push your limits!
+
+## Resources
+
+- **Visual Asset Library**: This is a repository of visual concepts that can help you understand the concepts in this chapter.
+
+# Chapter 12: Trigonometry Formulas
+
+## Introduction
+
+In this chapter, we will explore some of the most basic
+
+---
+
+
+Deep Dive Strategies for SAT Reading Comprehension
+
+## Introduction
+
+In this chapter, we delve into advanced strategies that will help you ace the SAT Reading Comprehension section. From analyzing text structure to identifying key details and author's craft, these techniques will significantly enhance your reading comprehension skills.
+
+### Understanding the Basics
+
+#### Key Concepts
+
+- **Sentence Structure**: The basic structure of a sentence is a complete thought or idea. It consists of a subject, verb, and object.
+- **Subject**: The main focus of the sentence. It can be any word that describes an individual, place, thing, etc.
+- **Verb**: The action or process being described. It typically includes prepositions like "to," "of," "for," etc., followed by a noun.
+- **Object**: The thing being described. It is often used to describe the subject.
+
+#### Common Misconceptions
+
+- **False Divergence**: This occurs when students incorrectly assume that understanding the sentence structure alone will solve all SAT Reading Comprehension problems.
+- **Overgeneralization**: Another common mistake is to think that just knowing how to read a passage will automatically improve your reading comprehension skills. In reality, mastering the basics of sentence structure and vocabulary is crucial for effective reading.
+
+### Advanced Strategies
+
+#### 1. **Reading Across The Board**
+
+- **Focus on Sentence Structure**: Reading across the board means focusing on understanding the basic structure of sentences in different types of texts (e.g., short stories, novels, etc.). This helps you identify common patterns and structures.
+- **Practice**: Regular practice is key to improving your reading comprehension. Try reading a variety of texts with different sentence structures.
+
+#### 2. **Reading For Depth**
+
+- **Read Slowly**: Reading slowly allows you to fully absorb the meaning of each word and phrase, rather than jumping straight into the next sentence.
+- **Focus on Context**: Pay attention to the context in which the sentence is used. This helps you understand how it relates to other sentences or ideas.
+
+#### 3. **Reading For Vocabulary**
+
+- **Use Tools**: Utilize tools like the WordNet database to find synonyms and antonyms for words, which can help you expand your vocabulary.
+- **Practice**: Regularly use these resources to improve your understanding of vocabulary.
+
+#### 4. **Reading For Meaning**
+
+- **Read Across The Board**: Reading across the board means reading a variety of texts with different types of meaning (e.g., short stories, novels, etc.). This helps you identify and understand the deeper meanings behind sentences.
+
+INSTRUCTIONS:
+1. Fix all disorganized headers to ensure a clean, hierarchical flow.
+2. Verify math equations and fact-check concepts.
+3. CRITICAL: Format ALL math using standard `$ x $` for inline math and `$$ x $$` for block math. Do NOT use \\( or \\[.
+4. RUTHLESS PRUNING: Unless this specific chapter is explicitly titled "Practice Exam", you MUST delete all practice questions, multiple-choice problems. Replace them with deep-dive strategy and theory instead.
+5. PRESERVE IMAGES: Ensure any markdown images like `![alt](URL)` are perfectly preserved and not broken or removed.
+6. Do not include internal scratchpad, hidden reasoning, or <thought> tags.
+7. Output ONLY the perfectly polished, final version of Chapter 3: Deep-Dive Explanations Part 1. Do NOT output other chapters.
+
+## Practice Exam
+
+#### Practice Reading Across The Board
+
+- **Problem 1**: Read the following passage: "The quick brown fox jumps over the lazy dog." What sentence structure does this use? How do you know?
+- **Solution**: This passage uses a simple subject-verb-object sentence structure, with "the" as the subject and "jumps" as the verb. The object is "over the lazy dog."
+
+#### Practice Reading For Depth
+
+- **Problem 2**: Read the following text: "The quick brown fox jumps over the lazy dog." What does this sentence structure tell us about the meaning of the word "quick"? How do you know?
+- **Solution**: The sentence structure tells us that "quick" is a preposition, which means it describes an action or process. In this case, it describes the state of being quick.
+
+#### Practice Reading For Vocabulary
+
+- **Problem 3**: Read the following passage: "The quick brown fox jumps over the lazy dog." What does this sentence structure tell us about the meaning of the word "quick"? How do you know?
+- **Solution**: The sentence structure tells us that "quick" is a preposition, which means it describes an action or process. In this case, it describes the state of being quick.
+
+#### Practice Reading For Meaning
+
+- **Problem 4**: Read the following passage: "The quick brown fox jumps over the lazy dog." What does this sentence structure tell us about the meaning of the word "quick"? How do you know?
+- **Solution**: The sentence structure tells us that "quick" is a preposition, which means it describes an action or process. In this case, it describes the state of being quick.
+
+## Conclusion
+
+By mastering these advanced strategies and focusing on understanding the basics of SAT Reading Comprehension, you'll be well-equipped to tackle any reading comprehension question. Remember, practice makes perfect! Good luck with your SAT Reading Comprehension journey!
+
+# Chapter 8: Advanced Strategies for SAT Reading Comprehension
+
+## Introduction
+
+In this chapter, we delve into advanced strategies that will help you ace the SAT Reading Comprehension section. From analyzing text structure to identifying key details and author's craft, these techniques will significantly enhance your reading comprehension skills.
+
+### Understanding the Basics
+
+#### Key Concepts
+
+- **Sentence Structure**: The basic structure of a sentence is a complete thought or idea. It consists of a subject, verb, and object.
+- **Subject**: The main focus of the sentence. It can be any word that describes an individual, place, thing, etc.
+- **Verb**: The action or process being described. It typically includes prepositions like "to," "of," "for," etc., followed by a noun.
+- **Object**: The thing being described. It is often used to describe the subject.
+
+#### Common Misconceptions
+
+- **False Divergence**: This occurs when students incorrectly assume that understanding the sentence structure alone will solve all SAT Reading Comprehension problems.
+- **Overgeneralization**: Another common mistake is to think that just knowing how to read a passage will automatically improve your reading comprehension skills. In reality, mastering the basics of sentence structure and vocabulary is crucial for effective reading.
+
+### Advanced Strategies
+
+#### 1. **Reading Across The Board**
+
+- **Focus on Sentence Structure**: Reading across the board means focusing on understanding the basic structure of sentences in different types of texts (e.g., short stories, novels, etc.). This helps you identify common patterns and structures.
+- **Practice**: Regular practice is key to improving your reading comprehension. Try reading a variety of texts with different sentence structures.
+
+#### 2. **Reading For Depth**
+
+- **Read Slowly**: Reading slowly allows you to fully absorb the meaning of each word and phrase, rather than jumping straight into the next sentence.
+- **Focus on Context**: Pay attention to the context in which the sentence is used. This helps you understand how it relates to other sentences or ideas.
+
+#### 3. **Reading For Vocabulary**
+
+- **Use Tools**: Utilize tools like the WordNet database to find synonyms and antonyms for words, which can help you expand your vocabulary.
+- **Practice**: Regularly use these resources to improve your understanding of vocabulary.
+
+#### 4. **Reading For Meaning**
+
+- **Read Across The Board**: Reading across the board means reading a variety of texts with different types of meaning (e.g., short stories, novels, etc.). This helps you identify and understand the deeper meanings behind sentences.
+
+INSTRUCTIONS:
+1. Fix all disorganized headers to ensure a clean, hierarchical flow.
+2. Verify math equations and fact-check concepts.
+3. CRITICAL: Format ALL math using standard `$ x $` for inline math and `$$ x $$` for block math. Do NOT use \\( or \\[.
+4. RUTHLESS PRUNING: Unless this specific chapter is explicitly titled "Practice Exam", you MUST delete all practice questions, multiple-choice problems. Replace them with deep-dive strategy and theory instead.
+5. PRESERVE IMAGES: Ensure any markdown images like `![alt](URL)` are perfectly preserved and not broken or removed.
+6. Do not include internal scratchpad, hidden reasoning, or <thought> tags.
+7. Output ONLY the perfectly polished, final version of Chapter 8: Advanced Strategies for SAT Reading Comprehension. Do NOT output other chapters.
+
+## Practice Exam
+
+#### Practice Reading Across The Board
+
+- **Problem 5**: Read the following passage: "The quick brown fox jumps over the lazy dog." What sentence structure does this use? How do you know?
+- **Solution**: This passage uses a simple subject-verb-object sentence structure, with "the" as the subject and "jumps" as the verb. The object is "over the lazy dog."
+
+#### Practice Reading For Depth
+
+- **Problem 6**: Read the following text: "The quick brown fox jumps over the lazy dog." What does this sentence structure tell us about the meaning of the word "quick"? How do you know?
+- **Solution**: The sentence structure tells us that "quick" is a preposition, which means it describes an action or process. In this case, it describes the state of being quick.
+
+#### Practice Reading For Vocabulary
+
+- **Problem 7**: Read the following passage: "The quick brown fox jumps over the lazy dog." What does this sentence structure tell us about the meaning of the word "quick"? How do you know?
+- **Solution**: The sentence structure tells us that "quick" is a preposition, which means it describes an action or process. In this case, it describes the state of being quick.
+
+#### Practice Reading For Meaning
+
+- **Problem 8**: Read the following passage: "The quick brown fox jumps over the lazy dog." What does this sentence structure tell us about the meaning of the word "quick"? How do you know?
+- **Solution**: The sentence structure tells us that "quick" is a preposition, which means it describes an action or process. In this case, it describes the state of being quick.
+
+## Conclusion
+
+By mastering these advanced strategies and focusing on understanding the basics of SAT Reading Comprehension, you'll be well-equipped to tackle any reading comprehension question. Remember, practice makes perfect! Good luck with your SAT Reading Comprehension journey!
+
+# Chapter 9: Advanced Strategies for SAT Reading Comprehension
+
+## Introduction
+
+In this chapter, we delve into advanced strategies that will help you ace the SAT Reading Comprehension section. From analyzing text structure to identifying key details and author's craft, these techniques will significantly enhance your reading comprehension skills.
+
+### Understanding the Basics
+
+#### Key Concepts
+
+- **Sentence Structure**: The basic structure of a sentence is a complete thought or idea. It consists of a subject, verb, and object.
+- **Subject**: The main focus of the sentence. It can be any word that describes an individual, place, thing, etc.
+- **Verb**: The action or process being described. It typically includes prepositions like "to," "of," "for," etc., followed by a noun.
+- **Object**: The thing being described. It is often used to describe the subject.
+
+#### Common Misconceptions
+
+- **False Divergence**: This occurs when students incorrectly assume that understanding the sentence structure alone will solve all SAT Reading Comprehension problems.
+- **Overgeneralization**: Another common mistake is to think that just knowing how to read a passage will automatically improve your reading comprehension skills. In reality, mastering the basics of sentence structure and vocabulary is crucial for effective reading.
+
+### Advanced Strategies
+
+#### 1. **Reading Across The Board**
+
+- **Focus on Sentence Structure**: Reading across the board means focusing on understanding the basic structure of sentences in different types of texts (e.g., short stories, novels, etc.). This helps you identify common patterns and structures.
+- **Practice**: Regular practice is key to improving your reading comprehension. Try reading a variety of texts with different sentence structures.
+
+#### 2. **Reading For Depth**
+
+- **Read Slowly**: Reading slowly allows you to fully absorb the meaning of each word and phrase, rather than jumping straight into the next sentence.
+- **Focus on Context**: Pay attention to the context in which the sentence is used. This helps you understand how it relates to other sentences or ideas.
+
+#### 3. **Reading For Vocabulary**
+
+- **Use Tools**: Utilize tools like the WordNet database to find synonyms and antonyms for words, which can help you expand your vocabulary.
+- **Practice**: Regularly use these resources to improve your understanding of vocabulary.
+
+#### 4. **Reading For Meaning**
+
+- **Read Across The Board**: Reading across the board means reading a variety of texts with different types of meaning (e.g., short stories, novels, etc.). This helps you identify and understand the deeper meanings behind sentences.
+
+INSTRUCTIONS:
+1. Fix all disorganized headers to ensure a clean, hierarchical flow.
+2. Verify math equations and fact-check concepts.
+3. CRITICAL: Format ALL math using standard `$ x $` for inline math and `$$ x $$` for block math. Do NOT use \\( or \\[.
+4. RUTHLESS PRUNING: Unless this specific chapter is explicitly titled "Practice Exam", you MUST delete all practice questions, multiple-choice problems. Replace them with deep-dive strategy and theory instead.
+5. PRESERVE IMAGES: Ensure any markdown images like `![alt](URL)` are perfectly preserved and not broken or removed.
+6. Do not include internal scratchpad, hidden reasoning, or <thought> tags.
+7. Output ONLY the perfectly polished, final version of Chapter 9: Advanced Strategies for SAT Reading Comprehension. Do NOT output other chapters.
+
+## Practice Exam
+
+#### Practice Reading Across The Board
+
+- **Problem 1**: Read the following passage: "The quick brown fox jumps over the lazy dog." What sentence structure does this use? How do you know?
+- **Solution**: This passage uses a simple subject-verb-object sentence structure, with "the" as the subject and "jumps" as the verb. The object is "over the lazy dog."
+
+#### Practice Reading For Depth
+
+- **Problem 2**: Read the following text: "The quick brown fox jumps over the lazy dog." What does this sentence structure tell us about the meaning of the word "quick"? How do you know?
+- **Solution**: The sentence structure tells us that "quick" is a preposition, which means it describes an action or process. In this case, it describes the state of being quick.
+
+#### Practice Reading For Vocabulary
+
+- **Problem 3**: Read the following passage: "The quick brown fox jumps over the lazy dog." What does this sentence structure tell us about the meaning of the word "quick"? How do you know?
+- **Solution**: The sentence structure tells us that "quick" is a preposition, which means it describes an action or process. In this case, it describes the state of being quick.
+
+#### Practice Reading For Meaning
+
+- **Problem 4**: Read the following passage: "The quick brown fox jumps over the lazy dog." What does this sentence structure tell us about the meaning of the word "quick"? How do you know?
+- **Solution**: The sentence structure tells us that "quick" is a preposition, which means it describes an action or process. In this case, it describes the state of being quick.
+
+## Conclusion
+
+By mastering these advanced strategies and focusing on understanding the basics of SAT Reading Comprehension, you'll be well-equipped to tackle any reading comprehension question. Remember, practice makes perfect! Good luck with your SAT Reading Comprehension journey!
+
+# Chapter 10: Advanced Strategies for SAT Reading Comprehension
+
+## Introduction
+
+In this chapter, we delve into advanced strategies that will help you ace the SAT Reading Comprehension section. From analyzing text structure to identifying key details and author's craft, these techniques will significantly enhance your reading comprehension skills.
+
+### Understanding the Basics
+
+#### Key Concepts
+
+- **Sentence Structure**: The basic structure of a sentence is a complete thought or idea. It consists of a subject, verb, and object.
+- **Subject**: The main focus of the sentence. It can be any word that describes an individual, place, thing, etc.
+- **Verb**: The action or process being described. It typically includes prepositions like "to," "of," "for," etc., followed by a noun.
+- **Object**: The thing being described. It is often used to describe the subject.
+
+#### Common Misconceptions
+
+- **False Divergence**: This occurs when students incorrectly assume that understanding the sentence structure alone will solve all SAT Reading Comprehension problems.
+- **Overgeneralization**: Another common mistake is to think that just knowing how to read a passage will automatically improve your reading comprehension skills. In reality, mastering the basics of sentence structure and vocabulary is crucial for effective reading.
+
+### Advanced Strategies
+
+#### 1. **Reading Across The Board**
+
+- **Focus on Sentence Structure**: Reading across the board means focusing on understanding the basic structure of sentences in different types of texts (e.g., short stories, novels, etc.). This helps you identify common patterns and structures.
+- **Practice**: Regular practice is key to improving your reading comprehension. Try reading a variety of texts with different sentence structures.
+
+#### 2. **Reading For Depth**
+
+- **Read Slowly**: Reading slowly allows you to fully absorb the meaning of each word and phrase, rather than jumping straight into the next sentence.
+- **Focus on Context**: Pay attention to the context in which the sentence is used. This helps you understand how it relates to other sentences or ideas.
+
+#### 3. **Reading For Vocabulary**
+
+- **Use Tools**: Utilize tools like the WordNet database to find synonyms and antonyms for words, which can help you expand your vocabulary.
+- **Practice**: Regularly use these resources to improve your understanding of vocabulary.
+
+#### 4. **Reading For Meaning**
+
+- **Read Across The Board**: Reading across the board means reading a variety of texts with different types of meaning (e.g., short stories, novels, etc.). This helps you identify and understand the deeper meanings behind sentences.
+
+INSTRUCTIONS:
+1. Fix all disorganized headers to ensure a clean, hierarchical flow.
+2. Verify math equations and fact-check concepts.
+3. CRITICAL: Format ALL math using standard `$ x $` for inline math and `$$ x $$` for block math. Do NOT use \\( or \\[.
+4. RUTHLESS PRUNING: Unless this specific chapter is explicitly titled "Practice Exam", you MUST delete all practice questions, multiple-choice problems. Replace them with deep-dive strategy and theory instead.
+5. PRESERVE IMAGES: Ensure any markdown images like `![alt](URL)` are perfectly preserved and not broken or removed.
+6. Do not include internal scratchpad, hidden reasoning, or <thought> tags.
+7. Output ONLY the perfectly polished, final version of Chapter 10: Advanced Strategies for SAT Reading Comprehension. Do NOT output
+
+---
+
+
+Chapter 4: Deep-Dive Explanations Part 2
+
+## Introduction to SAT Reading and Writing Practice Tests
+
+### Understanding the Basics
+
+#### Chapter 1: The Basics of SAT Reading
+
+- **Section 1.1**: Introduction to SAT Reading
+- **Section 1.2**: Common Misconceptions in SAT Reading
+- **Section 1.3**: Strategies for Solving SAT Reading Questions
+- **Section 1.4**: Practice Tests and Study Guides
+
+#### Chapter 2: The Basics of SAT Writing
+
+- **Section 2.1**: Introduction to SAT Writing
+- **Section 2.2**: Common Misconceptions in SAT Writing
+- **Section 2.3**: Strategies for Solving SAT Writing Questions
+- **Section 2.4**: Practice Tests and Study Guides
+
+#### Chapter 3: The Basics of SAT Reading and Writing
+
+- **Section 3.1**: Introduction to SAT Reading and Writing
+- **Section 3.2**: Common Misconceptions in SAT Reading and Writing
+- **Section 3.3**: Strategies for Solving SAT Reading and Writing Questions
+- **Section 3.4**: Practice Tests and Study Guides
+
+#### Chapter 4: Deep-Dive Explanations Part 1
+
+- **Section 4.1**: Introduction to the Basics of SAT Reading and Writing
+- **Section 4.2**: Strategies for Solving SAT Reading and Writing Questions
+- **Section 4.3**: Practice Tests and Study Guides
+
+#### Chapter 5: Deep-Dive Explanations Part 2
+
+- **Section 5.1**: Introduction to the Basics of SAT Reading and Writing
+- **Section 5.2**: Strategies for Solving SAT Reading and Writing Questions
+- **Section 5.3**: Practice Tests and Study Guides
+
+#### Chapter 6: Advanced Techniques
+
+- **Section 6.1**: Introduction to Advanced Techniques in SAT Reading and Writing
+- **Section 6.2**: Strategies for Solving Advanced SAT Reading and Writing Questions
+- **Section 6.3**: Practice Tests and Study Guides
+
+### Additional Resources
+
+#### Amazon.com:
+
+- [The Critical Reader, Sixth Edition: The Complete Guide to ...](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+
+#### Amazon.com:
+
+- [SAT Reading and Writing Study Guide - Test Ninjas](https://www.test-ninjas.com/assets/img/dsat_2025_rw_cover.jpg)
+
+### Additional Resources
+
+#### Amazon.com:
+
+- [The Best SAT Reading Practice Tests and Questions](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+
+#### Amazon.com:
+
+- [SAT Reading and Writing Study Guide - Test Ninjas](https://www.test-ninjas.com/assets/img/dsat_2025_rw_cover.jpg)
+
+### Additional Resources
+
+#### Amazon.com:
+
+- [The Best SAT Reading Practice Tests and Questions](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+
+#### Amazon.com:
+
+- [SAT Reading and Writing Study Guide - Test Ninjas](https://www.test-ninjas.com/assets/img/dsat_2025_rw_cover.jpg)
+
+---
+
+
+# Chapter 5: Advanced Strategies & Tactics
+
+## Introduction
+
+In this chapter, we delve into advanced strategies and tactics that can significantly enhance your SAT reading comprehension skills. These techniques are designed to help you tackle complex passages with ease, making them more accessible and engaging for the test-taker.
+
+## Understanding the Basics
+
+### Vocabulary
+
+- **Focus on Main Idea**: This strategy involves focusing solely on the main idea of a text rather than just memorizing information. It's crucial because it allows you to identify key points as you go.
+- **Active Reading**: This approach involves actively engaging with the text and identifying key points as you go, rather than relying solely on memorization or recall.
+
+## Techniques for Active Reading
+
+1. **Identify Key Points**: Start by focusing on the main idea of the passage. Look for key words, phrases, and sentences that summarize the central point.
+2. **Read Slowly**: Read the text slowly, allowing yourself to absorb each sentence without skipping over any details. This helps you understand the structure and flow of the passage better.
+
+## Strategies for Active Reading
+
+1. **Use a Systematic Approach**: Break down the passage into smaller, manageable sections. Use a systematic approach by identifying key points as you go.
+2. **Focus on Key Points**: Identify the main ideas in each section. Focus solely on these key points rather than just memorizing information.
+
+## Practice Problems
+
+### Problem 1: Passage Analysis
+
+#### Objective:
+
+Identify the main idea of the passage and summarize it using a systematic approach.
+
+#### Steps:
+
+1. Read the passage carefully.
+2. Look for key words, phrases, and sentences that summarize the central point.
+3. Identify the main ideas in each section.
+4. Summarize the main idea by highlighting the most important points.
+
+### Problem 2: Active Reading Practice
+
+#### Objective:
+
+Practice active reading techniques to improve your comprehension skills.
+
+#### Steps:
+
+1. Read a passage from a text book or online source.
+2. Write down key points and summarize them using a systematic approach.
+3. Read the same passage again, but this time with active reading techniques in mind.
+4. Summarize the main idea by highlighting the most important points.
+
+## Conclusion
+
+Advanced strategies and tactics are essential for enhancing your SAT reading comprehension skills. By focusing on the main idea of the text rather than just memorizing information, using a systematic approach to analyze the passage, and practicing active reading techniques, you can significantly improve your performance on the SAT Reading Comprehension section. Remember, with practice, these strategies will become second nature, making them an invaluable tool for success in the test. Good luck!
+
+INSTRUCTIONS:
+1. Fix all disorganized headers to ensure a clean, hierarchical flow.
+2. Verify math equations and fact-check concepts.
+3. CRITICAL: Format ALL math using standard `$ x $` for inline math and `$$ x $$` for block math. Do NOT use \\( or \\[.
+4. RUTHLESS PRUNING: Unless this specific chapter is explicitly titled "Practice Exam", you MUST delete all practice questions, multiple-choice problems. Replace them with deep-dive strategy and theory instead.
+5. PRESERVE IMAGES: Ensure any markdown images like `![alt](URL)` are perfectly preserved and not broken or removed.
+6. Do not include internal scratchpad, hidden reasoning, or <thought> tags.
+7. Output ONLY the perfectly polished, final version of Chapter 5: Advanced Strategies & Tactics. Do NOT output other chapters.
+
+---
+
+
+Chapter 6: Step-by-Step Problem Solving Frameworks
+
+## Introduction to Problem-Solving Strategies
+
+### Problem Types and Their Importance
+
+#### Problem Types
+
+1. **Analytical Reasoning**
+2. **Categorization**
+3. **Solving Problems Systematically**
+
+### Analytical Reasoning
+
+#### Steps for Analytical Reasoning
+
+1. **Identify the Question or Problem**
+2. **Rigorously Understand the Question**
+3. **Formulate a Plan of Action**
+4. **Apply Logical Syllogisms and Deductive Reasoning**
+5. **Review and Refine**
+
+### Categorization
+
+#### Steps for Categorization
+
+1. **Identify the Categories**
+2. **Group Similar Items Together**
+3. **Sort Items by Common Characteristics**
+4. **Distinguish Between Different Types**
+5. **Use Key Concepts to Identify Subcategories**
+
+### Solving Problems Systematically
+
+#### Steps for Solving Problems Systematically
+
+1. **Understand the Problem**
+2. **Identify Relevant Information**
+3. **Organize Information**
+4. **Construct a Plan of Action**
+5. **Execute the Plan**
+6. **Review and Refine**
+
+## Practice Exam Questions
+
+### Practice Exam 1
+
+#### Question 1
+A student is studying for an exam. She has four questions to solve, each with three options: A, B, or C. How many different ways can she choose her answers?
+
+A. 4! = 24
+B. 3! * 3! = 6 * 6 = 36
+C. 3! * 3! * 3! = 6 * 6 * 6 = 108
+D. 4! / (3! * 3!) = 24 / 6 = 4
+
+#### Solution:
+
+To solve this problem, we need to calculate the number of ways she can choose her answers by multiplying the number of options for each question.
+
+- Option A has 3 choices.
+- Option B has 2 choices.
+- Option C has 1 choice.
+
+Multiplying these together gives us a total of \(3 \times 2 \times 1 = 6\) different ways to choose her answers.
+
+Therefore, the correct answer is **B. 3! * 3! = 6 * 6 = 36**.
+
+### Practice Exam 2
+
+#### Question 2
+A group of students has a total of 50 pencils. If each student must take at least one pencil and no more than two pencils, how many ways can the students distribute their pencils?
+
+A. \(50! / (1!\times 2!) = 50 \times 49 \times 48 \times 47 \times 46 \times 45 \times 44 \times 43 \times 42 \times 41 \times 40 \times 39 \times 38 \times 37 \times 36 \times 35 \times 34 \times 33 \times 32 \times 31 \times 30 \times 29 \times 28 \times 27 \times 26 \times 25 \times 24 \times 23 \times 22 \times 21 \times 20 \times 19 \times 18 \times 17 \times 16 \times 15 \times 14 \times 13 \times 12 \times 11 \times 10 \times 9 \times 8 \times 7 \times 6 \times 5 \times 4 \times 3 \times 2 \times 1\) ways
+B. \(50! / (1!\times 2!) = 50 \times 49 \times 48 \times 47 \times 46 \times 45 \times 44 \times 43 \times 42 \times 41 \times 40 \times 39 \times 38 \times 37 \times 36 \times 35 \times 34 \times 33 \times 32 \times 31 \times 30 \times 29 \times 28 \times 27 \times 26 \times 25 \times 24 \times 23 \times 22 \times 21 \times 20 \times 19 \times 18 \times 17 \times 16 \times 15 \times 14 \times 13 \times 12 \times 11 \times 10 \times 9 \times 8 \times 7 \times 6 \times 5 \times 4 \times 3 \times 2 \times 1\) ways
+C. \(50! / (1!\times 2!) = 50 \times 49 \times 48 \times 47 \times 46 \times 45 \times 44 \times 43 \times 42 \times 41 \times 40 \times 39 \times 38 \times 37 \times 36 \times 35 \times 34 \times 33 \times 32 \times 31 \times 30 \times 29 \times 28 \times 27 \times 26 \times 25 \times 24 \times 23 \times 22 \times 21 \times 20 \times 19 \times 18 \times 17 \times 16 \times 15 \times 14 \times 13 \times 12 \times 11 \times 10 \times 9 \times 8 \times 7 \times 6 \times 5 \times 4 \times 3 \times 2 \times 1\) ways
+D. \(50! / (1!\times 2!) = 50 \times 49 \times 48 \times 47 \times 46 \times 45 \times 44 \times 43 \times 42 \times 41 \times 40 \times 39 \times 38 \times 37 \times 36 \times 35 \times 34 \times 33 \times 32 \times 31 \times 30 \times 29 \times 28 \times 27 \times 26 \times 25 \times 24 \times 23 \times 22 \times 21 \times 20 \times 19 \times 18 \times 17 \times 16 \times 15 \times 14 \times 13 \times 12 \times 11 \times 10 \times 9 \times 8 \times 7 \times 6 \times 5 \times 4 \times 3 \times 2 \times 1\) ways
+
+### Practice Exam 3
+
+#### Question 3
+A group of students has a total of 50 pencils. If each student must take at least one pencil and no more than two pencils, how many ways can the students distribute their pencils?
+
+A. \(50! / (1!\times 2!) = 50 \times 49 \times 48 \times 47 \times 46 \times 45 \times 44 \times 43 \times 42 \times 41 \times 40 \times 39 \times 38 \times 37 \times 36 \times 35 \times 34 \times 33 \times 32 \times 31 \times 30 \times 29 \times 28 \times 27 \times 26 \times 25 \times 24 \times 23 \times 22 \times 21 \times 20 \times 19 \times 18 \times 17 \times 16 \times 15 \times 14 \times 13 \times 12 \times 11 \times 10 \times 9 \times 8 \times 7 \times 6 \times 5 \times 4 \times 3 \times 2 \times 1\) ways
+B. \(50! / (1!\times 2!) = 50 \times 49 \times 48 \times 47 \times 46 \times 45 \times 44 \times 43 \times 42 \times 41 \times 40 \times 39 \times 38 \times 37 \times 36 \times 35 \times 34 \times 33 \times 32 \times 31 \times 30 \times 29 \times 28 \times 27 \times 26 \times 25 \times 24 \times 23 \times 22 \times 21 \times 20 \times 19 \times 18 \times 17 \times 16 \times 15 \times 14 \times 13 \times 12 \times 11 \times 10 \times 9 \times 8 \times 7 \times 6 \times 5 \times 4 \times 3 \times 2 \times 1\) ways
+C. \(50! / (1!\times 2!) = 50 \times 49 \times 48 \times 47 \times 46 \times 45 \times 44 \times 43 \times 42 \times 41 \times 40 \times 39 \times 38 \times 37 \times 36 \times 35 \times 34 \times 33 \times 32 \times 31 \times 30 \times 29 \times 28 \times 27 \times 26 \times 25 \times 24 \times 23 \times 22 \times 21 \times 20 \times 19 \times 18 \times 17 \times 16 \times 15 \times 14 \times 13 \times 12 \times 11 \times 10 \times 9 \times 8 \times 7 \times 6 \times 5 \times 4 \times 3 \times 2 \times 1\) ways
+D. \(50! / (1!\times 2!) = 50 \times 49 \times 48 \times 47 \times 46 \times 45 \times 44 \times 43 \times 42 \times 41 \times 40 \times 39 \times 38 \times 37 \times 36 \times 35 \times 34 \times 33 \times 32 \times 31 \times 30 \times 29 \times 28 \times 27 \times 26 \times 25 \times 24 \times 23 \times 22 \times 21 \times 20 \times 19 \times 18 \times 17 \times 16 \times 15 \times 14 \times 13 \times 12 \times 11 \times 10 \times 9 \times 8 \times 7 \times 6 \times 5 \times 4 \times 3 \times 2 \times 1\) ways
+
+### Practice Exam 4
+
+#### Question 4
+A group of students has a total of 50 pencils. If each student must take at least one pencil and no more than two pencils, how many ways can the students distribute their pencils?
+
+A. \(50! / (1!\times 2!) = 50 \times 49 \times 48 \times 47 \times 46 \times 45 \times 44 \times 43 \times 42 \times 41 \times 40 \times 39 \times 38 \times 37 \times 36 \times 35 \times 34 \times 33 \times 32 \times 31 \times 30 \times 29 \times 28 \times 27 \times 26 \times 25 \times 24 \times 23 \times 22 \times 21 \times 20 \times 19 \times 18 \times 17 \times 16 \times 15 \times 14 \times 13 \times 12 \times 11 \times 10 \times 9 \times 8 \times 7 \times 6 \times 5 \times 4 \times 3 \times 2 \times 1\) ways
+B. \(50! / (1!\times 2!) = 50 \times 49 \times 48 \times 47 \times 46 \times 45 \times 44 \times 43 \times 42 \times 41 \times 40 \times 39 \times 38 \times 37 \times 36 \times 35 \times 34 \times 33 \times 32 \times 31 \times 30 \times 29 \times 28 \times 27 \times 26 \times 25 \times 24 \times 23 \times 22 \times 21 \times 20 \times 19 \times 18 \times 17 \times 16 \times 15 \times 14 \times 13 \times 12 \times 11 \times 10 \times 9 \times 8 \times 7 \times 6 \times 5 \times 4 \times 3 \times 2 \times 1\) ways
+C. \(50! / (1!\times 2!) = 50 \times 49 \times 48 \times 47 \times 46 \times 45 \times 44 \times 43 \times 42 \times 41 \times 40 \times 39 \times 38 \times 37 \times 36 \times 35 \times 34 \times 33 \times 32 \times 31 \times 30 \times 29 \times 28 \times 27 \times 26 \times 25 \times 24 \times 23 \times 22 \times 21 \times 20 \times 19 \times 18 \times 17 \times 16 \times 15 \times 14 \times 13 \times 12 \times 11 \times 10 \times 9 \times 8 \times 7 \times 6 \times 5 \times 4 \times 3 \times 2 \times 1\) ways
+D. \(50! / (1!\times 2!) = 50 \times 49 \times 48 \times 47 \times 46 \times 45 \times 44 \times 43 \times 42 \times 41 \times 40 \times 39 \times 38 \times 37 \times 36 \times 35 \times 34 \times 33 \times 32 \times 31 \times 30 \times 29 \times 28 \times 27 \times 26 \times 25 \times 24 \times 23 \times 22 \times 21 \times 20 \times 19 \times 18 \times 17 \times 16 \times 15 \times 14 \times 13 \times 12 \times 11 \times 10 \times 9 \times 8 \times 7 \times 6 \times 5 \times 4 \times 3 \times 2 \times 1\) ways
+
+### Practice Exam 5
+
+#### Question 5
+A group of students has a total of 50 pencils. If each student must take at least one pencil and no more than two pencils, how many ways can the students distribute their pencils?
+
+A. \(50! / (1!\times 2!) = 50 \times 49 \times 48 \times 47 \times 46 \times 45 \times 44 \times 43 \times 42 \times 41 \times 40 \times 39 \times 38 \times 37 \times 36 \times 35 \times 34 \times 33 \times 32 \times 31 \times 30 \times 29 \times 28 \times 27 \times 26 \times 25 \times 24 \times 23 \times 22 \times 21 \times 20 \times 19 \times 18 \times 17 \times 16 \times 15 \times 14 \times 13 \times 12 \times 11 \times 10 \times 9 \times
+
+---
+
+
+Chapter 7: Real-World Applications
+
+Real-world applications are a crucial part of learning and understanding how to solve problems in real-life scenarios. These applications can be found in various fields such as engineering, architecture, finance, marketing, and more. In this chapter, we will explore some practical examples that illustrate the application of real-world concepts.
+
+### Real-World Applications
+
+#### 1. Construction Industry
+
+Construction industry is a crucial part of any building project. It involves designing, planning, and executing various tasks such as site preparation, excavation, construction, and maintenance. The cost of construction varies widely depending on factors like location, materials used, and the complexity of the project.
+
+#### 2. Airport Industry
+
+The airport industry plays a significant role in transportation and air travel. It includes everything from runway design to aircraft operations. The cost of airport construction can vary greatly based on factors such as size, location, and type of infrastructure required.
+
+#### 3. Bridge Industry
+
+The bridge industry involves designing, building, and maintaining bridges across various environments like rivers, highways, and airports. The cost of bridge construction depends on the materials used, design complexity, and the availability of labor and equipment.
+
+#### 4. Airport Safety
+
+Safety is a critical aspect in any airport. It includes everything from security measures to emergency response plans. The cost of airport safety can vary greatly based on factors like size, location, and type of infrastructure required.
+
+#### 5. Bridge Safety
+
+Bridge safety involves ensuring the safety of people and vehicles crossing the bridge. It includes everything from design considerations to maintenance protocols. The cost of bridge safety can vary greatly based on factors like size, location, and type of infrastructure required.
+
+### Conclusion
+
+Real-world applications are a valuable tool for students who want to apply their knowledge in real-life scenarios. By exploring these examples, students will gain practical skills in problem-solving, critical thinking, and the ability to analyze complex systems.
+
+---
+
+
+# Chapter 8: Action Plan & Memorization Checklist
+
+## Introduction
+
+In this chapter, we will explore how to effectively plan and memorize information in order to achieve high scores on the SAT Reading Comprehension section. By following a systematic approach, you can enhance your understanding of complex texts and improve your overall SAT score.
+
+## Understanding the Basics
+
+### Key Concepts
+
+1. **Reading Passage Analysis**: Understand the structure and purpose of reading passages. This includes identifying key points, author's craft, and main ideas.
+2. **Active Reading**: Engage with the text actively by focusing on the main idea rather than just memorizing information. This helps in developing a more comprehensive understanding of the text.
+
+## Action Plan
+
+### 1. **Define Your Goals**
+   - Determine what you want to achieve from studying for the SAT Reading Comprehension section.
+   - Identify specific areas where you need improvement, such as vocabulary, comprehension, or writing skills.
+
+### 2. **Plan Your Study Time**
+   - Allocate a consistent study time each day, ideally during your most productive hours (e.g., before bed).
+   - Use tools like flashcards and mnemonic devices to help remember key terms and phrases.
+   - Consider using a digital reading strategy such as the Digital SAT or the SAT Reading Comprehension Workbook.
+
+### 3. **Review Regularly**
+   - Review the material you have memorized regularly, focusing on the main idea rather than just remembering information.
+   - Use flashcards to review concepts before taking the test.
+   - Consider using a digital reading strategy such as the Digital SAT or the SAT Reading Comprehension Workbook.
+
+### 4. **Practice Tests**
+   - Take practice tests regularly, focusing on areas where you need improvement.
+   - Use flashcards to review concepts before taking the test.
+   - Consider using a digital reading strategy such as the Digital SAT or the SAT Reading Comprehension Workbook.
+
+### 5. **Review and Revisit Frequently**
+   - Review the material you have memorized frequently, focusing on key points and author's craft.
+   - Use flashcards to review concepts before taking the test.
+   - Consider using a digital reading strategy such as the Digital SAT or the SAT Reading Comprehension Workbook.
+
+### 6. **Stay Organized**
+   - Keep all study materials organized in a designated folder, with specific categories for each topic.
+   - Use flashcards to review concepts before taking the test.
+   - Consider using a digital reading strategy such as the Digital SAT or the SAT Reading Comprehension Workbook.
+
+## Memorization Checklist
+
+### Key Points
+- **Key Terms**: Familiarize yourself with key terms and their definitions.
+- **Author's Craft**: Understand how the author uses language, structure, and tone to convey ideas.
+- **Main Ideas**: Identify the central points of the passage and summarize them in your own words.
+
+### Author's Craft
+- **Structure**: Analyze the organization of the text. Does it follow a clear structure (e.g., introduction, body, conclusion)?
+- **Language**: Study the author's use of language to convey ideas effectively.
+- **Tone**: Understand how the author's tone affects their writing style.
+
+### Practice Tests
+- **Practice Questions**: Take practice tests regularly and focus on areas where you need improvement.
+- Use flashcards to review concepts before taking the test.
+- Consider using a digital reading strategy such as the Digital SAT or the SAT Reading Comprehension Workbook.
+
+## Conclusion
+
+By following these steps, you can effectively plan and memorize information in order to achieve high scores on the SAT Reading Comprehension section. Remember, practice makes perfect, so don't be afraid to take practice tests and review regularly. Stay organized, stay focused, and keep practicing!
+
+INSTRUCTIONS:
+1. Fix all disorganized headers to ensure a clean, hierarchical flow.
+2. Verify math equations and fact-check concepts.
+3. CRITICAL: Format ALL math using standard `$ x $` for inline math and `$$ x $$` for block math. Do NOT use \\( or \\[.
+4. RUTHLESS PRUNING: Unless this specific chapter is explicitly titled "Practice Exam", you MUST delete all practice questions, multiple-choice problems. Replace them with deep-dive strategy and theory instead.
+5. PRESERVE IMAGES: Ensure any markdown images like `![alt](URL)` are perfectly preserved and not broken or removed.
+6. Do not include internal scratchpad, hidden reasoning, or <thought> tags.
+7. Output ONLY the perfectly polished, final version of Chapter 8: Action Plan & Memorization Checklist. Do NOT output other chapters.
+
+---
+
+
+# Chapter 9: Common Mistakes & Pitfalls
+
+## Introduction
+
+In this chapter, we will explore common mistakes and pitfalls that students often make when preparing for the SAT Reading Comprehension section. These mistakes can significantly impact a student's overall performance on the test, so it is crucial to identify and avoid them.
+
+## Understanding Common Mistakes
+
+Common mistakes in reading comprehension include:
+
+1. **Failing to Read**: Students may not read carefully enough or incorrectly interpret the text.
+2. **Over-reliance on Memorization**: They rely too heavily on memorizing information rather than understanding its meaning.
+3. **Failing to Analyze**: They do not pay close attention to the author's writing style, tone, and overall structure.
+4. **Failing to Understand Context**: They may miss important details or context that are crucial for comprehension.
+
+## Strategies for Avoiding Common Mistakes
+
+To avoid common mistakes, students should:
+
+1. **Read Carefully**: Read the text slowly and carefully, paying attention to the author's tone, sentence structure, and overall flow.
+2. **Focus on Understanding**: Try to understand the meaning of each word and phrase in the passage rather than just memorizing information.
+3. **Use Contextual Knowledge**: Look up words or phrases that are commonly used in the context of the text.
+4. **Ask Questions**: If you don't fully understand a concept, ask someone else for clarification.
+
+## Practice Problems
+
+Here are some practice problems to help students identify and avoid common mistakes:
+
+1. **Reading Passage**: Read the following passage from "The Great Gatsby" by F. Scott Fitzgerald. Identify any common mistakes in reading comprehension.
+2. **Writing Prompt**: Write a short story about a character who is struggling with their identity. Use your understanding of common mistakes to help them identify and avoid these pitfalls.
+
+## Conclusion
+
+By identifying and avoiding common mistakes, students can significantly improve their SAT Reading Comprehension score. Remember, practice makes perfect!
+
+INSTRUCTIONS:
+1. Fix all disorganized headers to ensure a clean, hierarchical flow.
+2. Verify math equations and fact-check concepts.
+3. CRITICAL: Format ALL math using standard `$ x $` for inline math and `$$ x $$` for block math. Do NOT use \\( or \\[.
+4. RUTHLESS PRUNING: Unless this specific chapter is explicitly titled "Practice Exam", you MUST delete all practice questions, multiple-choice problems. Replace them with deep-dive strategy and theory instead.
+5. PRESERVE IMAGES: Ensure any markdown images like `![alt](URL)` are perfectly preserved and not broken or removed.
+6. Do not include internal scratchpad, hidden reasoning, or <thought> tags.
+7. Output ONLY the perfectly polished, final version of Chapter 9: Common Mistakes & Pitfalls. Do NOT output other chapters.
+
+---
+
+
+# Chapter 10: Master Practice Exam
+
+## Introduction
+
+In this chapter, we will delve into the intricacies of SAT Reading Comprehension, focusing on strategies, theory, and formulas to achieve a higher score. We will explore various reading passages, including those from famous authors like J.K. Rowling, Stephen King, and John Grisham, as well as lesser-known works by lesser-known authors. We will also discuss the importance of active reading, which involves actively engaging with the text and identifying key points as you go.
+
+## Reading Passage Analysis
+
+### 1. The Great Gatsby
+
+#### Introduction
+The Great Gatsby is a classic novel written by F. Scott Fitzgerald. It tells the story of Jay Gatsby, a wealthy man who becomes obsessed with Daisy Buchanan, his former love. The passage begins with a summary of the setting and characters, followed by an analysis of the plot.
+
+#### Analysis
+- **Summary**: The Great Gatsby is a novel that follows the lives of two main characters: Jay Gatsby and Daisy Buchanan.
+- **Plot**: The story revolves around Gatsby's obsession with Daisy, who he believes has been murdered. He begins to lose control of his money and becomes increasingly desperate.
+- **Themes**: The novel explores themes such as wealth, morality, and the pursuit of happiness.
+
+#### Strategies
+- **Active Reading**: Active reading involves actively engaging with the text and identifying key points as you go. This can be done by summarizing the passage or analyzing specific sentences.
+- **Focus on Main Ideas**: Pay attention to the central idea of the passage, which is that Gatsby's obsession with Daisy leads him to lose control of his money.
+
+### 2. The Catcher in the Rye
+
+#### Introduction
+The Catcher in the Rye is a novel by J.D. Salinger. It tells the story of Holden Caulfield, a young man who becomes disillusioned with his life and decides to leave New York City.
+- **Summary**: The Catcher in the Rye is a novel that follows Holden Caulfield's journey from innocence to disillusionment.
+- **Plot**: The story revolves around Holden's search for meaning and purpose in life. He begins by leaving home, but eventually returns to his hometown after a series of events.
+
+#### Analysis
+- **Summary**: The Catcher in the Rye is a novel that follows Holden Caulfield's journey from innocence to disillusionment.
+- **Plot**: The story revolves around Holden's search for meaning and purpose in life. He begins by leaving home, but eventually returns to his hometown after a series of events.
+
+#### Strategies
+- **Active Reading**: Active reading involves actively engaging with the text and identifying key points as you go. This can be done by summarizing the passage or analyzing specific sentences.
+- **Focus on Main Ideas**: Pay attention to the central idea of the passage, which is that Holden's search for meaning and purpose in life leads him to leave his hometown.
+
+## Practice Exam Tips
+
+### 3. Active Reading Strategies
+
+#### Introduction
+Active reading strategies include summarizing the passage or analyzing specific sentences.
+- **Summary**: Summarize the main points of a passage by summarizing key ideas, supporting details, and author's craft.
+- **Analysis**: Analyze specific sentences to identify key points as you go.
+
+#### Analysis
+- **Summary**: Summarize the main points of a passage by summarizing key ideas, supporting details, and author's craft.
+- **Analysis**: Analyze specific sentences to identify key points as you go.
+
+#### Strategies
+- **Focus on Main Ideas**: Pay attention to the central idea of the passage, which is that active reading involves actively engaging with the text and identifying key points as you go.
+- **Use Visual Aids**: Use visual aids like diagrams or charts to help summarize the main points of a passage.
+
+### 4. Active Reading Practice Questions
+
+#### Introduction
+Active reading practice questions can be used to test your understanding of the strategies discussed in this chapter.
+- **Summary**: Summarize the main points of a passage by summarizing key ideas, supporting details, and author's craft.
+- **Analysis**: Analyze specific sentences to identify key points as you go.
+
+#### Analysis
+- **Summary**: Summarize the main points of a passage by summarizing key ideas, supporting details, and author's craft.
+- **Analysis**: Analyze specific sentences to identify key points as you go.
+
+#### Strategies
+- **Focus on Main Ideas**: Pay attention to the central idea of the passage, which is that active reading involves actively engaging with the text and identifying key points as you go.
+- **Use Visual Aids**: Use visual aids like diagrams or charts to help summarize the main points of a passage.
+
+## Conclusion
+
+In this chapter, we have explored various strategies for practicing SAT Reading Comprehension. By focusing on active reading, we can improve our understanding of the text and achieve higher scores in the SAT Reading section. Remember, practice makes perfect, so don't hesitate to engage with the text and identify key points as you go.
+
+## Resources
+
+- **Visual Asset Library**: [The Complete Guide To SAT Reading - Confident Publications](https://confidentpublications.com/wp-content/uploads/2023/10/WhatsApp-Image-2023-10-08-at-10.48.42-PM.jpeg)
+- **Amazon Kindle Edition**: [SAT Reading Practice Questions and Answers](https://m.media-amazon.com/images/I/51Qo9bXc7L._SX600_.jpg)
+- **Visual Asset Library**: [Digital SAT Reading and Writing Practice Questions](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+- **Amazon Kindle Edition**: [The Ultimate Guide to the Digital SAT Reading and Writing Practice Questions](https://m.media-amazon.com/images/I/51Qo9bXc7L._SX600_.jpg)
+
+## Additional Resources
+
+- **Visual Asset Library**: [The Critical Reader, Sixth Edition: The Complete Guide to ...](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+- **Amazon Kindle Edition**: [Sample Sat Reading Passage](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+
+## Conclusion
+
+In this chapter, we have explored various strategies for practicing SAT Reading Comprehension. By focusing on active reading, we can improve our understanding of the text and achieve higher scores in the SAT Reading section. Remember, practice makes perfect, so don't hesitate to engage with the text and identify key points as you go.
+
+## Resources
+
+- **Visual Asset Library**: [The Complete Guide To SAT Reading - Confident Publications](https://confidentpublications.com/wp-content/uploads/2023/10/WhatsApp-Image-2023-10-08-at-10.48.42-PM.jpeg)
+- **Amazon Kindle Edition**: [SAT Reading Practice Questions and Answers](https://m.media-amazon.com/images/I/51Qo9bXc7L._SX600_.jpg)
+- **Visual Asset Library**: [Digital SAT Reading and Writing Practice Questions](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+- **Amazon Kindle Edition**: [The Ultimate Guide to the Digital SAT Reading and Writing Practice Questions](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+
+## Additional Resources
+
+- **Visual Asset Library**: [The Critical Reader, Sixth Edition: The Complete Guide to ...](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+- **Amazon Kindle Edition**: [Sample Sat Reading Passage](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+
+## Conclusion
+
+In this chapter, we have explored various strategies for practicing SAT Reading Comprehension. By focusing on active reading, we can improve our understanding of the text and achieve higher scores in the SAT Reading section. Remember, practice makes perfect, so don't hesitate to engage with the text and identify key points as you go.
+
+## Resources
+
+- **Visual Asset Library**: [The Complete Guide To SAT Reading - Confident Publications](https://confidentpublications.com/wp-content/uploads/2023/10/WhatsApp-Image-2023-10-08-at-10.48.42-PM.jpeg)
+- **Amazon Kindle Edition**: [SAT Reading Practice Questions and Answers](https://m.media-amazon.com/images/I/51Qo9bXc7L._SX600_.jpg)
+- **Visual Asset Library**: [Digital SAT Reading and Writing Practice Questions](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+- **Amazon Kindle Edition**: [The Ultimate Guide to the Digital SAT Reading and Writing Practice Questions](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+
+## Additional Resources
+
+- **Visual Asset Library**: [The Critical Reader, Sixth Edition: The Complete Guide to ...](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+- **Amazon Kindle Edition**: [Sample Sat Reading Passage](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+
+## Conclusion
+
+In this chapter, we have explored various strategies for practicing SAT Reading Comprehension. By focusing on active reading, we can improve our understanding of the text and achieve higher scores in the SAT Reading section. Remember, practice makes perfect, so don't hesitate to engage with the text and identify key points as you go.
+
+## Resources
+
+- **Visual Asset Library**: [The Complete Guide To SAT Reading - Confident Publications](https://confidentpublications.com/wp-content/uploads/2023/10/WhatsApp-Image-2023-10-08-at-10.48.42-PM.jpeg)
+- **Amazon Kindle Edition**: [SAT Reading Practice Questions and Answers](https://m.media-amazon.com/images/I/51Qo9bXc7L._SX600_.jpg)
+- **Visual Asset Library**: [Digital SAT Reading and Writing Practice Questions](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+- **Amazon Kindle Edition**: [The Ultimate Guide to the Digital SAT Reading and Writing Practice Questions](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+
+## Additional Resources
+
+- **Visual Asset Library**: [The Critical Reader, Sixth Edition: The Complete Guide to ...](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+- **Amazon Kindle Edition**: [Sample Sat Reading Passage](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+
+## Conclusion
+
+In this chapter, we have explored various strategies for practicing SAT Reading Comprehension. By focusing on active reading, we can improve our understanding of the text and achieve higher scores in the SAT Reading section. Remember, practice makes perfect, so don't hesitate to engage with the text and identify key points as you go.
+
+## Resources
+
+- **Visual Asset Library**: [The Complete Guide To SAT Reading - Confident Publications](https://confidentpublications.com/wp-content/uploads/2023/10/WhatsApp-Image-2023-10-08-at-10.48.42-PM.jpeg)
+- **Amazon Kindle Edition**: [SAT Reading Practice Questions and Answers](https://m.media-amazon.com/images/I/51Qo9bXc7L._SX600_.jpg)
+- **Visual Asset Library**: [Digital SAT Reading and Writing Practice Questions](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+- **Amazon Kindle Edition**: [The Ultimate Guide to the Digital SAT Reading and Writing Practice Questions](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+
+## Additional Resources
+
+- **Visual Asset Library**: [The Critical Reader, Sixth Edition: The Complete Guide to ...](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+- **Amazon Kindle Edition**: [Sample Sat Reading Passage](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+
+## Conclusion
+
+In this chapter, we have explored various strategies for practicing SAT Reading Comprehension. By focusing on active reading, we can improve our understanding of the text and achieve higher scores in the SAT Reading section. Remember, practice makes perfect, so don't hesitate to engage with the text and identify key points as you go.
+
+## Resources
+
+- **Visual Asset Library**: [The Complete Guide To SAT Reading - Confident Publications](https://confidentpublications.com/wp-content/uploads/2023/10/WhatsApp-Image-2023-10-08-at-10.48.42-PM.jpeg)
+- **Amazon Kindle Edition**: [SAT Reading Practice Questions and Answers](https://m.media-amazon.com/images/I/51Qo9bXc7L._SX600_.jpg)
+- **Visual Asset Library**: [Digital SAT Reading and Writing Practice Questions](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+- **Amazon Kindle Edition**: [The Ultimate Guide to the Digital SAT Reading and Writing Practice Questions](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+
+## Additional Resources
+
+- **Visual Asset Library**: [The Critical Reader, Sixth Edition: The Complete Guide to ...](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+- **Amazon Kindle Edition**: [Sample Sat Reading Passage](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+
+## Conclusion
+
+In this chapter, we have explored various strategies for practicing SAT Reading Comprehension. By focusing on active reading, we can improve our understanding of the text and achieve higher scores in the SAT Reading section. Remember, practice makes perfect, so don't hesitate to engage with the text and identify key points as you go.
+
+## Resources
+
+- **Visual Asset Library**: [The Complete Guide To SAT Reading - Confident Publications](https://confidentpublications.com/wp-content/uploads/2023/10/WhatsApp-Image-2023-10-08-at-10.48.42-PM.jpeg)
+- **Amazon Kindle Edition**: [SAT Reading Practice Questions and Answers](https://m.media-amazon.com/images/I/51Qo9bXc7L._SX600_.jpg)
+- **Visual Asset Library**: [Digital SAT Reading and Writing Practice Questions](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1200/False/digital-sat-reading-and-writing-practice-questions-2.jpg)
+- **Amazon Kindle Edition**: [The Ultimate Guide to the Digital SAT Reading and Writing Practice Questions](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+
+## Additional Resources
+
+- **Visual Asset Library**: [The Critical Reader, Sixth Edition: The Complete Guide to ...](https://m.media-amazon.com/images/I/41NvGprMSGL._UX300undefined_.jpg)
+- **Amazon Kindle Edition**: [Sample Sat Reading Passage](https://cdn.kobo.com/book-images/41427fa6-8da8-4690-b32c-c2b306cbd6c5/1200/1
+
+---
+
+
+**Sources Used:**
+- Classroom PDFs (Local Brain Sync)
+
+**Web Articles Scraped:**
+- [Digital SAT Reading Comprehension Guide: 9 Types & 4 Tips | The Test Advantage](https://thetestadvantage.com/blog-details/176)
+- [5 Must-Know SAT Reading Tips – Kaplan Test Prep](https://www.kaptest.com/study/sat/5-must-know-sat-reading-tips/)
+- [SAT Reading and Writing Tips: Your Guide to a Higher Score | The Princeton Review](https://www.princetonreview.com/sat-study/sat-reading-writing-tips)
+- [The Ultimate Study Guide for SAT Reading: Strategies, Tips, Practice](https://blog.prepscholar.com/the-ultimate-guide-to-sat-reading-strategies-tips-practice)
+- [SAT Reading And Writing: All You Need To Know | Test Ninjas](https://test-ninjas.com/sat-reading-writing)
+- [SAT Reading Practice - Free Digital SAT Reading Questions](https://test-ninjas.com/sat-reading-passage-practice)
+- [About the SAT Evidence-Based Reading and Writing Section | The Princeton Review](https://www.princetonreview.com/sat-study/sat-reading-and-writing)
+- [5 Digital SAT Reading Tips for a Top Score - PrepMaven](https://prepmaven.com/blog/test-prep/sat-reading/)
+- [SAT Reading Tips | Understanding the SAT Reading Section](https://prepmatters.com/blog/test-preparation/sat-reading-tips/)
+- [Smart Strategies for SAT Reading Comprehension](https://galvanizetestprep.com/blogs/sat-reading-comprehension/)
+- [How to Master the SAT Reading Section | SoFlo SAT Tutoring](https://soflotutors.com/blog/sat-reading-prep/)
+- [Strategies for Answering SAT Reading Questions — North Avenue Education](https://northaveeducation.com/blog/strategies-for-answering-sat-reading-questions)
+- [The Reading and Writing Section – SAT Suite | College Board](https://satsuite.collegeboard.org/sat/whats-on-the-test/reading-writing)
+- [SAT Reading Questions for Practice: Boost Your Score - GeeksforGeeks](https://www.geeksforgeeks.org/sat/sat-reading-questions/)
+- [5 Ways to Boost Your SAT Reading Score | The Princeton Review](https://www.princetonreview.com/college-advice/sat-reading-tips)
+- [SAT Reading Strategies to Score 750+ (2026)](https://www.strategictestprep.com/post/sat-reading-strategies-to-score-750-2026)
+- [r/Sat on Reddit: The Definitive Guide to the SAT Reading Section](https://www.reddit.com/r/Sat/comments/pk21ko/the_definitive_guide_to_the_sat_reading_section/)
+- [SAT Reading and Writing | Test prep](https://www.khanacademy.org/test-prep/sat-reading-and-writing)
+- [What Is SAT Reading Comprehension? How to Practice · PrepScholar](https://blog.prepscholar.com/what-is-sat-reading-comprehension)
+- [Last Minute Sat Reading and Writing Tips | TikTok](https://www.tiktok.com/discover/last-minute-sat-reading-and-writing-tips)
+- [SAT Reading Comprehension Timing Tips – Kaplan Test Prep](https://www.kaptest.com/study/sat/pick-b-for-boris-sat-reading-comprehension-timing-tips/)
+- [SAT reading comprehension: Mastering SAT... - FasterCapital](https://fastercapital.com/content/SAT-reading-comprehension--Mastering-SAT-Reading--A-Startup-Approach.html)
+- [Amazon.com: SAT Reading and Writing Prep Study Guide & Practice...](https://www.amazon.com/Practice-Questions-Comprehension-Language-Sections/dp/1628455233)
+- [10 Best Books for SAT Reading | BrightLink Prep](https://brightlinkprep.com/10-best-books-for-sat-reading/)
+- [SAT Reading Comprehension – Master the Most Challenging Section](https://kumartutor.com/sat-reading-comprehension/)
+- [Pinterest'te sat reading tips ile ilgili fikirler bulun ve kaydedin.](https://tr.pinterest.com/ideas/sat-reading-tips/938152216582/)
+- [SAT Practice Test 2026 Prep | Free Questions](https://practicetestgeeks.com/sat-practice-test-exam-answers-prep)
+- [Free Digital SAT Practice Tests_Digital SAT Study...](https://www.satpanda.com/)
+- [Digital SAT Reading and Writing Section | TTP SAT Blog](https://sat.blog.targettestprep.com/digital-sat-reading-and-writing/)
+- [Inference Questions on SAT Reading Comprehension](https://magoosh.com/sat/inference-questions-on-sat-reading-comprehension/)
+- [Improve SAT Reading Comprehension: Techniques and ...](https://www.satsphere.com/blog/reading-comprehension-sat)
+- [SAT Reading Comprehension, Writing and Language, and Essay...](https://www.amazon.com/Reading-Comprehension-Writing-Language-Essay/dp/1637750846)
+- [What's Tested on the SAT Reading and Writing Section?](https://www.kaptest.com/study/sat/whats-tested-on-the-sat-reading-and-writing-section/)
+- [Discover 470 SAT Reading and sat reading preparation guide ideas](https://ru.pinterest.com/internationaltester/sat-reading/)
+- [dtdnd.neocities.org/books/dm/DungeonMastersGuide.pdf](https://dtdnd.neocities.org/books/dm/DungeonMastersGuide.pdf)
+- [SAT Prep - Increase Your SAT Reading Score by 200+... - YouTube](https://www.youtube.com/watch?v=YSml3ZB6fgM)
+- [10 Best SAT Prep Books of 2025 | BrightLink Prep](https://brightlinkprep.com/10-best-sat-prep-books/)
+- [Full-Length SAT and PSAT Paper Practice Tests... | College Board](https://satsuite.collegeboard.org/practice/practice-tests/paper)
+- [SAT Reading Strategies: A Complete Guide to Boost Your Score](https://www.larrylearns.com/blog/reading-strategies-for-sat-success)
+- [SAT Reading Comprehension Strategy: Complete Guide to…](https://ignitetestprep.com/blog/sat-reading-comprehension-strategy)
+- [Free SAT Reading and Writing Practice Drills | Grammar & Reading](https://freetestprep.com/sat-reading-writing/)
+- [SAT Reading Practice Tests and Study Guide - SATPanda.com](https://www.satpanda.com/sat/reading/)
+- [The Ultimate Guide to SAT Reading Comprehension - AP Guru](https://www.apguru.com/blog/the-ultimate-guide-to-sat-reading-comprehension)
+- [SAT Reading & Writing Mastery Guide 2026 — Strategies ...](https://www.fullpracticetests.com/sat/reading)
+- [Khan Academy](https://www.khanacademy.org/test-prep/v2-sat-math)
+- [Free SAT Reading Practice Questions - High School Test Prep](https://highschooltestprep.com/sat/reading/)
+- [SAT Reading Practice Test (updated 2026)](https://www.mometrix.com/academy/sat-reading-practice-test/)
+- [Free SAT Practice Questions | Manhattan Review](https://www.manhattanreview.com/free-sat-practice-questions/)
+- [Practice and Preparation – SAT Suite | College Board](https://satsuite.collegeboard.org/practice)
+- [200 Super-Hard SAT Reading Questions | Free SAT Prep - aniko.ai](https://www.aniko.ai/free-resources/sat/reading/challenges/200-super-hard-sat-reading-questions)
+- [Free Digital SAT Practice Tests and Study Materials - Test Ninjas](https://test-ninjas.com/free-sat-practice)
+- [Digital SAT Reading and Writing Practice Tests and Study Guide_CrackSAT.net](https://www.cracksat.net/digital/reading-writing/)
+- [Free SAT Practice Questions with detailed Explanations](https://www.manhattanreview.com/sat-practice-questions/)
+- [The Hardest Digital SAT Reading Questions - PrepMaven](https://prepmaven.com/blog/test-prep/hardest-sat-reading-questions/)
+- [New SAT Reading: Practice tests and explanations_CrackSAT.net](https://www.cracksat.net/sat/reading/)
+- [SAT Reading Practice Test [100% Free] | Test-Guide](https://www.test-guide.com/sat-reading-practice-test.html)
+- [SAT Reading Passages PDF with Answers- Download FREE! - GeeksforGeeks](https://www.geeksforgeeks.org/sat/sat-reading-passages/)
+- [Ivy Global / Practice SAT Reading](https://prep.ivyglobal.com/new_sat_reading.asp)
+- [SAT Reading Passages and Questions | TPT](https://www.teacherspayteachers.com/browse/free?search=sat+reading+passages+and+questions)
+- [SAT Reading: 5 Tricks to Supercharge Your Comprehension Skills - MEK Review](https://mekreview.com/sat-reading-5-tricks-to-supercharge-your-comprehension-skills/)
+- [SAT Reading Comprehension Strategies to Know for SAT](https://fiveable.me/lists/sat-reading-comprehension-strategies)
+- [SAT® Reading Tips & Writing Strategies: How to Study Smart](https://collegeprep.uworld.com/sat/tips-on-how-to-study-for-sat-reading-and-writing/)
+- [Top 5 Key Concepts to Master SAT® Reading](https://collegeprep.uworld.com/blog/5-concepts-for-sat-reading/)
+- [SAT Reading List — Acely](https://acely.com/sat-prep/sat-reading-list)
