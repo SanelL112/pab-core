@@ -1,41 +1,40 @@
 """
-ai_processor.py - Runs one agy prompt per source, saves results to text files,
+ai_processor.py - Runs one local inference request per source, saves results to text files,
 then assembles the final digest and task list from those files.
 
 REFACTORED: Uses llm_router for unified OpenRouter calls and llm_cost_log for tracking.
-Local agy/Ollama calls remain for PII-safe processing.
+Private source processing is local-only; cloud routing is not permitted here.
 """
 
 import asyncio
 import json
 import logging
 import os
-import subprocess
+import re
 import threading
 from pathlib import Path
+from typing import Any
 
 try:
     import aiohttp
 except ImportError:
     aiohttp = None  # optional: only needed for Pi classifier
-logging.basicConfig(level=logging.INFO, format='%(message)s')
-
 logger = logging.getLogger(__name__)
 
 # Use unified config
-from config import AGENTAPI_BIN, CACHE_DIR as CONFIG_CACHE_DIR, LATEST_DIGEST_FILE
+from config import CACHE_DIR as CONFIG_CACHE_DIR, LATEST_DIGEST_FILE
+import config
 BOT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 CACHE_DIR = Path(CONFIG_CACHE_DIR)
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Module-level lock for thread-safe file writes (shared across ThreadPoolExecutor workers)
 _write_lock = threading.Lock()
 
 # ── Orange Pi 5 Classifier Integration ────────────────────────────────────────
 # Offloads batch classification to the Pi's 8 cores (qwen2:0.5b, 4 concurrent
-# workers) so the main server stays free for heavier inference.
+# workers) so the main server stays free for heavier local inference.
 
-PI_CLASSIFIER_URL = "http://10.10.10.2:8080"
+PI_CLASSIFIER_URL = config.PI_CLASSIFIER_URL
 
 
 async def pi_classify_batch(items: list[dict]) -> list[dict] | None:
@@ -47,17 +46,19 @@ async def pi_classify_batch(items: list[dict]) -> list[dict] | None:
     """
     try:
         timeout = aiohttp.ClientTimeout(total=60, connect=5)
+        headers = {"Authorization": f"Bearer {config.PI_CLASSIFIER_TOKEN}"} if config.PI_CLASSIFIER_TOKEN else None
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
                 f"{PI_CLASSIFIER_URL}/classify",
                 json=items,
+                headers=headers,
             ) as resp:
                 if resp.status == 200:
                     return await resp.json()
                 logger.warning(f"Pi classifier returned HTTP {resp.status}")
                 return None
-    except Exception as e:
-        logger.info(f"Pi classifier unavailable (falling back to local): {e}")
+    except Exception as exc:
+        logger.info("Pi classifier unavailable; using local processing (%s).", type(exc).__name__)
         return None
 
 
@@ -118,125 +119,226 @@ def _is_unusable_model_output(output: str | None) -> bool:
     normalized = output.lower()
     return any(marker in normalized for marker in MODEL_FAILURE_MARKERS)
 
+
+# ── Structured-payload extraction ─────────────────────────────────────────────
+# The digest prompt asks for two bare marker lines (``TASKS_JSON:[...]``).  Small
+# local models routinely answer with an equivalent but differently-shaped
+# payload: a fenced ``json`` block, or an object whose *key* is the marker
+# (``{"TASKS_JSON": [...]}``).  A quote between the marker and the colon defeats
+# a naive ``MARKER:`` search, so the tasks were silently dropped and nothing
+# reached Notion.  Accept every shape that carries the same meaning.
+
+_FENCE_RE = re.compile(r"```(?:json|JSON)?\s*(.*?)```", re.DOTALL)
+
+
+def _strip_code_fences(text: str) -> str:
+    """Return fenced block contents concatenated with the surrounding text."""
+    if "```" not in text:
+        return text
+    inner = "\n".join(match.strip() for match in _FENCE_RE.findall(text))
+    return f"{_FENCE_RE.sub(' ', text)}\n{inner}" if inner else text
+
+
+def _balanced_slice(text: str, start: int) -> str | None:
+    """Return the complete JSON array/object beginning at ``start``.
+
+    A regex cannot match nested brackets, and task payloads contain nested
+    objects, so scan for the balancing delimiter while ignoring brackets that
+    appear inside string literals.
+    """
+    opener = text[start]
+    closer = {"[": "]", "{": "}"}.get(opener)
+    if closer is None:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == opener:
+            depth += 1
+        elif char == closer:
+            depth -= 1
+            if depth == 0:
+                return text[start:index + 1]
+    return None
+
+
+def _extract_marker_payload(text: str, marker: str) -> tuple[Any, str] | None:
+    """Find ``marker``'s JSON payload in any shape the model emits.
+
+    Returns ``(parsed_payload, raw_substring)`` so the caller can both use the
+    data and strip the machine-readable part out of the human-facing digest.
+    """
+    if not text or marker not in text:
+        return None
+    haystack = _strip_code_fences(text)
+
+    # Accept ``MARKER:``, ``"MARKER":``, and ``'MARKER' :`` alike.
+    pattern = re.compile(rf"[\"']?{re.escape(marker)}[\"']?\s*:", re.IGNORECASE)
+    for match in pattern.finditer(haystack):
+        cursor = match.end()
+        while cursor < len(haystack) and haystack[cursor] in " \t\r\n":
+            cursor += 1
+        if cursor >= len(haystack) or haystack[cursor] not in "[{":
+            continue
+        raw = _balanced_slice(haystack, cursor)
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        # ``{"TASKS_JSON": [...]}`` parsed from the outer object yields a dict
+        # that still wraps the list under the marker key.
+        if isinstance(parsed, dict) and marker in parsed:
+            parsed = parsed[marker]
+        return parsed, raw
+    return None
+
+
+# Small models rename fields.  Map their vocabulary onto the schema Notion needs
+# rather than discarding an otherwise valid task.
+_TASK_KEY_ALIASES = {
+    "name": "title",
+    "task": "title",
+    "task_name": "title",
+    "summary": "title",
+    "due": "due_date",
+    "due_at": "due_date",
+    "deadline": "due_date",
+    "link": "url",
+    "class": "course",
+    "subject": "course",
+    "type": "task_type",
+}
+
+_ALLOWED_TASK_KEYS = {
+    "id", "title", "source", "course", "url", "due_date",
+    "priority", "status", "task_type", "start_value", "end_value",
+}
+
+
+def _normalize_task(raw: Any, index: int) -> dict | None:
+    """Coerce one model-produced task into the shape ``add_task_to_notion`` wants."""
+    if isinstance(raw, str):
+        title = raw.strip()
+        return {"id": f"llm:{index}", "title": title, "priority": "unknown",
+                "status": "Not started"} if title else None
+    if not isinstance(raw, dict):
+        return None
+
+    task: dict[str, Any] = {}
+    for key, value in raw.items():
+        canonical = _TASK_KEY_ALIASES.get(str(key).strip().lower(), str(key).strip().lower())
+        if canonical in _ALLOWED_TASK_KEYS and canonical not in task:
+            task[canonical] = value
+
+    title = str(task.get("title") or "").strip()
+    if not title:
+        return None
+    task["title"] = title
+    task.setdefault("id", f"llm:{index}")
+    task.setdefault("priority", "unknown")
+    task.setdefault("status", "Not started")
+
+    # A due date of "No due date"/"TBD"/null must not become a literal string,
+    # because the calendar and Notion both branch on its presence.
+    due = task.get("due_date")
+    if isinstance(due, str):
+        cleaned = due.strip()
+        if cleaned.lower() in {"", "none", "null", "n/a", "tbd", "no due date", "unknown"}:
+            task["due_date"] = None
+        else:
+            # Trim a time component so downstream date parsing stays simple.
+            iso = re.match(r"(\d{4}-\d{2}-\d{2})", cleaned)
+            task["due_date"] = iso.group(1) if iso else cleaned
+    return task
+
+
+def _parse_llm_tasks(text: str) -> tuple[list[dict], str]:
+    """Extract the task list from a digest, returning ``(tasks, cleaned_digest)``."""
+    found = _extract_marker_payload(text, "TASKS_JSON")
+    if not found:
+        return [], text
+    payload, raw = found
+    if isinstance(payload, dict):
+        payload = [payload]
+    if not isinstance(payload, list):
+        return [], text
+
+    tasks: list[dict] = []
+    for index, item in enumerate(payload):
+        normalized = _normalize_task(item, index)
+        if normalized:
+            tasks.append(normalized)
+    return tasks, _remove_payload(text, "TASKS_JSON", raw)
+
+
+def _parse_llm_topics(text: str) -> tuple[list[str], str]:
+    """Extract study topics from a digest, returning ``(topics, cleaned_digest)``."""
+    found = _extract_marker_payload(text, "STUDY_TOPICS_JSON")
+    if not found:
+        return [], text
+    payload, raw = found
+    if isinstance(payload, str):
+        payload = [payload]
+    if not isinstance(payload, list):
+        return [], text
+    topics = [str(item).strip() for item in payload if str(item).strip()]
+    return topics, _remove_payload(text, "STUDY_TOPICS_JSON", raw)
+
+
+def _remove_payload(text: str, marker: str, raw: str) -> str:
+    """Strip a marker and its payload from the human-facing digest text."""
+    cleaned = text.replace(raw, "")
+    cleaned = re.sub(rf"[\"']?{re.escape(marker)}[\"']?\s*:\s*,?", "", cleaned, flags=re.IGNORECASE)
+    # Leave no empty fence or dangling brace behind once the payload is gone.
+    cleaned = re.sub(r"```(?:json|JSON)?\s*\{?\s*\}?\s*```", "", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 # ── agy helper ────────────────────────────────────────────────────────────────
 
 def call_agy(prompt: str, timeout: int = 180, model: str = "flash") -> str:
-    """
-    Call agy --print using a PTY. Attempts 'flash' first, then falls back to 'pro'.
-
-    DELEGATES to llm_router.call_agy_local() — the unified implementation.
-    This wrapper preserves the original function signature for backward compatibility.
-    """
-    try:
-        from llm_router import call_agy_local
-        return call_agy_local(prompt=prompt, model=model, timeout=timeout)
-    except ImportError:
-        # Fallback: PTY implementation if llm_router not available
-        return _call_agy_inline(prompt, timeout, model)
+    """Deprecated compatibility wrapper for local-only digest inference."""
+    return _local_inference(prompt, timeout=timeout, max_tokens=1_500)
 
 
-def _call_agy_inline(prompt: str, timeout: int = 180, model: str = "flash") -> str:
-    """Original inline PTY implementation (kept as fallback)."""
-    import pty, select, time, os as _os
-    
-    def _run_model(target_model: str) -> str:
-        master = -1
-        proc = None
-        try:
-            master, slave = pty.openpty()
-            try:
-                from llm_router import _resolve_agy_model
-                target_model = _resolve_agy_model(target_model)
-            except Exception:
-                pass
-            proc = subprocess.Popen(
-                [AGENTAPI_BIN, "--model", target_model, "--print", prompt],
-                stdin=slave, stdout=slave, stderr=slave,
-                close_fds=True
-            )
-            _os.close(slave)
+def _local_inference(prompt: str, *, timeout: int, max_tokens: int) -> str:
+    """Run private digest processing on local inference only, with typed failure."""
+    from llm_router import call_local_rpc_result
 
-            output_chunks = []
-            end_time = time.time() + timeout
-            while time.time() < end_time:
-                try:
-                    r, _, _ = select.select([master], [], [], 1.0)
-                    if r:
-                        try:
-                            chunk = _os.read(master, 4096)
-                            output_chunks.append(chunk)
-                        except OSError:
-                            break
-                except Exception as e:
-                    logger.debug("PTY select error during pty poll: %r", e)
-                    break
-                if proc.poll() is not None:
-                    try:
-                        while True:
-                            r, _, _ = select.select([master], [], [], 0.2)
-                            if r:
-                                chunk = _os.read(master, 4096)
-                                output_chunks.append(chunk)
-                            else:
-                                break
-                    except OSError:
-                        pass
-                    break
-
-            try:
-                proc.wait(timeout=5)
-            except Exception as e:
-                logger.debug("proc.wait error: %r", e)
-
-            raw = b"".join(output_chunks).decode("utf-8", errors="replace")
-            import re
-            clean = re.sub(r'\x1b\[[0-9;]*[mGKHF]', '', raw)
-            clean = clean.replace('\r\n', '\n').replace('\r', '\n').strip()
-            
-            if proc.poll() is None:
-                logger.error(f"agy {target_model} timed out after {timeout}s")
-                try:
-                    proc.kill()
-                except Exception as e:
-                    logger.debug("proc.kill error after wait timeout: %r", e)
-                return ""
-                
-            return clean
-
-        except Exception as e:
-            logger.error(f"agy pty error ({target_model}): {e}")
-            return ""
-        finally:
-            if master >= 0:
-                try:
-                    _os.close(master)
-                except OSError:
-                    pass
-            if proc and proc.poll() is None:
-                try:
-                    proc.kill()
-                except Exception as e:
-                    logger.debug("proc.kill error in finally: %r", e)
-
-    logger.info(f"Attempting processing with {model}...")
-    result = _run_model(model)
-    if not result and model != "pro":
-        logger.warning(f"{model} failed or timed out. Falling back to pro...")
-        result = _run_model("pro")
-        
-    return result
-
-# NOTE: call_local_llm was removed — no callers remain (verified via repo-wide grep).
-# Superseded by the Pi classifier pre-filter + agy flash pipeline in process_source().
-# The original Qwen2 0.5B -> Llama 3.2 3B fallback chain is still visible in git history
-# (git log -- ai_processor.py), last present in d7c2c92.
-
+    result = call_local_rpc_result(
+        prompt=prompt,
+        max_tokens=max_tokens,
+        timeout=min(max(1, int(timeout)), config.RPC_INFERENCE_TIMEOUT),
+        temperature=0.0,
+        allow_cloud=False,
+    )
+    if result.ok:
+        return result.text
+    logger.warning("Local inference unavailable for digest processing (%s).", result.status.value)
+    return ""
 
 
 # ── Per-source processing ─────────────────────────────────────────────────────
 
 def process_source(name: str, data: str, skip_llm_filter: bool = False, force_reprocess: bool = False) -> str:
-    """Run agy for a single source. Saves result to cache file. Returns summary text."""
+    """Summarize one private source locally and save a bounded cache entry."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     cache_file = os.path.join(CACHE_DIR, f"{name}_summary.txt")
 
     if not data or data.strip() == "" or "not configured" in data.lower():
@@ -261,7 +363,7 @@ def process_source(name: str, data: str, skip_llm_filter: bool = False, force_re
         except ImportError:
             pass  # utils not available, skip caching
 
-    # ── Stage 1: Try Orange Pi 5 classifier first (fast, saves agy credits) ──
+    # ── Stage 1: Try Orange Pi classifier first to avoid unnecessary inference. ──
     if not skip_llm_filter:
         pi_result = pi_classify_sync([{"id": "1", "source": name, "text": data[:2000]}])
         if pi_result and len(pi_result) > 0:
@@ -273,7 +375,7 @@ def process_source(name: str, data: str, skip_llm_filter: bool = False, force_re
                 summary = f"No urgent {name} updates."
                 with open(cache_file, "w") as f:
                     f.write(summary)
-                logger.info(f"Pi classifier marked {name} as NOISE — skipping agy entirely")
+                logger.info("Pi classifier marked %s as noise; skipping local summarization.", name)
                 return summary
 
     if skip_llm_filter:
@@ -300,8 +402,8 @@ def process_source(name: str, data: str, skip_llm_filter: bool = False, force_re
 
         prompt += "\n\nIf you see a completely new type of item you're unsure about, reply: [ASK_USER] description"
 
-        logger.info(f"Calling agy flash for {name} classification ({len(prompt)} chars)...")
-        response = call_agy(prompt, timeout=60, model="flash")
+        logger.info("Calling local inference for %s classification (%d chars).", name, len(prompt))
+        response = _local_inference(prompt, timeout=60, max_tokens=1_500)
 
         if _is_unusable_model_output(response):
             # Do not cache an error string such as "Local inference
@@ -450,7 +552,8 @@ def _deterministic_digest(summaries: dict[str, str]) -> tuple[str, list[dict]]:
     return "\n\n".join(sections), tasks
 
 def assemble_digest(summaries: dict) -> dict:
-    """Assemble per-source summaries into a final digest + task list via agy."""
+    """Assemble per-source summaries into a local digest and task list."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     summary_text = ""
     for name, text in summaries.items():
         summary_text += f"=== {name.upper()} ===\n{text}\n\n"
@@ -467,7 +570,7 @@ def assemble_digest(summaries: dict) -> dict:
     rotate_file_if_needed(Path(combined_summaries_path), MAX_COMBINED_SUMMARIES_CHARS)
         
     # Read and inject local OCR / photo extracts
-    extracts_file = os.path.join(BOT_DIR, "important_extracts.txt")
+    extracts_file = config.IMPORTANT_EXTRACTS_FILE
     if os.path.exists(extracts_file):
         try:
             with open(extracts_file, "r") as f:
@@ -481,8 +584,8 @@ def assemble_digest(summaries: dict) -> dict:
             logger.error(f"Failed to read extracts: {e}")
 
     prompt = DIGEST_ASSEMBLY_PROMPT.format(summaries=summary_text)
-    logger.info("Assembling final digest via agy...")
-    output = call_agy(prompt, timeout=3600)
+    logger.info("Assembling final digest via local inference...")
+    output = _local_inference(prompt, timeout=600, max_tokens=6_000)
 
     # Split tasks JSON and topics JSON from the digest text
     tasks = []
@@ -492,23 +595,26 @@ def assemble_digest(summaries: dict) -> dict:
         digest, tasks = _deterministic_digest(summaries)
     else:
         digest = output
+        tasks, digest = _parse_llm_tasks(digest)
+        topics, digest = _parse_llm_topics(digest)
 
-        import re as _re
-        tasks_match = _re.search(r'TASKS_JSON:(.*?)(?:STUDY_TOPICS_JSON:|$)', digest, _re.DOTALL)
-        if tasks_match:
-            try:
-                tasks = json.loads(tasks_match.group(1).strip())
-            except Exception as e:
-                logger.debug("Malformed tasks JSON from LLM (left empty): %r", e)
-            digest = digest.replace('TASKS_JSON:' + tasks_match.group(1), '').strip()
-
-        topics_match = _re.search(r'STUDY_TOPICS_JSON:(.*?)(?:TASKS_JSON:|$)', digest, _re.DOTALL)
-        if topics_match:
-            try:
-                topics = json.loads(topics_match.group(1).strip())
-            except Exception as e:
-                logger.debug("Malformed topics JSON from LLM (left empty): %r", e)
-            digest = digest.replace('STUDY_TOPICS_JSON:' + topics_match.group(1).split('\n')[0], '').strip()
+        # A model that emitted no usable task payload is not the same as a model
+        # that decided there is nothing to do: the marker being absent or
+        # unparseable used to yield zero tasks silently, so nothing ever reached
+        # Notion.  Fall back to deterministic extraction, which reads due dates
+        # straight out of the source summaries.
+        if not tasks and "TASKS_JSON" not in output:
+            fallback_digest, fallback_tasks = _deterministic_digest(summaries)
+            if fallback_tasks:
+                logger.warning(
+                    "Digest model returned no TASKS_JSON marker; recovered %d task(s) deterministically.",
+                    len(fallback_tasks),
+                )
+                tasks = fallback_tasks
+                if _is_unusable_model_output(digest):
+                    digest = fallback_digest
+        elif not tasks:
+            logger.warning("TASKS_JSON present but yielded no usable tasks; check the model output shape.")
 
     import re as _re
 
