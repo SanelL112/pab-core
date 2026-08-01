@@ -1,23 +1,65 @@
-import os
 import logging
 import requests
-from dotenv import load_dotenv
+import config
 
 logger = logging.getLogger(__name__)
-load_dotenv()
+TIMEOUT = (5, 20)
+MAX_LIMIT = 20
 
-GROUPME_ACCESS_TOKEN = os.getenv("GROUPME_ACCESS_TOKEN")
+# ``.env.example`` ships this placeholder, so a copied-but-unedited file yields a
+# non-empty token that fails every request with 401.  Treat it as unconfigured.
+_PLACEHOLDER_TOKENS = {"your_groupme_token", "your_groupme_access_token", "changeme"}
+
+_AUTH_FAILURE_MESSAGE = (
+    "GroupMe rejected the stored access token (HTTP 401). "
+    "Regenerate it at https://dev.groupme.com/ and update GROUPME_ACCESS_TOKEN in .env."
+)
+
+_UNCONFIGURED_MESSAGE = (
+    "GroupMe access token is not configured. "
+    "Create one at https://dev.groupme.com/ and set GROUPME_ACCESS_TOKEN in .env."
+)
+
+
+def _access_token() -> str | None:
+    """Return a usable token, or None when it is missing or a placeholder."""
+    token = (config.GROUPME_TOKEN or "").strip()
+    if not token or token.lower() in _PLACEHOLDER_TOKENS:
+        return None
+    return token
+
+
+def _describe_failure(exc: requests.RequestException, action: str) -> str:
+    """Log an actionable reason and return the user-facing fallback text.
+
+    A bare ``HTTPError`` hides the status code, which makes an expired token
+    indistinguishable from a transient outage in the logs.  Surface the status
+    so a revoked credential is obvious without re-running the request by hand.
+    """
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if status in (401, 403):
+        logger.error("GroupMe %s failed: HTTP %s unauthorized — access token is invalid or expired.", action, status)
+        return _AUTH_FAILURE_MESSAGE
+    if status is not None:
+        logger.warning("GroupMe %s failed: HTTP %s.", action, status)
+    else:
+        logger.warning("GroupMe %s failed: %s.", action, type(exc).__name__)
+    return "GroupMe is temporarily unavailable."
+
 
 def get_groups():
     """Fetch all groups the user is a part of to find their IDs."""
-    if not GROUPME_ACCESS_TOKEN:
-        return "GroupMe API token not configured."
+    token = _access_token()
+    if not token:
+        logger.warning("GroupMe group listing skipped: access token is missing or a placeholder.")
+        return _UNCONFIGURED_MESSAGE
 
     url = "https://api.groupme.com/v3/groups"
-    params = {"token": GROUPME_ACCESS_TOKEN, "per_page": 100}
+    params = {"token": token, "per_page": 100}
     
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=TIMEOUT)
         response.raise_for_status()
         groups = response.json().get('response', [])
         
@@ -28,23 +70,29 @@ def get_groups():
         for g in groups:
             result.append(f"- {g['name']} (ID: {g['id']})")
         return "\n".join(result)
-    except Exception as e:
-        logger.error(f"Error fetching groups: {e}")
-        return f"Error connecting to GroupMe: {e}"
+    except requests.RequestException as exc:
+        return _describe_failure(exc, "group listing")
 
 def get_latest_messages(group_id, limit=5):
     """Fetch the latest messages from a specific GroupMe group."""
-    if not GROUPME_ACCESS_TOKEN or GROUPME_ACCESS_TOKEN == "your_groupme_token":
-        return "GroupMe API token not configured. Please add GROUPME_ACCESS_TOKEN to .env."
+    token = _access_token()
+    if not token:
+        logger.warning("GroupMe message fetch skipped: access token is missing or a placeholder.")
+        return _UNCONFIGURED_MESSAGE
+
+    group_id = str(group_id)
+    if not group_id.isdigit() or len(group_id) > 32:
+        return "Invalid GroupMe group ID."
+    limit = max(1, min(int(limit), MAX_LIMIT))
 
     url = f"https://api.groupme.com/v3/groups/{group_id}/messages"
     params = {
-        "token": GROUPME_ACCESS_TOKEN,
+        "token": token,
         "limit": limit
     }
 
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=TIMEOUT)
         response.raise_for_status()
         messages = response.json().get('response', {}).get('messages', [])
         
@@ -60,9 +108,8 @@ def get_latest_messages(group_id, limit=5):
                 
         return "\n".join(result)
 
-    except Exception as e:
-        logger.error(f"Error fetching GroupMe messages: {e}")
-        return f"Error connecting to GroupMe: {e}"
+    except requests.RequestException as exc:
+        return _describe_failure(exc, "messages")
 
 if __name__ == "__main__":
     print("Testing GroupMe API connection...")
