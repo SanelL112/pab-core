@@ -2,10 +2,10 @@
 llm_router.py — Unified LLM dispatch with cost tracking and smart fallbacks.
 
 SECURITY MODEL:
-- Local (Ollama Qwen2/Llama) and agy (flash/pro) handle ALL private data.
-  These run on your server. Data never leaves.
-- OpenRouter is ONLY called for general/academic content that is NOT PII.
-  The privacy filter in main.py/ai_processor.py decides the route BEFORE calling this.
+- Ollama and llama.cpp/RPC are local and may handle private data.
+- agy/Gemini, OpenRouter, Opencode Zen, and Hack Club are cloud providers.
+- Private/PII requests fail closed unless a caller explicitly chooses a cloud
+  provider for a public request.  Scrubbing is defense in depth, not consent.
 
 This module centralizes:
 1. OpenRouter HTTP calls (replaces 4+ copies of `_call_or` across the codebase)
@@ -19,6 +19,8 @@ import json
 import hashlib
 import logging
 import requests
+from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 from config import (
     OPENROUTER_API_KEY, OR_DEFAULT_MODEL, OR_FALLBACK_MODEL, OR_THIRD_MODEL,
@@ -27,6 +29,96 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class ProviderTrust(str, Enum):
+    """Whether inference payloads leave owner-controlled machines."""
+
+    LOCAL = "local"
+    CLOUD = "cloud"
+
+
+class Sensitivity(str, Enum):
+    """Data classification used at an inference boundary."""
+
+    PUBLIC = "public"
+    PERSONAL = "personal"
+    PII = "pii"
+
+
+class InferenceStatus(str, Enum):
+    OK = "ok"
+    UNAVAILABLE = "unavailable"
+    TIMEOUT = "timeout"
+    INVALID = "invalid"
+    POLICY_BLOCKED = "policy_blocked"
+    ERROR = "error"
+
+
+@dataclass(frozen=True)
+class InferenceResult:
+    """Typed result so an error message can never masquerade as model output."""
+
+    status: InferenceStatus
+    text: str = ""
+    provider: str = ""
+    model: str = ""
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.status is InferenceStatus.OK and bool(self.text.strip())
+
+    @classmethod
+    def success(cls, text: str, *, provider: str, model: str) -> "InferenceResult":
+        return cls(InferenceStatus.OK, text.strip(), provider, model)
+
+
+class InferenceUnavailable(RuntimeError):
+    """Raised by strict call sites when no policy-compliant model is available."""
+
+
+_CLOUD_PROVIDER_MARKERS = (
+    "agy", "gemini", "openrouter", "opencode", "zen", "hackclub", "hack club",
+)
+_LOCAL_PROVIDER_MARKERS = ("ollama", "llama.cpp", "llamacpp", "rpc", "local")
+
+
+def provider_trust(provider_or_model: str) -> ProviderTrust:
+    """Classify unknown providers as cloud so new integrations fail safe."""
+
+    value = (provider_or_model or "").strip().lower()
+    if any(marker in value for marker in _CLOUD_PROVIDER_MARKERS):
+        return ProviderTrust.CLOUD
+    if any(marker in value for marker in _LOCAL_PROVIDER_MARKERS):
+        return ProviderTrust.LOCAL
+    return ProviderTrust.CLOUD
+
+
+def _coerce_sensitivity(value: Sensitivity | str) -> Sensitivity:
+    try:
+        return value if isinstance(value, Sensitivity) else Sensitivity(value)
+    except ValueError:
+        # An unknown classification must not weaken the privacy boundary.
+        return Sensitivity.PERSONAL
+
+
+def _cloud_policy_allows(
+    prompt: str,
+    system_prompt: str,
+    *,
+    sensitivity: Sensitivity | str,
+    cloud_consent: bool,
+) -> bool:
+    """Return true only for explicitly approved, non-PII cloud payloads."""
+
+    if not cloud_consent or _coerce_sensitivity(sensitivity) is not Sensitivity.PUBLIC:
+        return False
+    from utils import check_pii
+
+    user_safe, _, _ = check_pii(prompt or "")
+    system_safe, _, _ = check_pii(system_prompt or "")
+    return user_safe and system_safe
 
 # ── OpenRouter Session (connection pooling) ──────────────────────────────────
 import httpx
@@ -169,6 +261,18 @@ def log_call(model: str, task: str, prompt: str, result: str, duration_s: float)
     log["by_model"][model]["cost"] += cost
 
     save_cost_log(log)
+    # The kiosk needs only the current operational route; prompts and model
+    # output are deliberately excluded from this side-channel.
+    try:
+        from bot.dashboard_state import record_route
+        if model == "llamacpp-rpc":
+            record_route(model, "surface-rpc")
+        elif model.startswith(("qwen", "llama", "hf.co/")):
+            record_route(model, "local")
+        else:
+            record_route(model, "cloud")
+    except Exception:
+        pass
 
 
 def get_cost_summary():
@@ -217,16 +321,18 @@ def call_openrouter(
     max_tokens: int = 4000,
     system_prompt: str = "",
     fallback_chain: list = None,
-    timeout: int = 120,
+    timeout: int | float = 120,
     stream_to_status=None,   # optional: (context, chat_id, status_msg) for streaming edits
+    *,
+    sensitivity: Sensitivity | str = Sensitivity.PUBLIC,
+    cloud_consent: bool = False,
 ) -> str:
     """
     Unified OpenRouter caller with retry, fallback, cost tracking.
 
-    SECURITY: PII is scrubbed at THIS entry point so ALL providers
-    (OpenRouter models, Opencode Zen, Hack Club AI) receive scrubbed
-    data. Callers do not need to scrub preemptively — but they still can
-    for defense-in-depth.
+    This is a cloud boundary.  The caller must provide ``cloud_consent=True``
+    for a public, non-PII request.  Scrubbing remains defense in depth and is
+    never used to turn private data into an implicitly approved request.
 
     Args:
         model: OpenRouter model ID (e.g. "openrouter/owl-alpha")
@@ -240,8 +346,16 @@ def call_openrouter(
     Returns:
         Generated text string
     """
-    # SECURITY: Scrub PII at the entry point so ALL providers get scrubbed data.
-    # This covers even the fallback chain models, Opencode Zen, and Hack Club AI.
+    if not _cloud_policy_allows(
+        prompt,
+        system_prompt,
+        sensitivity=sensitivity,
+        cloud_consent=cloud_consent,
+    ):
+        logger.warning("Cloud inference blocked by data/consent policy for task=%s", task)
+        return ""
+
+    # Defense in depth for an already-approved public payload.
     from utils import scrub_pii
     scrubbed_prompt = scrub_pii(prompt)
     if scrubbed_prompt != prompt:
@@ -249,18 +363,28 @@ def call_openrouter(
     scrubbed_system = scrub_pii(system_prompt) if system_prompt else ""
 
     chain = [model] + (fallback_chain or [])
+    total_budget = max(0.1, float(timeout))
+    deadline = time.monotonic() + total_budget
+
+    def remaining() -> float:
+        return max(0.0, deadline - time.monotonic())
 
     for i, m in enumerate(chain):
-        start = time.time()
+        if remaining() <= 0:
+            logger.warning("Cloud inference deadline exhausted for task=%s", task)
+            break
+        start = time.monotonic()
         # Brief delay between fallback attempts to let rate limits cool down
         if i > 0:
-            delay = min(3 * i, 10)  # 3s, 6s, 9s... capped at 10s
+            delay = min(3 * i, 10, remaining())
+            if delay <= 0:
+                break
             logger.info(f"Waiting {delay}s before trying fallback {m}...")
             time.sleep(delay)
         try:
-            result = _do_call(m, scrubbed_prompt, task, max_tokens, scrubbed_system, timeout,
+            result = _do_call(m, scrubbed_prompt, task, max_tokens, scrubbed_system, remaining(),
                               stream_to_status if i == 0 else None)
-            duration = time.time() - start
+            duration = time.monotonic() - start
 
             if is_valid_response(result):
                 log_call(m, task, scrubbed_prompt, result, duration)
@@ -271,26 +395,30 @@ def call_openrouter(
                 continue
 
         except Exception as e:
-            duration = time.time() - start
+            duration = time.monotonic() - start
             logger.warning(f"Model: {e} ({duration:.1f}s)")
             log_call(m, task, scrubbed_prompt, f"(error: {e})", duration)
             continue
 
     # ── Opencode Zen cross-provider fallback ──
     # OpenRouter free models share one rate-limit bucket. When 429'd,
-    # Opencode Zen models (hy3-free, mimo-v2.5-free) are a separate provider
+    # Opencode Zen models are a separate provider with their own rate limits.
     # with their own rate limits.
     try:
         from config import OPENCODE_ZEN_API_KEY
-        if OPENCODE_ZEN_API_KEY:
+        if OPENCODE_ZEN_API_KEY and remaining() > 0:
             logger.info("OpenRouter chain exhausted — falling back to Opencode Zen")
             return call_opencode(
-                model="hy3-free",
+                # The provider no longer accepts hy3-free; use the documented
+                # default model rather than attempting a known-invalid request.
+                model="mimo-v2.5-free",
                 prompt=scrubbed_prompt,
                 task=task,
                 max_tokens=max_tokens,
                 system_prompt=scrubbed_system,
-                timeout=120 if isinstance(timeout, int) else 120,
+                timeout=remaining(),
+                sensitivity=Sensitivity.PUBLIC,
+                cloud_consent=True,
             )
     except Exception as e:
         logger.warning(f"Opencode Zen fallback also failed: {e}")
@@ -298,7 +426,7 @@ def call_openrouter(
     # ── Hack Club AI (another provider, separate rate-limit bucket) ──
     try:
         from config import HACKCLUB_AI_API_KEY
-        if HACKCLUB_AI_API_KEY:
+        if HACKCLUB_AI_API_KEY and remaining() > 0:
             logger.info("Previous providers exhausted — falling back to Hack Club AI")
             return call_hackclub(
                 model="qwen/qwen3-32b",
@@ -306,12 +434,53 @@ def call_openrouter(
                 task=task,
                 max_tokens=min(max_tokens, 8000),
                 system_prompt=scrubbed_system,
-                timeout=120 if isinstance(timeout, int) else 120,
+                timeout=remaining(),
+                sensitivity=Sensitivity.PUBLIC,
+                cloud_consent=True,
             )
     except Exception as e:
         logger.warning(f"Hack Club AI fallback also failed: {e}")
 
-    return "⚠️ All models failed to generate a response. Please try again."
+    return ""
+
+
+def call_openrouter_result(**kwargs) -> InferenceResult:
+    """Typed OpenRouter entry point for new and security-sensitive callers."""
+
+    prompt = kwargs.get("prompt", "")
+    system_prompt = kwargs.get("system_prompt", "")
+    sensitivity = kwargs.get("sensitivity", Sensitivity.PUBLIC)
+    cloud_consent = kwargs.get("cloud_consent", False)
+    model = kwargs.get("model", "openrouter")
+    if not _cloud_policy_allows(
+        prompt,
+        system_prompt,
+        sensitivity=sensitivity,
+        cloud_consent=cloud_consent,
+    ):
+        return InferenceResult(
+            InferenceStatus.POLICY_BLOCKED,
+            provider="openrouter",
+            model=model,
+            detail="Cloud consent or public-data classification missing",
+        )
+    try:
+        text = call_openrouter(**kwargs)
+    except (httpx.TimeoutException, TimeoutError) as exc:
+        return InferenceResult(
+            InferenceStatus.TIMEOUT, provider="openrouter", model=model, detail=str(exc)
+        )
+    except Exception as exc:
+        logger.warning("OpenRouter inference failed: %s", type(exc).__name__)
+        return InferenceResult(
+            InferenceStatus.ERROR, provider="openrouter", model=model, detail=type(exc).__name__
+        )
+    if is_valid_response(text):
+        return InferenceResult.success(text, provider="openrouter", model=model)
+    return InferenceResult(
+        InferenceStatus.UNAVAILABLE, provider="openrouter", model=model,
+        detail="No provider returned a valid response",
+    )
 
 
 def _do_call(
@@ -373,7 +542,7 @@ def _do_call(
             raise Exception(f"HTTP {resp.status_code}: {resp.text[:200]}")
 
 def _streaming_call(client, model, messages, task, max_tokens, timeout, stream_to_status):
-    """Fallback streaming implementation if not using async HTTPX."""
+    """Stream an OpenRouter response with a hard end-to-end deadline."""
     # stream_to_status is (context, chat_id, status_msg, loop)
     context, chat_id, status_msg, main_loop = stream_to_status
     full_response = ""
@@ -381,15 +550,15 @@ def _streaming_call(client, model, messages, task, max_tokens, timeout, stream_t
     in_thought = False
     last_edit = 0
 
-    # Use httpx streaming with proper timeout
-    # Convert int timeout to httpx.Timeout if needed
-    if isinstance(timeout, int):
-        stream_timeout = httpx.Timeout(connect=10.0, read=float(timeout), write=10.0, pool=5.0)
-    else:
-        stream_timeout = timeout
-        
+    budget = max(0.1, float(timeout))
+    deadline = time.monotonic() + budget
+    stream_timeout = httpx.Timeout(
+        connect=min(10.0, budget), read=budget, write=min(10.0, budget), pool=min(5.0, budget)
+    )
+
     try:
-        resp = client.post(
+        with client.stream(
+            "POST",
             "https://openrouter.ai/api/v1/chat/completions",
             json={
                 "model": model,
@@ -398,25 +567,33 @@ def _streaming_call(client, model, messages, task, max_tokens, timeout, stream_t
                 "stream": True,
             },
             timeout=stream_timeout,
-        )
-    except httpx.TimeoutException:
-        raise Exception(f"OpenRouter streaming timeout after {timeout}s")
+        ) as resp:
+            if resp.status_code != 200:
+                raise RuntimeError(f"OpenRouter HTTP {resp.status_code}")
 
-    if resp.status_code != 200:
-        raise Exception(f"HTTP {resp.status_code}")
-
-    try:
-        for line in resp.iter_lines():
-            if not line or not line.startswith(b"data: "):
-                continue
-            data = line[6:]
-            if data == b"[DONE]":
-                break
-            try:
-                chunk = json.loads(data)
-                delta = chunk["choices"][0].get("delta", {})
+            for line in resp.iter_lines():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"OpenRouter total deadline exceeded after {budget:.1f}s")
+                if isinstance(line, bytes):
+                    # Compatibility with simple test doubles; httpx itself yields str.
+                    line = line.decode("utf-8", errors="replace")
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].lstrip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                    choices = chunk.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
+                    if not isinstance(delta, dict):
+                        continue
+                except (json.JSONDecodeError, TypeError, AttributeError):
+                    continue
                 content = delta.get("content", "")
-                if content:
+                if isinstance(content, str) and content:
                     full_response += content
 
                     if "<thought>" in full_response and "</thought>" not in full_response:
@@ -430,23 +607,21 @@ def _streaming_call(client, model, messages, task, max_tokens, timeout, stream_t
                         last_edit = now
                         try:
                             import asyncio
-                            from utils import sanitize_markdown
+                            from bot.ui import render_assistant_text
                             coro = None
                             if in_thought:
                                 disp = current_thought[-400:].strip()
-                                safe_disp = sanitize_markdown(disp)
                                 coro = context.bot.edit_message_text(
                                     chat_id=chat_id, message_id=status_msg.message_id,
-                                    text=f"🧠 **Thinking...**\n_{safe_disp}_", parse_mode="Markdown"
+                                    text=render_assistant_text(disp, title="Thinking"), parse_mode="HTML"
                                 )
                             else:
                                 final_text = full_response.split("</thought>")[-1] if "</thought>" in full_response else full_response
                                 disp = final_text[-800:].strip()
-                                safe_disp = sanitize_markdown(disp) if disp else ""
                                 if disp:
                                     coro = context.bot.edit_message_text(
                                         chat_id=chat_id, message_id=status_msg.message_id,
-                                        text=f"✍️ **Typing...**\n{safe_disp}"
+                                        text=render_assistant_text(disp, title="Drafting"), parse_mode="HTML"
                                     )
                             if coro:
                                 try:
@@ -455,11 +630,8 @@ def _streaming_call(client, model, messages, task, max_tokens, timeout, stream_t
                                     pass # Ignore if loop is dead or coro fails
                         except Exception:
                             pass
-            except Exception:
-                continue
-    finally:
-        # Ensure response is closed to release connection back to pool
-        resp.close()
+    except httpx.TimeoutException as exc:
+        raise TimeoutError(f"OpenRouter streaming timeout after {budget:.1f}s") from exc
 
     if "</thought>" in full_response:
         return full_response.split("</thought>")[-1].strip()
@@ -468,7 +640,7 @@ def _streaming_call(client, model, messages, task, max_tokens, timeout, stream_t
 
 # ── Local LLM Wrappers (PII-safe, never leaves server) ──────────────────────
 def call_ollama(prompt: str, model: str = "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:latest",
-                timeout: int = 30, url: str | None = None) -> str:
+                timeout: int | float = 30, url: str | None = None) -> str:
     """Call local Ollama model. Safe for PII — runs entirely on your server.
 
     Args:
@@ -492,11 +664,20 @@ def call_ollama(prompt: str, model: str = "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:l
         else:
             url = OLLAMA_URL
 
+    budget = max(0.1, float(timeout))
+    deadline = time.monotonic() + budget
+
     def _attempt(target_url: str) -> str:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return ""
         try:
             import httpx
-            # Tight connect timeout for LAN/VPN; longer read timeout (caller-controlled).
-            httpx_timeout = httpx.Timeout(connect=2.0, read=float(timeout), write=10.0, pool=5.0)
+            # Tight connect timeout for LAN/VPN; all fallbacks share one deadline.
+            httpx_timeout = httpx.Timeout(
+                connect=min(2.0, remaining), read=remaining,
+                write=min(10.0, remaining), pool=min(5.0, remaining),
+            )
             resp = httpx.post(
                 f"{target_url.rstrip('/')}/api/generate",
                 json={"model": model, "prompt": prompt, "stream": False,
@@ -507,7 +688,7 @@ def call_ollama(prompt: str, model: str = "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:l
                 return resp.json().get("response", "").strip()
             return ""
         except httpx.TimeoutException:
-            logger.error(f"Ollama call to {target_url} timed out after {timeout}s")
+            logger.error(f"Ollama call to {target_url} timed out within {budget:.1f}s budget")
             return ""
         except Exception as e:
             logger.error(f"Ollama call to {target_url} failed: {e}")
@@ -521,6 +702,33 @@ def call_ollama(prompt: str, model: str = "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:l
         )
         result = _attempt(OLLAMA_URL)
     return result
+
+
+def call_ollama_result(
+    prompt: str,
+    model: str = "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:latest",
+    timeout: int | float = 30,
+    url: str | None = None,
+) -> InferenceResult:
+    """Typed local inference entry point."""
+
+    try:
+        text = call_ollama(prompt=prompt, model=model, timeout=timeout, url=url)
+    except (httpx.TimeoutException, TimeoutError) as exc:
+        return InferenceResult(
+            InferenceStatus.TIMEOUT, provider="ollama", model=model, detail=str(exc)
+        )
+    except Exception as exc:
+        logger.warning("Ollama inference failed: %s", type(exc).__name__)
+        return InferenceResult(
+            InferenceStatus.ERROR, provider="ollama", model=model, detail=type(exc).__name__
+        )
+    if text.strip():
+        return InferenceResult.success(text, provider="ollama", model=model)
+    return InferenceResult(
+        InferenceStatus.UNAVAILABLE, provider="ollama", model=model,
+        detail="Local model returned no content",
+    )
 
 
 # agy no longer accepts short aliases ("flash"/"pro"); it wants the full
@@ -546,93 +754,55 @@ def _resolve_agy_model(model: str) -> str:
     return AGY_MODEL_ALIASES.get(model, AGY_MODEL_ALIASES["flash"])
 
 
-def call_agy_local(prompt: str, model: str = "flash", timeout: int = 180) -> str:
+def call_agy_local(
+    prompt: str,
+    model: str = "flash",
+    timeout: int | float = 180,
+    *,
+    sensitivity: Sensitivity | str = Sensitivity.PERSONAL,
+    cloud_consent: bool = False,
+) -> str:
+    """Compatibility wrapper for the cloud-hosted agy/Gemini CLI.
+
+    The historical name is retained for imports, but agy is *not* local.  It is
+    disabled by default and may only receive an explicitly approved public,
+    non-PII prompt.  The CLI is never granted unattended tool permissions.
     """
-    Call local agy CLI via PTY. Safe for PII — runs entirely on your server.
-    This replaces the duplicate implementations across the codebase.
-    """
-    import pty
-    import select
+
+    if not _cloud_policy_allows(
+        prompt,
+        "",
+        sensitivity=sensitivity,
+        cloud_consent=cloud_consent,
+    ):
+        logger.warning("agy/Gemini request blocked by cloud data policy")
+        return ""
+
     import re
-
-    def _run_model(target_model: str) -> str:
-        target_model = _resolve_agy_model(target_model)
-        master = -1
-        proc = None
-        try:
-            master, slave = pty.openpty()
-            proc = subprocess.Popen(
-                [AGENTAPI_BIN, "--model", target_model, "--dangerously-skip-permissions", "--print", prompt],
-                stdin=slave, stdout=slave, stderr=slave,
-                close_fds=True
-            )
-            os.close(slave)
-
-            output_chunks = []
-            end_time = time.time() + timeout
-            while time.time() < end_time:
-                try:
-                    r, _, _ = select.select([master], [], [], 1.0)
-                    if r:
-                        try:
-                            chunk = os.read(master, 4096)
-                            output_chunks.append(chunk)
-                        except OSError:
-                            break
-                except Exception:
-                    break
-                if proc.poll() is not None:
-                    try:
-                        while True:
-                            r, _, _ = select.select([master], [], [], 0.2)
-                            if r:
-                                chunk = os.read(master, 4096)
-                                output_chunks.append(chunk)
-                            else:
-                                break
-                    except OSError:
-                        pass
-                    break
-
-            try:
-                proc.wait(timeout=5)
-            except Exception:
-                pass
-
-            raw = b"".join(output_chunks).decode("utf-8", errors="replace")
-            clean = re.sub(r'\x1b\[[0-9;]*[mGKHF]', '', raw)
-            clean = clean.replace('\r\n', '\n').replace('\r', '\n').strip()
-
-            if proc.poll() is None:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                return ""
-
-            return clean
-
-        except Exception as e:
-            logger.error(f"agy pty error ({target_model}): {e}")
-            return ""
-        finally:
-            if master >= 0:
-                try:
-                    os.close(master)
-                except OSError:
-                    pass
-            if proc and proc.poll() is None:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-
     import subprocess
-    result = _run_model(model)
-    if not result and model != "pro":
-        logger.warning(f"agy {model} failed, falling back to pro...")
-        result = _run_model("pro")
-    return result
+
+    target_model = _resolve_agy_model(model)
+    try:
+        result = subprocess.run(
+            [AGENTAPI_BIN, "--model", target_model, "--print", prompt],
+            capture_output=True,
+            text=True,
+            timeout=max(0.1, float(timeout)),
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, TimeoutError):
+        logger.warning("agy/Gemini request timed out")
+        return ""
+    except Exception as exc:
+        logger.warning("agy/Gemini request failed: %s", type(exc).__name__)
+        return ""
+
+    if result.returncode != 0:
+        logger.warning("agy/Gemini exited with status %s", result.returncode)
+        return ""
+    clean = re.sub(r'\x1b\[[0-9;]*[mGKHF]', '', result.stdout or "")
+    return clean.replace('\r\n', '\n').replace('\r', '\n').strip()
 
 
 # ── RPC Cluster (Surface orchestrator + Dell + Pi workers) ────────────────
@@ -666,8 +836,11 @@ def call_local_rpc(
     model_path: str | None = None,
     max_tokens: int = 1024,
     temperature: float = 0.0,
-    timeout: int = 120,
-    allow_cloud: bool = True,
+    timeout: int | float = 120,
+    allow_cloud: bool = False,
+    *,
+    sensitivity: Sensitivity | str = Sensitivity.PERSONAL,
+    cloud_consent: bool = False,
 ) -> str:
     """
     Primary local inference path — tries cluster nodes in order.
@@ -676,7 +849,8 @@ def call_local_rpc(
       1. Surface llama-server (10.0.0.47:8080) — primary, short timeout
       2. Pi Ollama (10.10.10.2:11434) — fast local backup
       3. Dell local Ollama
-      4. Cloud (if allow_cloud=True)
+      4. Cloud only when both ``allow_cloud`` and explicit public-data consent
+         are supplied.  The default is local-only.
 
     Args:
         prompt: The user prompt
@@ -688,82 +862,122 @@ def call_local_rpc(
         allow_cloud: Whether to fallback to cloud if local paths fail.
 
     Returns:
-        Generated text, or empty string/warning if all local paths fail.
+        Generated text, or an empty string if all policy-compliant paths fail.
     """
-    surface_timeout = min(timeout, 45)  # Don't hang on Surface — fall through fast
+    budget = max(0.1, float(timeout))
+    deadline = time.monotonic() + budget
+
+    def remaining() -> float:
+        return max(0.0, deadline - time.monotonic())
+
+    # Cap the Surface attempt so a stall cannot eat the whole shared budget and
+    # starve the Pi/Dell fallbacks below (see config.RPC_SURFACE_TIMEOUT).
+    from config import RPC_SURFACE_TIMEOUT
+
+    surface_timeout = min(remaining(), float(RPC_SURFACE_TIMEOUT))
 
     logger.info("call_local_rpc: trying Surface orchestrator API (10.0.0.47:8080)")
-    result = call_llamacpp_rpc(
-        prompt=prompt,
-        model_path=model_path,
-        system_prompt=system_prompt,
-        max_tokens=max_tokens,
-        timeout=surface_timeout,
-        temperature=temperature
-    )
+    result = ""
+    if surface_timeout > 0:
+        result = call_llamacpp_rpc(
+            prompt=prompt,
+            model_path=model_path,
+            system_prompt=system_prompt,
+            max_tokens=max_tokens,
+            timeout=surface_timeout,
+            temperature=temperature,
+        )
     if result and result.strip():
         logger.info(f"call_local_rpc: Surface API returned {len(result)} chars")
         return result
 
-    logger.info("call_local_rpc: Surface returned empty, trying Pi Ollama (10.10.10.2:11434)")
-    try:
-        from config import OLLAMA_ORANGEPI_URL
-        import httpx
-        with httpx.Client(timeout=httpx.Timeout(connect=3.0, read=float(timeout), write=10.0, pool=5.0)) as client:
-            resp = client.post(
-                f"{OLLAMA_ORANGEPI_URL}/api/generate",
-                json={
-                    "model": "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:latest",
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"num_predict": max_tokens, "temperature": temperature},
-                },
-            )
-            if resp.status_code == 200:
-                text = resp.json().get("response", "").strip()
-                if text:
-                    logger.info(f"call_local_rpc: Pi Ollama returned {len(text)} chars")
-                    return text
-            logger.warning(f"call_local_rpc: Pi Ollama returned empty (HTTP {resp.status_code})")
-    except Exception as e:
-        logger.warning(f"call_local_rpc: Pi Ollama failed: {e}")
+    from config import OLLAMA_LOCAL_URL, OLLAMA_ORANGEPI_URL, RPC_FALLBACK_OLLAMA_MODEL
 
-    logger.info("call_local_rpc: Pi returned empty, trying Dell local")
-    try:
-        from config import OLLAMA_LOCAL_URL, RPC_FALLBACK_OLLAMA_MODEL
-        import httpx
-        with httpx.Client(timeout=httpx.Timeout(connect=3.0, read=float(timeout), write=10.0, pool=5.0)) as client:
-            resp = client.post(
-                f"{OLLAMA_LOCAL_URL}/api/generate",
-                json={
-                    "model": RPC_FALLBACK_OLLAMA_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"num_predict": max_tokens, "temperature": temperature},
-                },
-            )
-            if resp.status_code == 200:
-                text = resp.json().get("response", "").strip()
-                if text:
-                    logger.info(f"call_local_rpc: Dell local returned {len(text)} chars")
-                    return text
-            logger.warning(f"call_local_rpc: Dell local returned empty (HTTP {resp.status_code})")
-    except Exception as e:
-        logger.warning(f"call_local_rpc: Dell local failed: {e}")
+    def _try_ollama(target_url: str, model: str, label: str) -> str:
+        attempt_budget = remaining()
+        if attempt_budget <= 0:
+            return ""
+        logger.info("call_local_rpc: trying %s", label)
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(
+                    connect=min(3.0, attempt_budget), read=attempt_budget,
+                    write=min(10.0, attempt_budget), pool=min(5.0, attempt_budget),
+                )
+            ) as client:
+                resp = client.post(
+                    f"{target_url.rstrip('/')}/api/generate",
+                    json={
+                        "model": model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "options": {"num_predict": max_tokens, "temperature": temperature},
+                    },
+                )
+            if resp.status_code != 200:
+                logger.warning("call_local_rpc: %s returned HTTP %s", label, resp.status_code)
+                return ""
+            payload = resp.json()
+            text = payload.get("response", "") if isinstance(payload, dict) else ""
+            return text.strip() if isinstance(text, str) else ""
+        except Exception as exc:
+            logger.warning("call_local_rpc: %s failed: %s", label, type(exc).__name__)
+            return ""
 
-    if allow_cloud:
-        logger.warning("call_local_rpc: all local paths exhausted, falling back to cloud")
+    result = _try_ollama(
+        OLLAMA_ORANGEPI_URL,
+        "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:latest",
+        "Pi Ollama",
+    )
+    if result:
+        return result
+
+    result = _try_ollama(OLLAMA_LOCAL_URL, RPC_FALLBACK_OLLAMA_MODEL, "Dell Ollama")
+    if result:
+        return result
+
+    if allow_cloud and remaining() > 0:
+        logger.warning("call_local_rpc: local paths exhausted; evaluating cloud policy")
         from config import RPC_FALLBACK_CLOUD_MODEL
         return call_openrouter(
             model=RPC_FALLBACK_CLOUD_MODEL,
             prompt=prompt,
             system_prompt=system_prompt,
             max_tokens=max_tokens,
-            timeout=timeout,
+            timeout=remaining(),
+            sensitivity=sensitivity,
+            cloud_consent=cloud_consent,
         )
 
-    logger.warning("call_local_rpc: all local paths exhausted and allow_cloud=False")
-    return "⚠️ Local inference unavailable and cloud fallback disabled."
+    logger.warning("call_local_rpc: all local paths exhausted; no cloud request made")
+    return ""
+
+
+def call_local_rpc_result(**kwargs) -> InferenceResult:
+    """Typed wrapper around the local cluster fallback chain."""
+
+    # New typed callers are local-only unless they deliberately override both
+    # cloud gates.  This avoids an innocent omission turning into data egress.
+    kwargs.setdefault("allow_cloud", False)
+    try:
+        text = call_local_rpc(**kwargs)
+    except (httpx.TimeoutException, TimeoutError) as exc:
+        return InferenceResult(
+            InferenceStatus.TIMEOUT, provider="local-rpc", detail=str(exc)
+        )
+    except Exception as exc:
+        logger.warning("Local RPC inference failed: %s", type(exc).__name__)
+        return InferenceResult(
+            InferenceStatus.ERROR, provider="local-rpc", detail=type(exc).__name__
+        )
+    if text.strip():
+        return InferenceResult.success(text, provider="local-rpc", model="local-fallback-chain")
+    return InferenceResult(
+        InferenceStatus.UNAVAILABLE,
+        provider="local-rpc",
+        model="local-fallback-chain",
+        detail="All local inference nodes were unavailable",
+    )
 
 
 # ── RPC (llama-server HTTP path — legacy) ───────────────────────────────────
@@ -781,7 +995,7 @@ def call_llamacpp_rpc(
     model_path: str = None,
     system_prompt: str = "",
     max_tokens: int = 4000,
-    timeout: int = 600,
+    timeout: int | float = 600,
     temperature: float = 0.0,
 ) -> str:
     """
@@ -813,11 +1027,15 @@ def call_llamacpp_rpc(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    start = time.time()
+    budget = max(0.1, float(timeout))
+    start = time.monotonic()
     try:
         import httpx
         with httpx.Client(
-            timeout=httpx.Timeout(connect=10.0, read=float(timeout), write=10.0, pool=10.0),
+            timeout=httpx.Timeout(
+                connect=min(10.0, budget), read=budget,
+                write=min(10.0, budget), pool=min(10.0, budget),
+            ),
         ) as client:
             resp = client.post(
                 f"{LLAMACPP_RPC_URL.rstrip('/')}/v1/chat/completions",
@@ -830,8 +1048,16 @@ def call_llamacpp_rpc(
             )
         if resp.status_code == 200:
             data = resp.json()
-            text = data["choices"][0]["message"]["content"].strip()
-            duration = time.time() - start
+            choices = data.get("choices") if isinstance(data, dict) else None
+            if not isinstance(choices, list) or not choices:
+                logger.info("RPC: Surface returned malformed response")
+                return ""
+            message = choices[0].get("message", {})
+            content = message.get("content", "") if isinstance(message, dict) else ""
+            text = content.strip() if isinstance(content, str) else ""
+            if not text:
+                return ""
+            duration = time.monotonic() - start
             tok_est = len(text) // 4
             logger.info(
                 f"RPC inference: {len(text)} chars in {duration:.1f}s "
@@ -845,7 +1071,7 @@ def call_llamacpp_rpc(
             logger.info(f"RPC: Surface HTTP {resp.status_code} (falling back to Pi)")
             return ""
     except httpx.TimeoutException:
-        logger.info(f"RPC: Surface timed out after {timeout}s (falling back to Pi)")
+        logger.info(f"RPC: Surface timed out after {budget:.1f}s (falling back to Pi)")
         return ""
     except Exception as e:
         logger.info(f"RPC: Surface unreachable ({e}) — falling back to Pi")
@@ -1032,7 +1258,10 @@ def call_llamacpp_rpc_with_fallback(
     max_tokens: int = 4000,
     task: str = "overnight",
     timeout: int = 600,
-    skip_cloud_fallback: bool = False,
+    skip_cloud_fallback: bool = True,
+    *,
+    sensitivity: Sensitivity | str = Sensitivity.PERSONAL,
+    cloud_consent: bool = False,
 ) -> str:
     """
     Call Surface orchestrator API with full OOM protection and fallback chain.
@@ -1119,6 +1348,8 @@ def call_llamacpp_rpc_with_fallback(
             max_tokens=max_tokens,
             fallback_chain=[OR_FALLBACK_MODEL],
             timeout=120 if isinstance(timeout, int) else 120,
+            sensitivity=sensitivity,
+            cloud_consent=cloud_consent,
         )
         if result:
             logger.info(f"Cloud fallback: success ({len(result)} chars)")
@@ -1139,6 +1370,9 @@ def call_opencode(
     task: str = "general",
     timeout: int = 120,
     temperature: float = 0.0,
+    *,
+    sensitivity: Sensitivity | str = Sensitivity.PUBLIC,
+    cloud_consent: bool = False,
 ) -> str:
     """
     Call Opencode Zen API — a separate provider from OpenRouter.
@@ -1161,6 +1395,15 @@ def call_opencode(
     Returns:
         Generated text, or empty string on failure.
     """
+    if not _cloud_policy_allows(
+        prompt,
+        system_prompt,
+        sensitivity=sensitivity,
+        cloud_consent=cloud_consent,
+    ):
+        logger.warning("Opencode Zen request blocked by cloud data policy")
+        return ""
+
     if not OPENCODE_ZEN_API_KEY:
         logger.error("Opencode Zen: no API key set (OPENCODE_ZEN_API_KEY)")
         return ""
@@ -1277,6 +1520,9 @@ def call_hackclub(
     task: str = "general",
     timeout: int = 120,
     temperature: float = 0.0,
+    *,
+    sensitivity: Sensitivity | str = Sensitivity.PUBLIC,
+    cloud_consent: bool = False,
 ) -> str:
     """
     Call Hack Club AI (ai.hackclub.com) — an OpenRouter-like shared proxy.
@@ -1301,6 +1547,15 @@ def call_hackclub(
         Generated text, or empty string on failure.
     """
     from config import HACKCLUB_AI_API_KEY, HACKCLUB_AI_BASE_URL
+
+    if not _cloud_policy_allows(
+        prompt,
+        system_prompt,
+        sensitivity=sensitivity,
+        cloud_consent=cloud_consent,
+    ):
+        logger.warning("Hack Club AI request blocked by cloud data policy")
+        return ""
 
     if not HACKCLUB_AI_API_KEY:
         logger.error("Hack Club AI: no API key set (HACKCLUB_AI_API_KEY)")

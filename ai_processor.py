@@ -710,7 +710,7 @@ def assemble_digest(summaries: dict) -> dict:
 
     prompt = DIGEST_ASSEMBLY_PROMPT.format(summaries=summary_text)
     logger.info("Assembling final digest via local inference...")
-    output = _local_inference(prompt, timeout=600, max_tokens=6_000)
+    output = _local_inference(prompt, timeout=600, max_tokens=config.DIGEST_MAX_TOKENS)
 
     # Split tasks JSON and topics JSON from the digest text
     tasks = []
