@@ -81,7 +81,10 @@ DIGEST_ASSEMBLY_PROMPT = (
     "- Never apologize, refuse, say you cannot help, or offer a hypothetical summary.\n"
     "- Start with ⚡ **Needs attention** only when there is an actionable deadline, test, or request.\n"
     "- Then use short emoji section headers only for sources with useful new information: 📚 Canvas, 🏫 Google Classroom, 📢 Announcements, 📧 Gmail, 💬 GroupMe.\n"
-    "- Use at most 3 bullets per section. Summarize announcements; never paste a raw wall of text.\n"
+    "- Include EVERY item that has a date, time, deadline, test, room change, or explicit request — never omit one to stay short.\n"
+    "- Preserve every date, time, day of week and room number exactly as written in the source.\n"
+    "- Keep each bullet to one line, but do not drop items: many short bullets are better than few long ones.\n"
+    "- Merge only true duplicates of the same event.\n"
     "- Exclude 'no updates', stale, informational-only, and error messages.\n"
     "- If nothing needs attention, return exactly: ✅ All caught up — no new actionable updates.\n"
     "- Return Markdown followed by the two required JSON lines below. Do not add commentary after them.\n\n"
@@ -342,37 +345,35 @@ def _local_inference(prompt: str, *, timeout: int, max_tokens: int) -> str:
 # ── Deterministic source compaction ───────────────────────────────────────────
 # High-signal sources bypass LLM summarization (skip_llm_filter=True) so a weak
 # model cannot drop a due date.  The cost is that their raw text lands in the
-# digest prompt verbatim: Classroom announcements alone were 54% of the prompt,
-# and prompt evaluation runs at ~15 tok/s on the RPC cluster, so every wasted
-# character is paid for twice (once here, once in the assembly call).
+# digest prompt verbatim, and prompt evaluation runs at ~15 tok/s on the RPC
+# cluster, so redundant characters are paid for in wall time.
 #
-# Compact them deterministically instead — no inference, so nothing can be lost
-# to a model refusal or timeout, and the result is byte-stable across runs.
+# Compaction is therefore LOSSLESS BY DEFAULT: it removes only redundancy that
+# carries no information (a course name restated on every line, runs of
+# whitespace).  It never truncates announcement bodies, because a truncated tail
+# silently destroys exactly the content the digest exists to surface -- an
+# earlier truncating version cut "class on Friday (7/24)" mid-sentence and lost
+# both the weekday and the date, so that item could never reach the calendar.
+#
+# Truncation is available via ``max_item_chars`` for callers that genuinely need
+# a bounded payload, but no production path sets it.
 
 # ``[Course Name]: text`` — the scraper re-states the course on every line.
 _PREFIXED_ITEM_RE = re.compile(r"^\[([^\]]{1,80})\]:\s*(.*)$")
 
-# Conversational openers that carry no scheduling information.
-_BOILERPLATE_RE = re.compile(
-    r"^(?:hello(?:\s+all)?|hi(?:\s+all)?|hey(?:\s+all)?|good\s+(?:morning|afternoon|evening))"
-    r"[,!.\s]+",
-    re.IGNORECASE,
-)
 
+def _compact_source_text(text: str, *, max_item_chars: int | None = None) -> str:
+    """Remove redundancy from a verbatim source dump without an LLM call.
 
-def _compact_source_text(text: str, *, per_item_chars: int = 220, total_chars: int = 2_000) -> str:
-    """Shrink a verbatim source dump without an LLM call.
+    Lossless by default: hoists a course prefix repeated on every line into a
+    single header and collapses whitespace runs.  Every announcement body is
+    preserved in full, so dates, times and room numbers survive into the digest,
+    Notion tasks and calendar events.
 
-    Hoists a course prefix repeated on every line into a single header, collapses
-    runs of whitespace, trims greeting boilerplate, and applies per-item and
-    total budgets.  Returns ``text`` unchanged when it is already small enough.
-
-    When the total budget is exceeded the per-item budget is tightened first so
-    every item survives in shortened form.  Items are only dropped as a last
-    resort, and the newest are kept: the scrapers emit oldest-first, so trimming
-    the tail would discard the most recent announcement.
+    Pass ``max_item_chars`` to additionally cap each item's length.  That is lossy
+    and off by default -- see the module comment above.
     """
-    if not text or len(text) <= total_chars:
+    if not text or not text.strip():
         return text
 
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -380,7 +381,7 @@ def _compact_source_text(text: str, *, per_item_chars: int = 220, total_chars: i
         return text
 
     header = ""
-    if lines and not _PREFIXED_ITEM_RE.match(lines[0]):
+    if not _PREFIXED_ITEM_RE.match(lines[0]):
         # First line is a section banner ("📢 **... Announcements ...**"), not an item.
         header = lines[0]
         lines = lines[1:]
@@ -398,52 +399,23 @@ def _compact_source_text(text: str, *, per_item_chars: int = 220, total_chars: i
         only = prefixes.pop()
         header = f"{header} [{only}]".strip() if header else f"[{only}]"
 
-    # Normalize once; only the per-item truncation depends on the budget.
-    cleaned: list[tuple[str, str]] = []
+    items: list[str] = []
     for prefix, body in parsed:
-        body = re.sub(r"\s+", " ", body)
-        body = _BOILERPLATE_RE.sub("", body).strip()
-        if body:
-            cleaned.append((prefix, body))
-    if not cleaned:
+        body = re.sub(r"\s+", " ", body).strip()
+        if not body:
+            continue
+        if max_item_chars is not None and len(body) > max_item_chars:
+            window = body[:max_item_chars]
+            cut = max(window.rfind(". "), window.rfind("! "), window.rfind("? "))
+            if cut < max_item_chars // 2:
+                cut = window.rfind(" ")
+            body = (window[:cut] if cut > 0 else window).rstrip(" ,;:") + "…"
+        items.append(f"- {body}" if hoist else f"- [{prefix}] {body}" if prefix else f"- {body}")
+
+    if not items:
         return text
 
-    def render(budget: int) -> str:
-        items = []
-        for prefix, body in cleaned:
-            if len(body) > budget:
-                window = body[:budget]
-                cut = max(window.rfind(". "), window.rfind("! "), window.rfind("? "))
-                if cut < budget // 2:
-                    cut = window.rfind(" ")
-                body = (window[:cut] if cut > 0 else window).rstrip(" ,;:") + "…"
-            items.append(f"- {body}" if hoist else f"- [{prefix}] {body}" if prefix else f"- {body}")
-        return "\n".join(([header] if header else []) + items)
-
-    rendered = render(per_item_chars)
-
-    # Tighten per-item budget before sacrificing whole items.
-    if len(rendered) > total_chars:
-        for budget in (180, 150, 120, 100, 80):
-            rendered = render(budget)
-            if len(rendered) <= total_chars:
-                break
-
-    # Still too long: keep the newest items (end of list) and note the omission.
-    if len(rendered) > total_chars:
-        items = render(80).splitlines()
-        body_items = items[1:] if header else items
-        kept: list[str] = []
-        budget = total_chars - (len(header) + 1 if header else 0) - 40
-        for item in reversed(body_items):
-            if budget - (len(item) + 1) < 0:
-                break
-            kept.insert(0, item)
-            budget -= len(item) + 1
-        dropped = len(body_items) - len(kept)
-        if dropped > 0:
-            kept.insert(0, f"- (+{dropped} older announcement(s) omitted)")
-        rendered = "\n".join(([header] if header else []) + kept)
+    rendered = "\n".join(([header] if header else []) + items)
 
     # Never return something larger than what we started with.
     return rendered if len(rendered) < len(text) else text
