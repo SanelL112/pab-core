@@ -185,11 +185,14 @@ def _extract_marker_payload(text: str, marker: str) -> tuple[Any, str] | None:
         return None
     haystack = _strip_code_fences(text)
 
-    # Accept ``MARKER:``, ``"MARKER":``, and ``'MARKER' :`` alike.
-    pattern = re.compile(rf"[\"']?{re.escape(marker)}[\"']?\s*:", re.IGNORECASE)
+    # Accept ``MARKER:``, ``"MARKER":``, ``'MARKER' :``, and markdown-emphasised
+    # ``**MARKER:**`` alike — the 7B model bolds the marker, the 0.5B quotes it.
+    pattern = re.compile(rf"[*_`\"']*{re.escape(marker)}[*_`\"']*\s*:", re.IGNORECASE)
     for match in pattern.finditer(haystack):
         cursor = match.end()
-        while cursor < len(haystack) and haystack[cursor] in " \t\r\n":
+        # Step over trailing emphasis/whitespace between the colon and the payload
+        # (``**TASKS_JSON:**[...]`` puts the closing asterisks after the colon).
+        while cursor < len(haystack) and haystack[cursor] in " \t\r\n*_`":
             cursor += 1
         if cursor >= len(haystack) or haystack[cursor] not in "[{":
             continue
@@ -303,7 +306,7 @@ def _parse_llm_topics(text: str) -> tuple[list[str], str]:
 def _remove_payload(text: str, marker: str, raw: str) -> str:
     """Strip a marker and its payload from the human-facing digest text."""
     cleaned = text.replace(raw, "")
-    cleaned = re.sub(rf"[\"']?{re.escape(marker)}[\"']?\s*:\s*,?", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(rf"[*_`\"']*{re.escape(marker)}[*_`\"']*\s*:\s*[*_`]*,?", "", cleaned, flags=re.IGNORECASE)
     # Leave no empty fence or dangling brace behind once the payload is gone.
     cleaned = re.sub(r"```(?:json|JSON)?\s*\{?\s*\}?\s*```", "", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
@@ -335,6 +338,116 @@ def _local_inference(prompt: str, *, timeout: int, max_tokens: int) -> str:
 
 
 # ── Per-source processing ─────────────────────────────────────────────────────
+
+# ── Deterministic source compaction ───────────────────────────────────────────
+# High-signal sources bypass LLM summarization (skip_llm_filter=True) so a weak
+# model cannot drop a due date.  The cost is that their raw text lands in the
+# digest prompt verbatim: Classroom announcements alone were 54% of the prompt,
+# and prompt evaluation runs at ~15 tok/s on the RPC cluster, so every wasted
+# character is paid for twice (once here, once in the assembly call).
+#
+# Compact them deterministically instead — no inference, so nothing can be lost
+# to a model refusal or timeout, and the result is byte-stable across runs.
+
+# ``[Course Name]: text`` — the scraper re-states the course on every line.
+_PREFIXED_ITEM_RE = re.compile(r"^\[([^\]]{1,80})\]:\s*(.*)$")
+
+# Conversational openers that carry no scheduling information.
+_BOILERPLATE_RE = re.compile(
+    r"^(?:hello(?:\s+all)?|hi(?:\s+all)?|hey(?:\s+all)?|good\s+(?:morning|afternoon|evening))"
+    r"[,!.\s]+",
+    re.IGNORECASE,
+)
+
+
+def _compact_source_text(text: str, *, per_item_chars: int = 220, total_chars: int = 2_000) -> str:
+    """Shrink a verbatim source dump without an LLM call.
+
+    Hoists a course prefix repeated on every line into a single header, collapses
+    runs of whitespace, trims greeting boilerplate, and applies per-item and
+    total budgets.  Returns ``text`` unchanged when it is already small enough.
+
+    When the total budget is exceeded the per-item budget is tightened first so
+    every item survives in shortened form.  Items are only dropped as a last
+    resort, and the newest are kept: the scrapers emit oldest-first, so trimming
+    the tail would discard the most recent announcement.
+    """
+    if not text or len(text) <= total_chars:
+        return text
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return text
+
+    header = ""
+    if lines and not _PREFIXED_ITEM_RE.match(lines[0]):
+        # First line is a section banner ("📢 **... Announcements ...**"), not an item.
+        header = lines[0]
+        lines = lines[1:]
+
+    parsed: list[tuple[str, str]] = []
+    for line in lines:
+        match = _PREFIXED_ITEM_RE.match(line)
+        parsed.append((match.group(1).strip(), match.group(2).strip()) if match else ("", line))
+
+    # Hoist the prefix only when every item shares it; otherwise keep prefixes so
+    # multi-course output stays attributable.
+    prefixes = {prefix for prefix, _ in parsed if prefix}
+    hoist = len(prefixes) == 1 and all(prefix for prefix, _ in parsed)
+    if hoist:
+        only = prefixes.pop()
+        header = f"{header} [{only}]".strip() if header else f"[{only}]"
+
+    # Normalize once; only the per-item truncation depends on the budget.
+    cleaned: list[tuple[str, str]] = []
+    for prefix, body in parsed:
+        body = re.sub(r"\s+", " ", body)
+        body = _BOILERPLATE_RE.sub("", body).strip()
+        if body:
+            cleaned.append((prefix, body))
+    if not cleaned:
+        return text
+
+    def render(budget: int) -> str:
+        items = []
+        for prefix, body in cleaned:
+            if len(body) > budget:
+                window = body[:budget]
+                cut = max(window.rfind(". "), window.rfind("! "), window.rfind("? "))
+                if cut < budget // 2:
+                    cut = window.rfind(" ")
+                body = (window[:cut] if cut > 0 else window).rstrip(" ,;:") + "…"
+            items.append(f"- {body}" if hoist else f"- [{prefix}] {body}" if prefix else f"- {body}")
+        return "\n".join(([header] if header else []) + items)
+
+    rendered = render(per_item_chars)
+
+    # Tighten per-item budget before sacrificing whole items.
+    if len(rendered) > total_chars:
+        for budget in (180, 150, 120, 100, 80):
+            rendered = render(budget)
+            if len(rendered) <= total_chars:
+                break
+
+    # Still too long: keep the newest items (end of list) and note the omission.
+    if len(rendered) > total_chars:
+        items = render(80).splitlines()
+        body_items = items[1:] if header else items
+        kept: list[str] = []
+        budget = total_chars - (len(header) + 1 if header else 0) - 40
+        for item in reversed(body_items):
+            if budget - (len(item) + 1) < 0:
+                break
+            kept.insert(0, item)
+            budget -= len(item) + 1
+        dropped = len(body_items) - len(kept)
+        if dropped > 0:
+            kept.insert(0, f"- (+{dropped} older announcement(s) omitted)")
+        rendered = "\n".join(([header] if header else []) + kept)
+
+    # Never return something larger than what we started with.
+    return rendered if len(rendered) < len(text) else text
+
 
 def process_source(name: str, data: str, skip_llm_filter: bool = False, force_reprocess: bool = False) -> str:
     """Summarize one private source locally and save a bounded cache entry."""
@@ -379,8 +492,20 @@ def process_source(name: str, data: str, skip_llm_filter: bool = False, force_re
                 return summary
 
     if skip_llm_filter:
-        logger.info(f"Bypassing classification for high-signal source {name} — passing full raw data ({len(data)} chars).")
-        summary = data
+        # High-signal source: no LLM gate, so a weak model cannot drop a due
+        # date.  Compact deterministically rather than pasting the raw dump into
+        # the digest prompt — prompt eval is the dominant cost on the cluster.
+        compacted = _compact_source_text(data)
+        if len(compacted) < len(data):
+            logger.info(
+                "Bypassing classification for high-signal source %s — compacted %d -> %d chars.",
+                name, len(data), len(compacted),
+            )
+        else:
+            logger.info(
+                f"Bypassing classification for high-signal source {name} — passing full raw data ({len(data)} chars)."
+            )
+        summary = compacted
     else:
         # Lightweight classification via agy flash (replaces old Qwen2 0.5B → Llama → agy 3-step chain)
         prompt = (

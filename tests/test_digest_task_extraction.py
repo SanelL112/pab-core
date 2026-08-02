@@ -146,6 +146,56 @@ class TestFieldNormalization:
         assert [t["title"] for t in tasks] == ["Real"]
 
 
+class TestMarkdownEmphasisForm:
+    """The 7B cluster model bolds the marker: ``**TASKS_JSON:**[...]``."""
+
+    def test_bold_marker_with_trailing_emphasis(self):
+        # Verbatim shape from qwen2.5-7b-instruct on the RPC cluster.
+        text = (
+            "⚡ **Needs attention**\n"
+            '**TASKS_JSON:**[{"id":"unknown","title":"Personalized Study Plan",'
+            '"source":"Google Classroom Announcements","course":null,"url":null,'
+            '"due_date":null,"priority":"medium","status":"Not started"}]'
+        )
+        tasks, digest = ai_processor._parse_llm_tasks(text)
+        assert len(tasks) == 1, "bolded marker must not silently yield zero tasks"
+        assert tasks[0]["title"] == "Personalized Study Plan"
+        assert "TASKS_JSON" not in digest
+        assert "Needs attention" in digest
+
+    def test_bold_topics_marker(self):
+        text = '**STUDY_TOPICS_JSON:**["Algebra", "Geometry"]'
+        topics, digest = ai_processor._parse_llm_topics(text)
+        assert topics == ["Algebra", "Geometry"]
+        assert "STUDY_TOPICS_JSON" not in digest
+
+    def test_emphasis_variants(self):
+        for wrapped in (
+            '**TASKS_JSON:**[{"title":"T"}]',
+            '*TASKS_JSON:*[{"title":"T"}]',
+            '__TASKS_JSON:__[{"title":"T"}]',
+            '`TASKS_JSON:`[{"title":"T"}]',
+            '**TASKS_JSON**: [{"title":"T"}]',
+        ):
+            tasks, _ = ai_processor._parse_llm_tasks(wrapped)
+            assert len(tasks) == 1, wrapped
+
+    def test_both_bold_markers_coexist(self):
+        text = (
+            "Digest body.\n"
+            '**STUDY_TOPICS_JSON:**["Limits"]\n'
+            '**TASKS_JSON:**[{"title":"Problem set"}]'
+        )
+        tasks, digest = ai_processor._parse_llm_tasks(text)
+        topics, digest = ai_processor._parse_llm_topics(digest)
+        assert [t["title"] for t in tasks] == ["Problem set"]
+        assert topics == ["Limits"]
+        assert "TASKS_JSON" not in digest
+        assert "STUDY_TOPICS_JSON" not in digest
+        assert "Digest body." in digest
+        assert "[{" not in digest
+
+
 class TestNoPayload:
     def test_absent_marker_returns_empty_and_preserves_text(self):
         text = "Just a normal digest with no machine payload."
