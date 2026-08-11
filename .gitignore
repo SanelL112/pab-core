@@ -30,7 +30,19 @@ backups/
 embedding_data/
 *.npz
 *.jsonl
+*.sqlite3
 
 # Editor swap files
 .*.swp
 *.swp
+
+# --- Generated study/content artifacts (now live in pab-study-content repo) ---
+study_guides/
+knowledge_base/
+offline_archive/
+study_database/
+output/
+*.docx
+mega_index.md
+curated_brain.md
+correlation_graph.json
