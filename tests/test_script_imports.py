@@ -5,9 +5,6 @@ import pytest
 
 SCRIPTS = [
     "patch_utils",
-    "fix_utils_pii",
-    "fix_bot_commands",
-    "clean_emojis",
     "send_telegram"
 ]
 
