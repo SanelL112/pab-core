@@ -1,78 +1,153 @@
-# Personal Assistant Bot (Local AI Ecosystem)
+# pab-core — Personal Assistant Bot
 
-Welcome to the Personal Assistant Bot! This is a highly integrated, intelligent assistant designed to act as an autonomous ecosystem for a home server environment. It seamlessly manages academic data, serves as a continuous knowledge indexer, and provides robust personal assistance directly through Telegram.
+A self-hosted Telegram assistant that helps a high-school student stay on top of
+school. It scrapes coursework from Canvas, Google Classroom and GroupMe, turns it
+into a periodic digest and study material, answers questions in chat, and keeps a
+private calendar of assignments — all while running mostly on local hardware and
+keeping personal data off the cloud wherever possible.
 
-## Core Features
+This is the **application** repo. Two sibling repos hold the rest of the system:
 
-- **Telegram Interface**: Interact with the bot natively through Telegram. Ask questions, run commands, upload images for OCR and homework help, and receive push notifications or daily digests.
-- **3-Tier Security Model for LLM Routing**: A strict privacy-first pipeline ensures sensitive personal data is protected:
-  - **PII Filter**: Every message is scanned by a local `agy flash` model to detect Personally Identifiable Information (PII).
-  - **Local Processing**: Any message containing PII is strictly routed to local LLMs (e.g., Ollama Qwen/Llama, Agy) and never touches the cloud.
-  - **Cloud Processing (OpenRouter)**: Safe, non-sensitive complex queries or academic tasks are routed to OpenRouter models (like Llama 3.3 70B or Nemotron 3 Ultra) for powerful reasoning.
-- **Semantic Retrieval System**: Uses Ollama (`nomic-embed-text`) to build a semantic vector index from all your knowledge sources (study guides, historical data, classroom PDFs). At query time, the bot retrieves the most relevant context using cosine similarity, giving it a deep "memory" of your specific content.
-- **Continuous Knowledge Indexing**: Automatically scrapes data from Google Classroom, Canvas, Google Docs, and Gmail. It can process downloaded Classroom PDFs and OCR handwritten notes to weave them into your overall knowledge base.
-- **Syncthing & Obsidian Integration**: Completely integrated with Syncthing. All generated master study guides and knowledge logs are explicitly saved into a dedicated `study_guides/` folder, which syncs directly into your local Obsidian Vault.
-- **Nightly Delta-Updates**: Every night, the bot runs a pipeline to append new knowledge and daily school topics to your existing massive `.md` textbooks. This append-only "delta" logic prevents token waste and avoids rebuilding huge guides from scratch.
+- **[pab-ops](https://github.com/SanelL112/pab-ops)** — systemd units, health checks, RPC/cluster tooling (infra).
+- **pab-study-content** *(private)* — the generated study guides and knowledge base.
 
-## Architecture & Ecosystem
+---
 
-The system operates across several distinct, asynchronous pipelines:
+## What it actually does
 
-1. **The Telegram Hub (`main.py`)**: The central entry point for the bot. It hosts the `python-telegram-bot` instance, handles commands, routes incoming messages through the PII filter, and manages photo/voice inputs.
-2. **The LLM Router (`llm_router.py`)**: A unified interface that determines whether a prompt should go to a local Ollama instance, a local Agy model, or out to OpenRouter, ensuring the privacy rules are followed.
-3. **The Scrapers (`scrapers/`)**:
-   - `google_scraper.py` & `canvas_scraper.py`: Fetches documents, assignments, emails, and announcements.
-   - `extract_notes.py`: The OCR pipeline for decoding handwritten notes and downloaded PDFs.
-4. **The Nightly Brain (`scrapers/memory_consolidation.py` & `nightly_processor.py`)**: Runs offline in the early hours (e.g., 1:00 AM / 2:00 AM) to process the day's scraped data, update the `curated_brain.md`, run the OCR pipeline, and build the semantic vector index.
-5. **Mega Study Builder (`mega_study_builder.py`)**: A multi-stage pipeline that builds comprehensive, chapter-based textbooks dynamically using web sources and transcripts.
+- **Runs a Telegram bot** you chat with. It answers questions, summarizes your day,
+  and takes quick actions via inline-keyboard buttons.
+- **Scrapes your school data** — Canvas (through a real logged-in Firefox/ClassLink
+  session, not an API token), Google Classroom/Docs, and a GroupMe class group.
+- **Sends a recurring "digest"** (every 4 hours by default) of new assignments,
+  announcements and deadlines.
+- **Builds study guides** from your coursework and indexes them for semantic search.
+- **Keeps a private assignment calendar** you can subscribe to from any CalDAV app.
+- **Routes AI work intelligently** — private data goes to local models (Ollama /
+  llama.cpp RPC cluster); only non-sensitive work is allowed to touch cloud models.
 
-## Data Sources (The Brain)
+## The live system (what's running on the server)
 
-The system doesn't rely on a traditional database. Instead, it uses markdown and JSON files:
-- `knowledge_base/`: Core subject guides.
-- `study_guides/`: Auto-generated ACT/SAT study guides and the `curated_brain.md` file (which syncs to Obsidian).
-- `mega_index.md`: A historical catalog of user data.
-- `scrapers/source_cache/`: Temporary storage for daily scraped digests.
-- `embedding_data/`: The semantic vector index (`embedding_index.npz`) built by Ollama.
+The host runs **five systemd services**. This repo provides the code for four of them
+(the fifth, `llama-rpc`, is infra defined in `pab-ops`):
 
-## Setup Instructions
+| Service | Entry point (in this repo) | Port | Purpose |
+|---|---|---|---|
+| `bot.service` | `main.py` | — | The Telegram bot (main process) |
+| `canvas-browser.service` | `scripts/canvas_browser_daemon.py` | 127.0.0.1:8976 | Persistent logged-in Canvas/ClassLink Firefox session |
+| `pab-dashboard-agent.service` | `scripts/dashboard_agent.py` | 0.0.0.0:8765 | Status dashboard agent |
+| `assignment-caldav.service` | `radicale` (venv) + external config | 0.0.0.0:5232 | Private CalDAV server for assignments |
 
-1. **Prerequisites**:
-   - Python 3.10+
-   - Tesseract OCR (`sudo apt install tesseract-ocr`)
-   - [Ollama](https://ollama.com/) (Must be installed and running on port 11434)
-   - Syncthing configured to point to `/home/sanel/personal-assistant-bot/study_guides/`
+> The systemd unit files themselves live in **pab-ops**. This repo holds the Python
+> those units execute.
 
-2. **Environment Variables**:
-   Create a `.env` file in the root directory:
-   ```env
-   TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-   OPENROUTER_API_KEY=your_openrouter_token
-   # Canvas uses the normal ClassLink session in a persistent Firefox profile.
-   CANVAS_API_URL=https://your-school.instructure.com
-   CANVAS_SSO_ENTRY_URL=https://launchpad.classlink.com/forsyth
-   CLASSLINK_USERNAME=your_classlink_username
-   CLASSLINK_PASSWORD=your_classlink_password
-   ```
+## Quick start (fresh clone)
 
-   Canvas uses one persistent Firefox session rather than a copied browser cookie. With the
-   Firefox desktop available through VNC, start `scripts/canvas_browser_daemon.py` with
-   `DISPLAY=:1` and leave that browser daemon running. It uses the local ClassLink
-   credentials to complete the ordinary ClassLink/ADFS sign-in flow at startup and when
-   Canvas later expires the session. MFA or CAPTCHA screens still require you.
+```bash
+git clone https://github.com/SanelL112/pab-core.git
+cd pab-core
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
 
-   For unattended bot operation, install and enable `scripts/canvas-browser.service`. It
-   creates its own Xvfb display, starts Firefox, and restarts automatically after boot or
-   failure; the bot's Canvas scraper communicates with it over localhost.
+# Configure secrets — copy the example and fill it in
+cp .env.example .env
+$EDITOR .env        # Telegram token, chat id, Notion key, model settings, etc.
 
-3. **Google API Credentials**:
-   Place your `credentials.json` in the root directory to generate a `token.json` file for Google Workspace integration (Classroom, Drive, Gmail).
+# Run the bot
+python main.py
+```
 
-4. **Running the Bot**:
-   The bot is designed to run continuously on a server, typically managed as a systemd service (`bot.service`). Ollama must be running in the background for embedding and local queries.
+You need, at minimum, a `TELEGRAM_BOT_TOKEN` and your `TELEGRAM_CHAT_ID` /
+`TELEGRAM_OWNER_USER_ID` in `.env`. Canvas scraping additionally needs a working
+Firefox profile logged into ClassLink (managed by the canvas-browser daemon).
 
-## Server Constraints & Considerations
+## Configuration
 
-- **Hardware**: Designed for a home server environment (e.g., i5 CPU, ~6GB RAM). Heavy ML tasks (like embedding with Ollama) are run on the CPU and may take time, which is why intensive tasks are scheduled as nightly batch jobs.
-- **Data Privacy**: Always ensure the local routing logic in `main.py` and `llm_router.py` remains intact to prevent accidental PII leakage to cloud providers.
-- **Syncthing Pipeline**: Temporary files or cache data must be saved to `scrapers/source_cache/` rather than `study_guides/` to prevent cluttering the user's Obsidian Vault.
+Everything is driven by environment variables loaded from `.env` via `config.py`.
+`config.py` is the single source of truth — it defines every path, model, timeout,
+and credential the system uses, with sensible defaults. Notable knobs:
+
+- **Telegram:** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_OWNER_USER_ID`
+- **AI routing:** `OR_DEFAULT_MODEL`, `OR_FALLBACK_MODEL`, `OR_THIRD_MODEL`
+  (OpenRouter tiers), `OLLAMA_LOCAL_URL`, `OLLAMA_ORANGEPI_URL`, `PI_CLASSIFIER_URL`,
+  `OPENROUTER_API_KEY`, `HACKCLUB_AI_API_KEY`
+- **Local RPC cluster:** `RPC_SURFACE_TIMEOUT`, `RPC_INFERENCE_TIMEOUT`,
+  `RPC_FALLBACK_CLOUD_MODEL`, `RPC_FALLBACK_OLLAMA_MODEL`
+- **Cadence:** `DIGEST_INTERVAL_SECONDS` (default 14400 = 4h),
+  `WATCHDOG_INTERVAL_SECONDS` (default 1800 = 30m)
+- **Sources:** `NOTION_API_KEY`, `NOTION_DATABASE_ID`, `GROUPME_TOKEN`,
+  `GROUPME_GROUP_ID`, `USE_COMPOSIO`
+
+Secrets are **never committed** — `.env`, `credentials.json`, `token.json`, and
+`state.json` are gitignored.
+
+## Telegram commands
+
+`/start` `/help` `/summary` `/model` `/stats` `/ping` `/server` `/errors`
+`/canvas` `/calendar` `/classroom` `/correlations` `/priority` `/backup`
+`/restore` `/bash`
+
+## Layout
+
+```
+main.py                 Telegram bot entry point (bot.service)
+config.py               Central configuration (all env-driven settings)
+llm_router.py           Unified LLM dispatch: local-first routing + cost tracking
+utils.py                Shared helpers: PII scrubbing, backups, correlation, rotation
+activity_log.py         Structured, privacy-preserving activity log
+ai_processor.py         Per-source local inference passes
+nightly_processor.py    Lossless overnight processing of queued study docs
+practice_grader.py      Automated practice-test grading
+voice_handler.py        Local-only voice transcription
+inline_keyboards.py     Quick-action inline keyboards
+
+bot/                    Telegram-facing layer
+  commands.py             Command handlers
+  ai_bridge.py            Privacy-preserving chat → inference bridge
+  ui.py                   Presentation primitives (progress, rendering, escaping)
+  state.py                Transactional state management
+  storage.py              Durable atomic JSON storage
+  security.py             Authorization boundary (owner-only)
+  runtime.py              Background task tracking
+  dashboard_state.py      Routing state for the status dashboard
+
+scrapers/               Data ingestion + processing ("ingest" layer)
+  canvas_scraper.py       Canvas via authenticated Firefox/ClassLink session
+  canvas_page_extractor.py Canvas HTML → assignments
+  google_scraper.py / composio_fetcher.py  Google sources
+  groupme_scraper.py      GroupMe class group
+  notion_client.py        Notion task hub
+  assignment_calendar.py  Sync assignments → CalDAV + Google Calendar
+  google_docs_calendar.py Google Docs deadlines → approval-gated proposals
+  morning_digest.py       Digest generation
+  mega_study_builder.py   Study-guide builder
+  embedding_indexer.py    Semantic vector index from the knowledge corpus
+  semantic_retrieval.py   Relevant-chunk retrieval over the index
+  batch_results.py        Typed outcomes/validation for unattended batch jobs
+  ...
+
+scripts/                Service entry points + helpers run by this repo's daemons
+tests/                  pytest suite (163 tests)
+docs/archive/           Historical audit/security reports (kept for provenance)
+```
+
+## Tests
+
+```bash
+source venv/bin/activate
+pytest -q          # 163 tests
+```
+
+## Design principles
+
+- **Privacy-first / local-first.** Private data is routed to local models; cloud
+  models are only used for work explicitly classified as non-sensitive. All logging
+  scrubs PII (`utils.scrub_pii`).
+- **Owner-only.** Every Telegram handler passes through an authorization boundary
+  (`bot/security.py`); only the configured owner can drive the bot.
+- **Durability.** State writes are transactional/atomic (`bot/storage.py`,
+  `bot/state.py`) so a crash mid-write can't corrupt state.
+- **Graceful degradation.** The LLM router has a local→local→cloud fallback chain so
+  one dead provider doesn't take the assistant down.
+
+See `ARCHITECTURE.md` for the deep design reasoning and data-flow model.
