@@ -17,3 +17,6 @@ youtube-search-python==1.6.6
 youtube-transcript-api==1.2.4
 pdf2image==1.17.0
 PyPDF2==3.0.1
+radicale>=3,<4
+bcrypt>=4,<6
+aiohttp>=3.9

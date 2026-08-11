@@ -14,6 +14,8 @@ Start:  python3 pi_classifier_server.py   (listens on 0.0.0.0:8080)
 
 import asyncio
 import logging
+import os
+import secrets
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -24,10 +26,19 @@ from aiohttp import web
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger("pi-classifier")
 
-OLLAMA_URL = "http://localhost:11434"
-MODEL = "qwen2:0.5b"
+OLLAMA_URL = os.getenv("PI_CLASSIFIER_OLLAMA_URL", "http://localhost:11434")
+# Real Ollama tag on the Pi. The short "qwen2:0.5b" name does NOT exist unless an
+# alias is created (`ollama cp`), so default to the actual pulled tag to avoid the
+# silent per-request Ollama 404 that returned classification=ERROR for every item.
+MODEL = os.getenv("PI_CLASSIFIER_MODEL", "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:latest")
 MAX_CONCURRENT = 4
 TIMEOUT = 60
+HOST = os.getenv("PI_CLASSIFIER_HOST", "127.0.0.1")
+PORT = int(os.getenv("PI_CLASSIFIER_PORT", "8080"))
+TOKEN = os.getenv("PI_CLASSIFIER_TOKEN", "")
+MAX_REQUEST_BYTES = 256 * 1024
+MAX_BATCH_ITEMS = 50
+MAX_ITEM_TEXT_CHARS = 2_000
 
 # ── Classification categories ───────────────────────────────────────────────
 CATEGORIES = [
@@ -102,7 +113,7 @@ class PiClassifierServer:
             start = datetime.now()
             item_id = item.get("id", "?")
             source = item.get("source", "unknown")
-            text = item.get("text", "")[:2000]
+            text = str(item.get("text", ""))[:MAX_ITEM_TEXT_CHARS]
 
             cats = ", ".join(CATEGORIES)
             prompt = (
@@ -146,8 +157,8 @@ class PiClassifierServer:
                     "latency_ms": latency_ms,
                 }
 
-            except Exception as e:
-                logger.error(f"Classification failed for item {item_id}: {e}")
+            except Exception as exc:
+                logger.warning("Classification failed for item %s (%s).", item_id, type(exc).__name__)
                 self.stats["errors"] += 1
                 return {
                     "id": item_id,
@@ -156,7 +167,7 @@ class PiClassifierServer:
                     "confidence": 0.0,
                     "tokens": 0,
                     "latency_ms": int((datetime.now() - start).total_seconds() * 1000),
-                    "error": str(e)[:100],
+                    "error": "classification failed",
                 }
 
     @staticmethod
@@ -180,9 +191,32 @@ class PiClassifierServer:
 SERVER: PiClassifierServer | None = None
 
 
+def _is_loopback_bind(host: str) -> bool:
+    return host in {"127.0.0.1", "::1", "localhost"}
+
+
+def _authorized(request: web.Request) -> bool:
+    """Loopback is trusted; any configured token is required for remote use."""
+    if not TOKEN:
+        return _is_loopback_bind(HOST)
+    header = request.headers.get("Authorization", "")
+    return header.startswith("Bearer ") and secrets.compare_digest(header[7:], TOKEN)
+
+
 async def classify_handler(request: web.Request) -> web.Response:
-    data = await request.json()
+    if not _authorized(request):
+        raise web.HTTPUnauthorized(text="Unauthorized")
+    try:
+        data = await request.json()
+    except (ValueError, web.HTTPRequestEntityTooLarge):
+        raise web.HTTPBadRequest(text="Invalid JSON request")
     items = data if isinstance(data, list) else [data]
+    if not 1 <= len(items) <= MAX_BATCH_ITEMS or not all(isinstance(item, dict) for item in items):
+        raise web.HTTPBadRequest(text="Expected 1 to 50 JSON objects")
+    for item in items:
+        text = item.get("text", "")
+        if not isinstance(text, str) or len(text) > MAX_ITEM_TEXT_CHARS:
+            raise web.HTTPBadRequest(text="Each item text must be at most 2000 characters")
 
     if SERVER:
         SERVER.stats["total_requests"] += 1
@@ -195,12 +229,15 @@ async def classify_handler(request: web.Request) -> web.Response:
         if isinstance(r, dict):
             safe_results.append(r)
         else:
-            safe_results.append({"error": str(r)[:200]})
+            logger.warning("Unexpected classifier task failure (%s).", type(r).__name__)
+            safe_results.append({"error": "classification failed"})
 
     return web.json_response(safe_results)
 
 
 async def health_handler(request: web.Request) -> web.Response:
+    if not _authorized(request):
+        raise web.HTTPUnauthorized(text="Unauthorized")
     return web.json_response({
         "status": "ok",
         "model": MODEL,
@@ -216,6 +253,8 @@ async def health_handler(request: web.Request) -> web.Response:
 
 async def metrics_handler(request: web.Request) -> web.Response:
     """Prometheus-style metrics endpoint."""
+    if not _authorized(request):
+        raise web.HTTPUnauthorized(text="Unauthorized")
     if not SERVER:
         return web.Response(text="", content_type="text/plain")
 
@@ -241,7 +280,7 @@ async def create_app() -> web.Application:
     global SERVER
     SERVER = PiClassifierServer()
 
-    app = web.Application()
+    app = web.Application(client_max_size=MAX_REQUEST_BYTES)
     app.router.add_post("/classify", classify_handler)
     app.router.add_get("/health", health_handler)
     app.router.add_get("/metrics", metrics_handler)
@@ -252,4 +291,6 @@ async def create_app() -> web.Application:
 
 
 if __name__ == "__main__":
-    web.run_app(create_app(), host="0.0.0.0", port=8080)
+    if not _is_loopback_bind(HOST) and not TOKEN:
+        raise SystemExit("PI_CLASSIFIER_TOKEN is required when binding beyond loopback")
+    web.run_app(create_app(), host=HOST, port=PORT)
