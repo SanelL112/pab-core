@@ -1,0 +1,22 @@
+[Unit]
+Description=Read-only homelab node telemetry agent
+After=network-online.target tailscale-online.target
+Wants=network-online.target tailscale-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+EnvironmentFile=/etc/node-telemetry-agent.env
+ExecStart=/usr/bin/python3 /opt/node-telemetry/node_telemetry_agent.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

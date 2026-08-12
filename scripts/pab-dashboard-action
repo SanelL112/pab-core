@@ -1,0 +1,13 @@
+#!/bin/sh
+# Install root-owned at /usr/local/libexec/pab-dashboard-action (0750).
+# This is deliberately the only privileged interface used by dashboard_agent.py.
+set -eu
+case "${1:-}" in
+  bot-start) exec /bin/systemctl start bot.service ;;
+  bot-stop) exec /bin/systemctl stop bot.service ;;
+  bot-restart) exec /bin/systemctl restart bot.service ;;
+  health-check) exec /bin/systemctl start bot-health.service ;;
+  daily-digest) exec /usr/bin/systemd-run --unit=pab-dashboard-digest --collect --uid=sanel --property=WorkingDirectory=/home/sanel/personal-assistant-bot-release /home/sanel/personal-assistant-bot/venv/bin/python scripts/generate_daily_digest.py ;;
+  caldav-restart) exec /bin/systemctl restart assignment-caldav.service ;;
+  *) echo "unsupported dashboard action" >&2; exit 64 ;;
+esac

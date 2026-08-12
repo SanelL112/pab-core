@@ -1,0 +1,27 @@
+[Unit]
+Description=Private assignment CalDAV server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sanel
+WorkingDirectory=/home/sanel/personal-assistant-bot
+Environment=HOME=/home/sanel
+ExecStart=/home/sanel/personal-assistant-bot/venv/bin/radicale --config /home/sanel/.config/personal-assistant-bot/radicale-assignment-calendar.conf
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
