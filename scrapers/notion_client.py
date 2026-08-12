@@ -34,20 +34,68 @@ class _RateLimiter:
             _time.sleep(sleep_time)
 
 _notion_limiter = _RateLimiter()
+NOTION_MAX_RETRIES = 3
+NOTION_CONNECT_TIMEOUT_SECONDS = 5
+NOTION_READ_TIMEOUT_SECONDS = 20
+NOTION_MAX_RETRY_AFTER_SECONDS = 30
 
 
 def _rate_limited_request(method, url, **kwargs):
-    """Make a rate-limited HTTP request."""
-    _notion_limiter.wait()
-    resp = requests.request(method, url, **kwargs)
-    # Retry on 429
-    if resp.status_code == 429:
-        retry_after = float(resp.headers.get("Retry-After", 1.0))
-        logger.warning(f"Notion rate limited, waiting {retry_after}s")
-        _time.sleep(retry_after)
+    """Make a bounded, rate-limited request without retrying unsafe creates.
+
+    Page creation uses a read-before-write dedupe check, but a transport retry
+    after an ambiguous POST could still create a duplicate.  Therefore only
+    queries, reads, and idempotent PATCH requests retry on network/5xx errors.
+    """
+    method = str(method).upper()
+    timeout = kwargs.get("timeout", NOTION_READ_TIMEOUT_SECONDS)
+    if isinstance(timeout, tuple):
+        connect_timeout, read_timeout = timeout
+    else:
+        read_timeout = max(1, min(float(timeout), NOTION_READ_TIMEOUT_SECONDS))
+        connect_timeout = min(NOTION_CONNECT_TIMEOUT_SECONDS, read_timeout)
+    kwargs["timeout"] = (connect_timeout, read_timeout)
+    retryable = method in {"GET", "PATCH"} or (method == "POST" and str(url).rstrip("/").endswith("/query"))
+
+    for attempt in range(NOTION_MAX_RETRIES):
         _notion_limiter.wait()
-        resp = requests.request(method, url, **kwargs)
-    return resp
+        try:
+            response = requests.request(method, url, **kwargs)
+        except requests.RequestException as exc:
+            if not retryable or attempt == NOTION_MAX_RETRIES - 1:
+                raise RuntimeError("Notion request failed") from exc
+            delay = min(2 ** attempt, NOTION_MAX_RETRY_AFTER_SECONDS)
+            logger.warning("Notion request transport failure (%s); retrying once bounded.", type(exc).__name__)
+            _time.sleep(delay)
+            continue
+
+        if response.status_code == 429:
+            try:
+                delay = float(response.headers.get("Retry-After", "1"))
+            except (TypeError, ValueError):
+                delay = 1.0
+            delay = max(0.0, min(delay, NOTION_MAX_RETRY_AFTER_SECONDS))
+            if attempt < NOTION_MAX_RETRIES - 1:
+                logger.warning("Notion rate limited; retrying after bounded delay.")
+                _time.sleep(delay)
+                continue
+        if 500 <= response.status_code < 600 and retryable and attempt < NOTION_MAX_RETRIES - 1:
+            logger.warning("Notion service error; retrying idempotent request.")
+            _time.sleep(min(2 ** attempt, NOTION_MAX_RETRY_AFTER_SECONDS))
+            continue
+        return response
+    raise RuntimeError("Notion request retry budget exhausted")
+
+
+def _json_object(response: requests.Response) -> dict[str, Any]:
+    """Reject malformed/provider-unexpected JSON before business logic uses it."""
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Notion returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Notion returned an unexpected JSON payload")
+    return payload
 OWNER_ID = "2f9d872b-594c-8115-84a6-00028eb47924"     # Sanel Lathiya
 
 # Schema reference (read-only formula fields, do NOT set these):
@@ -137,7 +185,7 @@ def get_task_tracker_schema(*, force_refresh: bool = False) -> dict[str, Any]:
             timeout=15,
         )
         response.raise_for_status()
-        properties = response.json().get("properties", {})
+        properties = _json_object(response).get("properties", {})
         with _schema_cache_lock:
             _schema_cache.update({"expires_at": now + 300, "properties": properties})
         return dict(properties)
@@ -190,7 +238,7 @@ def task_exists(title: str, headers: dict, fuzzy: bool = True) -> bool:
     try:
         res = _rate_limited_request("POST", query_url, headers=headers, json=exact_payload, timeout=10)
         res.raise_for_status()
-        if len(res.json().get("results", [])) > 0:
+        if len(_json_object(res).get("results", [])) > 0:
             logger.info(f"Task '{title}' already exists (exact match). Skipping.")
             return True
     except Exception as e:
@@ -207,7 +255,7 @@ def task_exists(title: str, headers: dict, fuzzy: bool = True) -> bool:
     try:
         res = _rate_limited_request("POST", query_url, headers=headers, json=fuzzy_payload, timeout=10)
         res.raise_for_status()
-        results = res.json().get("results", [])
+        results = _json_object(res).get("results", [])
 
         import difflib
         for r in results:
@@ -344,13 +392,11 @@ def add_task_to_notion(
             timeout=15,
         )
         res.raise_for_status()
-        page_id = res.json().get("id")
+        page_id = _json_object(res).get("id")
         logger.info(f"Pushed to Notion Tracker: {title} (ID: {page_id})")
         return page_id
     except Exception as e:
         logger.error(f"Failed to push to Notion: {e}")
-        if "res" in locals():
-            logger.error(res.text[:500])
         return None
 
 def update_notion_task(page_id: str, priority: str = None, status: str = None, start_value: float = None, end_value: float = None):
@@ -425,7 +471,7 @@ def find_stale_tasks(max_age_days: int = 60, overdue_days: int = 7) -> list[dict
         try:
             response = _rate_limited_request("POST", query_url, headers=headers, json=page_payload, timeout=15)
             response.raise_for_status()
-            data = response.json()
+            data = _json_object(response)
         except Exception as exc:
             logger.error("Failed to query Notion for stale tasks: %s", exc)
             return stale
@@ -459,6 +505,74 @@ def find_stale_tasks(max_age_days: int = 60, overdue_days: int = 7) -> list[dict
             break
 
     return stale
+
+
+def get_calendar_tasks() -> list[dict[str, Any]]:
+    """Return active due-dated Notion tasks for calendar review.
+
+    These are intentionally non-official records. The calendar service keeps
+    them behind a Telegram approval proposal, unlike Canvas/Classroom work.
+    """
+    if not NOTION_API_KEY or NOTION_API_KEY == "your_notion_api_key":
+        return []
+    schema = get_task_tracker_schema()
+    query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+    # Include completed rows so an already-approved calendar item can be
+    # relabelled and have its reminders removed when Notion marks it Done.
+    payload: dict[str, Any] = {"page_size": 100}
+    cursor: str | None = None
+    result: list[dict[str, Any]] = []
+    while True:
+        request_payload = dict(payload)
+        if cursor:
+            request_payload["start_cursor"] = cursor
+        try:
+            response = _rate_limited_request("POST", query_url, headers=_notion_headers(), json=request_payload, timeout=15)
+            response.raise_for_status()
+            body = _json_object(response)
+        except Exception as exc:
+            logger.warning("Could not load Notion tasks for calendar review: %s", exc)
+            return result
+        for page in body.get("results", []):
+            props = page.get("properties", {})
+            due = (props.get("Due date", {}).get("date") or {}).get("start")
+            title_parts = props.get("Task name", {}).get("title", [])
+            title = title_parts[0].get("plain_text", "") if title_parts else ""
+            if not due or not title:
+                continue
+            source = "Notion"
+            course = "Notion"
+            task_type = "Other"
+            url = None
+            if schema:
+                source_parts = props.get("Source", {}).get("select") or {}
+                source = source_parts.get("name") or source
+                course_parts = props.get("Course", {}).get("rich_text", [])
+                course = course_parts[0].get("plain_text", "") if course_parts else course
+                type_parts = props.get("Task type", {}).get("select") or {}
+                task_type = type_parts.get("name") or task_type
+                url = props.get("Link", {}).get("url")
+            status = (props.get("Status", {}).get("status") or {}).get("name") or "Not started"
+            item = {
+                "id": page.get("id"),
+                "title": title,
+                "course": course,
+                "url": url,
+                "task_type": task_type,
+                "status": status,
+                "official": False,
+            }
+            if "T" in str(due):
+                item["due_at"] = due
+            else:
+                item["due_date"] = due
+            result.append(item)
+        if not body.get("has_more"):
+            break
+        cursor = body.get("next_cursor")
+        if not cursor:
+            break
+    return result
 
 
 def archive_stale_tasks(

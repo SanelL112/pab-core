@@ -5,11 +5,12 @@ Runs as part of the 1 AM nightly pipeline (after Ollama is already awake).
 Uses Ollama's nomic-embed-text model to embed text chunks, then saves
 the index as a compressed numpy archive.
 
-Index structure (embedding_index.npz):
-  - vectors:  float32 array, shape (n_chunks, dim)
-  - chunks:   list of text strings
-  - sources:  list of source file paths
-  - checksums: list of md5 hashes for incremental re-indexing
+Index structure:
+  - embedding_index.npz: float32 vectors plus non-object generation identifiers
+  - embedding_metadata.json: chunks, sources, schema/model fingerprint
+  - manifest.json: source checksums for incremental re-indexing
+
+Metadata is deliberately JSON rather than pickled NumPy object arrays.
 """
 
 import os
@@ -18,7 +19,10 @@ import glob
 import hashlib
 import logging
 import asyncio
+import shutil
+import tempfile
 import time
+import uuid
 
 import httpx
 import numpy as np
@@ -26,8 +30,11 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-INDEX_DIR = os.path.join(BASE_DIR, "embedding_data")
+from config import STATE_DIR
+
+INDEX_DIR = os.path.join(STATE_DIR, "embedding_data")
 INDEX_PATH = os.path.join(INDEX_DIR, "embedding_index.npz")
+METADATA_PATH = os.path.join(INDEX_DIR, "embedding_metadata.json")
 MANIFEST_PATH = os.path.join(INDEX_DIR, "manifest.json")
 
 # Use local Ollama (has nomic-embed-text, works without Orange Pi)
@@ -39,6 +46,12 @@ CHUNK_SIZE = 1000  # tokens (approximate: 1 token ~ 4 chars, so ~4000 chars)
 CHUNK_OVERLAP = 200  # tokens overlap between chunks (~800 chars)
 BATCH_SIZE = 4  # embed this many chunks per API call (small for slow CPU)
 DIM = 768  # nomic-embed-text dimensionality
+INDEX_SCHEMA_VERSION = 2
+MAX_INDEX_BYTES = 512 * 1024 * 1024
+MAX_METADATA_BYTES = 64 * 1024 * 1024
+MODEL_FINGERPRINT = hashlib.sha256(
+    f"{INDEX_SCHEMA_VERSION}:{EMBED_MODEL}:{DIM}".encode("utf-8")
+).hexdigest()
 
 
 # ── Text chunking ──────────────────────────────────────────────────────────────
@@ -194,7 +207,9 @@ async def ensure_model():
 
 
 async def embed_texts(texts: list[str]) -> np.ndarray:
-    """Embed a list of texts via Ollama. Returns float32 array of shape (len(texts), DIM)."""
+    """Embed texts via Ollama or raise without manufacturing fake vectors."""
+    if not texts:
+        return np.empty((0, DIM), dtype=np.float32)
     all_embeddings = []
 
     # Use shared async client for connection pooling
@@ -216,9 +231,16 @@ async def embed_texts(texts: list[str]) -> np.ndarray:
                     raise RuntimeError(f"Embedding failed: {resp.status_code} {resp.text[:200]}")
 
                 data = resp.json()
-                embeddings = data.get("embeddings", [])
-                if not embeddings:
-                    raise RuntimeError(f"No embeddings returned for batch at index {i}")
+                embeddings = np.asarray(data.get("embeddings", []), dtype=np.float32)
+                if embeddings.shape != (len(batch), DIM):
+                    raise RuntimeError(
+                        f"Invalid embedding shape for batch {i // BATCH_SIZE}: "
+                        f"expected {(len(batch), DIM)}, got {embeddings.shape}"
+                    )
+                if not np.isfinite(embeddings).all():
+                    raise RuntimeError(f"Non-finite embedding returned for batch {i // BATCH_SIZE}")
+                if np.any(np.linalg.norm(embeddings, axis=1) == 0):
+                    raise RuntimeError(f"Zero embedding returned for batch {i // BATCH_SIZE}")
                 all_embeddings.extend(embeddings)
                 break  # success
             except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.HTTPStatusError) as e:
@@ -226,21 +248,27 @@ async def embed_texts(texts: list[str]) -> np.ndarray:
                     logger.warning(f"Timeout on batch {i//BATCH_SIZE} (attempt {attempt+1}/3): {type(e).__name__}, retrying...")
                     await asyncio.sleep(5)
                 else:
-                    logger.error(f"Batch {i//BATCH_SIZE} failed after 3 attempts, using zero vectors: {type(e).__name__}: {e}")
-                    all_embeddings.extend([[0.0] * DIM for _ in range(len(batch))])
+                    raise RuntimeError(
+                        f"Embedding batch {i // BATCH_SIZE} failed after 3 attempts"
+                    ) from e
             except Exception as e:
                 logger.error(f"Unexpected error on batch {i//BATCH_SIZE}: {type(e).__name__}: {e}")
                 if attempt < 2:
                     await asyncio.sleep(5)
                 else:
-                    logger.error(f"Batch {i//BATCH_SIZE} failed after 3 attempts, using zero vectors: {type(e).__name__}: {e}")
-                    all_embeddings.extend([[0.0] * DIM for _ in range(len(batch))])
-                    break
+                    raise RuntimeError(
+                        f"Embedding batch {i // BATCH_SIZE} failed after 3 attempts"
+                    ) from e
 
         if i + BATCH_SIZE < len(texts):
             logger.info(f"  Embedded {i + len(batch)}/{len(texts)} chunks...")
 
-    return np.array(all_embeddings, dtype=np.float32)
+    result = np.asarray(all_embeddings, dtype=np.float32)
+    if result.shape != (len(texts), DIM) or not np.isfinite(result).all():
+        raise RuntimeError(
+            f"Embedding result validation failed: expected {(len(texts), DIM)}, got {result.shape}"
+        )
+    return result
 
 
 # ── Incremental indexing ────────────────────────────────────────────────────────
@@ -248,25 +276,200 @@ async def embed_texts(texts: list[str]) -> np.ndarray:
 def load_manifest() -> dict:
     """Load the manifest tracking source paths -> md5 checksums."""
     if os.path.exists(MANIFEST_PATH):
-        with open(MANIFEST_PATH, "r") as f:
-            return json.load(f)
+        try:
+            with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            if (
+                isinstance(manifest, dict)
+                and manifest.get("model_fingerprint") == MODEL_FINGERPRINT
+                and isinstance(manifest.get("sources"), dict)
+            ):
+                return manifest
+        except (OSError, json.JSONDecodeError, TypeError):
+            logger.warning("Embedding manifest is invalid; a safe rebuild will be used")
     return {"sources": {}}
 
 
-def save_manifest(manifest: dict):
-    with open(MANIFEST_PATH, "w") as f:
-        json.dump(manifest, f, indent=2)
+def _atomic_write_json(path: str, payload: dict) -> None:
+    parent = os.path.dirname(path)
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    fd, temporary_path = tempfile.mkstemp(prefix=".tmp-", suffix=".json", dir=parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+        os.chmod(path, 0o600)
+    except Exception:
+        try:
+            os.unlink(temporary_path)
+        except OSError:
+            pass
+        raise
+
+
+def save_manifest(manifest: dict) -> None:
+    _atomic_write_json(MANIFEST_PATH, manifest)
+
+
+def _read_metadata(path: str = METADATA_PATH) -> dict:
+    if not os.path.exists(path) or os.path.getsize(path) > MAX_METADATA_BYTES:
+        raise ValueError("embedding metadata is missing or too large")
+    with open(path, "r", encoding="utf-8") as stream:
+        metadata = json.load(stream)
+    if not isinstance(metadata, dict):
+        raise ValueError("embedding metadata must be an object")
+    return metadata
+
+
+def _validate_loaded_index(
+    vectors: np.ndarray,
+    metadata: dict,
+    generation_id: str,
+    model_fingerprint: str,
+) -> tuple[np.ndarray, list[str], list[str]]:
+    chunks = metadata.get("chunks")
+    sources = metadata.get("sources")
+    if metadata.get("schema_version") != INDEX_SCHEMA_VERSION:
+        raise ValueError("unsupported embedding index schema")
+    if metadata.get("model_fingerprint") != MODEL_FINGERPRINT:
+        raise ValueError("embedding model fingerprint changed")
+    if model_fingerprint != MODEL_FINGERPRINT:
+        raise ValueError("vector archive model fingerprint mismatch")
+    if metadata.get("generation_id") != generation_id:
+        raise ValueError("embedding vector/metadata generation mismatch")
+    if metadata.get("dimension") != DIM:
+        raise ValueError("embedding dimension metadata mismatch")
+    if not isinstance(chunks, list) or not all(isinstance(item, str) for item in chunks):
+        raise ValueError("embedding chunks metadata is invalid")
+    if not isinstance(sources, list) or not all(isinstance(item, str) for item in sources):
+        raise ValueError("embedding sources metadata is invalid")
+    if vectors.dtype != np.float32 or vectors.ndim != 2 or vectors.shape[1:] != (DIM,):
+        raise ValueError(f"embedding vectors have invalid dtype/shape: {vectors.dtype} {vectors.shape}")
+    if vectors.shape[0] != len(chunks) or len(chunks) != len(sources):
+        raise ValueError("embedding vectors/chunks/sources counts differ")
+    if not np.isfinite(vectors).all():
+        raise ValueError("embedding vectors contain NaN or infinity")
+    if len(vectors) and np.any(np.linalg.norm(vectors, axis=1) == 0):
+        raise ValueError("embedding vectors contain a zero row")
+    return vectors, chunks, sources
 
 
 def load_existing_index() -> tuple[np.ndarray | None, list[str], list[str]]:
-    """Load existing index. Returns (vectors, chunks, sources) or (None, [], [])."""
-    if not os.path.exists(INDEX_PATH):
+    """Load a schema-v2 index without pickle; legacy archives are rebuilt."""
+    if not os.path.exists(INDEX_PATH) or not os.path.exists(METADATA_PATH):
+        if os.path.exists(INDEX_PATH):
+            logger.warning("Legacy embedding archive detected; refusing pickle metadata and rebuilding")
         return None, [], []
-    data = np.load(INDEX_PATH, allow_pickle=True)
-    vectors = data.get("vectors")
-    chunks = data.get("chunks", []).tolist()
-    sources = data.get("sources", []).tolist()
-    return vectors, chunks, sources
+    try:
+        if os.path.getsize(INDEX_PATH) > MAX_INDEX_BYTES:
+            raise ValueError("embedding archive exceeds size limit")
+        metadata = _read_metadata()
+        with np.load(INDEX_PATH, allow_pickle=False) as data:
+            if "vectors" not in data or "generation_id" not in data or "model_fingerprint" not in data:
+                raise ValueError("embedding archive is missing required arrays")
+            vectors = np.asarray(data["vectors"])
+            generation_id = str(np.asarray(data["generation_id"]).item())
+            model_fingerprint = str(np.asarray(data["model_fingerprint"]).item())
+        return _validate_loaded_index(vectors, metadata, generation_id, model_fingerprint)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        logger.warning("Existing embedding index rejected; rebuilding safely: %s", exc)
+        return None, [], []
+
+
+def _stage_index(vectors: np.ndarray, chunks: list[str], sources: list[str]) -> tuple[str, str]:
+    """Write and re-read a complete generation before it can replace live data."""
+    generation_id = uuid.uuid4().hex
+    metadata = {
+        "schema_version": INDEX_SCHEMA_VERSION,
+        "generation_id": generation_id,
+        "model": EMBED_MODEL,
+        "model_fingerprint": MODEL_FINGERPRINT,
+        "dimension": DIM,
+        "chunks": chunks,
+        "sources": sources,
+    }
+    os.makedirs(INDEX_DIR, mode=0o700, exist_ok=True)
+    vector_fd, vector_path = tempfile.mkstemp(prefix=".tmp-index-", suffix=".npz", dir=INDEX_DIR)
+    os.close(vector_fd)
+    metadata_fd, metadata_path = tempfile.mkstemp(prefix=".tmp-metadata-", suffix=".json", dir=INDEX_DIR)
+    os.close(metadata_fd)
+    try:
+        with open(vector_path, "wb") as stream:
+            np.savez_compressed(
+                stream,
+                vectors=vectors,
+                generation_id=np.asarray(generation_id),
+                model_fingerprint=np.asarray(MODEL_FINGERPRINT),
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(vector_path, 0o600)
+        with open(metadata_path, "w", encoding="utf-8") as stream:
+            json.dump(metadata, stream, ensure_ascii=False, separators=(",", ":"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(metadata_path, 0o600)
+
+        staged_metadata = _read_metadata(metadata_path)
+        with np.load(vector_path, allow_pickle=False) as staged:
+            staged_vectors = np.asarray(staged["vectors"])
+            staged_generation = str(np.asarray(staged["generation_id"]).item())
+            staged_fingerprint = str(np.asarray(staged["model_fingerprint"]).item())
+        _validate_loaded_index(
+            staged_vectors,
+            staged_metadata,
+            staged_generation,
+            staged_fingerprint,
+        )
+        return vector_path, metadata_path
+    except Exception:
+        for path in (vector_path, metadata_path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        raise
+
+
+def _publish_staged_index(vector_path: str, metadata_path: str) -> None:
+    """Publish only a fully validated generation, leaving failures untouched."""
+    backups: dict[str, str] = {}
+    published: set[str] = set()
+    try:
+        for live_path in (INDEX_PATH, METADATA_PATH):
+            if os.path.exists(live_path):
+                backup_fd, backup_path = tempfile.mkstemp(
+                    prefix=".previous-", dir=INDEX_DIR
+                )
+                os.close(backup_fd)
+                shutil.copy2(live_path, backup_path)
+                backups[live_path] = backup_path
+        os.replace(vector_path, INDEX_PATH)
+        published.add(INDEX_PATH)
+        os.replace(metadata_path, METADATA_PATH)
+        published.add(METADATA_PATH)
+        os.chmod(INDEX_PATH, 0o600)
+        os.chmod(METADATA_PATH, 0o600)
+    except Exception:
+        for live_path in published:
+            backup_path = backups.get(live_path)
+            if backup_path and os.path.exists(backup_path):
+                os.replace(backup_path, live_path)
+            else:
+                try:
+                    os.unlink(live_path)
+                except OSError:
+                    pass
+        raise
+    finally:
+        for path in (vector_path, metadata_path, *backups.values()):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
@@ -289,7 +492,10 @@ async def build_index(force_rebuild: bool = False):
         logger.error("Ollama is not running at localhost:11434. Start it first.")
         return False
 
-    await ensure_model()
+    try:
+        await ensure_model()
+    except Exception:
+        return False
 
     # Collect all sources
     sources = collect_sources()
@@ -348,7 +554,11 @@ async def build_index(force_rebuild: bool = False):
         texts = [c["text"] for c in all_new_chunks]
         logger.info(f"Embedding {len(texts)} new chunks via {EMBED_MODEL}...")
         start = time.time()
-        new_vectors = await embed_texts(texts)
+        try:
+            new_vectors = await embed_texts(texts)
+        except Exception as exc:
+            logger.error("Embedding failed; preserving the last good index: %s", exc)
+            return False
         elapsed = time.time() - start
         logger.info(f"Embedded {len(texts)} chunks in {elapsed:.1f}s ({len(texts)/elapsed:.1f} chunks/sec)")
 
@@ -372,20 +582,36 @@ async def build_index(force_rebuild: bool = False):
         final_sources = kept_sources
 
     logger.info(f"Final index: {len(final_chunks)} chunks, {final_vectors.shape}")
-
-    # Save
-    np.savez_compressed(
-        INDEX_PATH,
-        vectors=final_vectors,
-        chunks=np.array(final_chunks, dtype=object),
-        sources=np.array(final_sources, dtype=object),
-    )
+    try:
+        final_vectors, final_chunks, final_sources = _validate_loaded_index(
+            np.asarray(final_vectors, dtype=np.float32),
+            {
+                "schema_version": INDEX_SCHEMA_VERSION,
+                "generation_id": "prepublish",
+                "model_fingerprint": MODEL_FINGERPRINT,
+                "dimension": DIM,
+                "chunks": final_chunks,
+                "sources": final_sources,
+            },
+            "prepublish",
+            MODEL_FINGERPRINT,
+        )
+        vector_path, metadata_path = _stage_index(final_vectors, final_chunks, final_sources)
+        _publish_staged_index(vector_path, metadata_path)
+    except Exception as exc:
+        logger.error("Index validation/publication failed; previous generation retained: %s", exc)
+        return False
 
     # Update manifest
-    new_manifest = {"sources": {}}
+    new_manifest = {"model_fingerprint": MODEL_FINGERPRINT, "sources": {}}
     for s in sources:
         new_manifest["sources"][s["path"]] = s["md5"]
-    save_manifest(new_manifest)
+    try:
+        save_manifest(new_manifest)
+    except OSError as exc:
+        # The index remains valid.  A missing manifest merely forces a safe
+        # full re-embed next run rather than risking stale chunk reuse.
+        logger.warning("Index published but manifest update failed: %s", exc)
 
     logger.info(f"Index saved to {INDEX_PATH} ({os.path.getsize(INDEX_PATH)/1024:.1f} KB)")
     return True
@@ -405,7 +631,8 @@ async def rebuild_index_if_missing() -> bool:
     Logs at info when the bootstrap is skipped, warning when it fires.
     Idempotent on repeated calls.
     """
-    if os.path.exists(INDEX_PATH):
+    existing_vectors, _, _ = load_existing_index()
+    if existing_vectors is not None:
         logger.info(
             f"Embedding index already present at {INDEX_PATH} "
             f"({os.path.getsize(INDEX_PATH)/1024:.1f} KB); bootstrap skipped."

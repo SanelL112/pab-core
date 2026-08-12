@@ -1,40 +1,58 @@
-import os
-import json
+"""Incrementally turn private historical exports into a validated local index."""
+
+from __future__ import annotations
+
 import asyncio
-import httpx
+import fcntl
+import hashlib
+import json
 import logging
+import os
+import tempfile
+from pathlib import Path
+
+from config import ARCHIVE_DIR as CONFIG_ARCHIVE_DIR, MEGA_INDEX_FILE
+from scrapers.batch_results import BatchResult, BatchStatus, validate_generated_text
+
 
 logger = logging.getLogger(__name__)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ARCHIVE_DIR = os.path.join(BASE_DIR, "..", "offline_archive")
-OUTPUT_FILE = os.path.join(BASE_DIR, "..", "mega_index.md")
+ARCHIVE_DIR = os.fspath(CONFIG_ARCHIVE_DIR)
+OUTPUT_FILE = os.fspath(MEGA_INDEX_FILE)
+PROGRESS_FILE = os.path.join(ARCHIVE_DIR, ".delta_index_progress.json")
+LOCK_FILE = os.path.join(ARCHIVE_DIR, ".offline_indexer.lock")
+CHUNK_SIZE = 8_000
+PROGRESS_VERSION = 2
 
-def chunk_text(text, chunk_size=8000):
-    for i in range(0, len(text), chunk_size):
-        yield text[i:i + chunk_size]
 
-async def process_chunk(chunk, chunk_index, source_name, max_retries=2):
+def chunk_text(text: str, chunk_size: int = CHUNK_SIZE):
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    for start in range(0, len(text), chunk_size):
+        yield text[start : start + chunk_size]
+
+
+async def process_chunk(
+    chunk: str,
+    chunk_index: int,
+    source_name: str,
+    max_retries: int = 2,
+) -> BatchResult:
     prompt = (
         "You are a highly meticulous academic data curator. Read the following chunk of raw data extracted from the student's learning platforms.\n"
-        "You MUST provide an EXHAUSTIVE index of EVERY SINGLE file, document, announcement, and assignment found in this chunk. DO NOT ignore or skip anything, regardless of whether you think it is important or not.\n"
-        "For each item, extract and output the following points clearly:\n"
-        "1. EXACT TITLE/NAME of the file or item.\n"
-        "2. What information is contained in it.\n"
-        "3. How this information could be useful for study guides.\n"
-        "4. What this reveals about what the student is doing or learning.\n\n"
+        "Provide an exhaustive index of every file, document, announcement, and assignment actually present. Do not invent items.\n"
+        "For each item include its exact title, contained information, study-guide usefulness, and what it reveals about the current learning topic.\n\n"
         f"SOURCE: {source_name}\n"
         f"DATA:\n{chunk}"
     )
-    
-    # Route through the unified local-inference chain (Surface llama-server
-    # at 10.0.0.47:8080, then Pi Ollama). This replaces the old hardcoded
-    # localhost:11434 call that required a model that was never pulled here.
+
     from llm_router import call_local_rpc
 
-    for attempt in range(max_retries):
+    attempts = max(1, min(int(max_retries), 3))
+    last_result = BatchResult(BatchStatus.UNAVAILABLE, detail="local inference unavailable")
+    for attempt in range(attempts):
         try:
-            result = await asyncio.to_thread(
+            raw_result = await asyncio.to_thread(
                 call_local_rpc,
                 prompt=prompt,
                 max_tokens=2048,
@@ -42,109 +60,213 @@ async def process_chunk(chunk, chunk_index, source_name, max_retries=2):
                 timeout=120,
                 allow_cloud=False,
             )
-            if result and result.strip():
-                return result
-            # Empty means all local paths (Surface + Pi) are down — don't retry.
-            logger.warning("Local inference unavailable. Skipping offline indexing.")
-            return None
-        except Exception as e:
-            logger.error(f"Error during local inference: {e}. Retrying ({attempt+1}/{max_retries})...")
-            await asyncio.sleep(5)
-
-    logger.warning(f"Local indexing failed after {max_retries} attempts")
-    return None
-
-import hashlib
-
-PROGRESS_FILE = os.path.join(ARCHIVE_DIR, ".delta_index_progress.json")
-
-def _load_progress(delta_hash):
-    """Return the number of chunks already indexed for THIS exact delta content.
-    If the delta file changed (new hash), progress resets to 0 so we don't skip
-    freshly-appended data."""
-    try:
-        with open(PROGRESS_FILE) as f:
-            p = json.load(f)
-        if p.get("delta_hash") == delta_hash:
-            return int(p.get("done", 0))
-    except Exception:
-        pass
-    return 0
-
-def _save_progress(delta_hash, done):
-    try:
-        with open(PROGRESS_FILE, "w") as f:
-            json.dump({"delta_hash": delta_hash, "done": done}, f)
-    except Exception as e:
-        logger.error(f"Failed to persist index progress: {e}")
-
-async def run_indexing():
-    logger.info("Starting Massive Historical Indexing...")
-    delta_file = os.path.join(ARCHIVE_DIR, "delta_export.txt")
-    if not os.path.exists(delta_file):
-        logger.info("No delta file found. Nothing to index.")
-        return
-        
-    try:
-        with open(delta_file, 'r', encoding='utf-8', errors='replace') as f:
-            text = f.read()
-    except Exception as e:
-        logger.error(f"Failed to read delta_export.txt: {e}")
-        return
-        
-    if not text.strip():
-        logger.info("Delta file empty.")
-        return
-        
-    chunks = list(chunk_text(text, chunk_size=8000))
-    total_chunks = len(chunks)
-
-    # Resume from where a previous partial run left off (keyed to the delta
-    # content hash) so we don't re-index — and DUPLICATE in mega_index.md —
-    # chunks that already succeeded. A changed delta file resets the cursor.
-    delta_hash = hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
-    already_done = _load_progress(delta_hash)
-    if already_done >= total_chunks:
-        # Everything already indexed on a prior run; clear delta + progress.
-        open(delta_file, 'w').close()
-        _save_progress(delta_hash, 0)
-        logger.info("Delta already fully indexed — cleared. Nothing to do.")
-        return
-    if already_done > 0:
-        logger.info(f"Resuming delta indexing at chunk {already_done+1}/{total_chunks} "
-                    f"({already_done} already indexed).")
-
-    success_count = already_done
-    local_inference_down = False
-    for i in range(already_done, total_chunks):
-        chunk = chunks[i]
-        logger.info(f"Processing chunk {i+1}/{total_chunks} for delta_export...")
-        result = await process_chunk(chunk, i+1, "delta_export")
-        if result:
-            with open(OUTPUT_FILE, "a", encoding="utf-8") as out_f:
-                out_f.write(f"\n\n## Source: Nightly Delta (Part {i+1}/{total_chunks})\n\n")
-                out_f.write(result)
-            success_count += 1
-            _save_progress(delta_hash, success_count)
-        else:
-            # local-inference chain (Surface llama-server + Pi fallback) is
-            # unavailable. Circuit-break so we don't retry the rest and spam
-            # Telegram. Progress is saved, so the next run resumes here.
-            local_inference_down = True
-            skipped = total_chunks - i
+            last_result = validate_generated_text(raw_result, min_chars=80)
+            if last_result.ok:
+                return last_result
+            # Explicit outages/refusals are deterministic and must not be
+            # retried into the index as if they were content.
+            if last_result.status in {BatchStatus.UNAVAILABLE, BatchStatus.REFUSED}:
+                logger.warning(
+                    "Offline indexing rejected chunk %s output (%s): %s",
+                    chunk_index,
+                    last_result.status.value,
+                    last_result.detail,
+                )
+                return last_result
+        except Exception as exc:
+            last_result = BatchResult(BatchStatus.ERROR, detail=f"{type(exc).__name__}: {exc}")
             logger.warning(
-                f"Local inference (Surface RPC + Pi) unavailable at chunk {i+1} — "
-                f"skipping {skipped} remaining chunk(s). Progress saved; delta "
-                f"preserved for next run."
+                "Local inference error for chunk %s (attempt %s/%s): %s",
+                chunk_index,
+                attempt + 1,
+                attempts,
+                exc,
             )
-            break
-                
-    if success_count == total_chunks:
-        open(delta_file, 'w').close()
-        _save_progress(delta_hash, 0)
-        logger.info("Delta Indexing Complete. Output appended to mega_index.md.")
-    else:
-        logger.warning(f"Only {success_count}/{total_chunks} chunks were indexed. Delta file was NOT cleared to prevent data loss.")
+        if attempt + 1 < attempts:
+            await asyncio.sleep(5)
+    return last_result
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+
+
+def _atomic_json(path: str, payload: dict) -> None:
+    parent = os.path.dirname(path)
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    fd, temporary_path = tempfile.mkstemp(prefix=".tmp-", suffix=".json", dir=parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, separators=(",", ":"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+        os.chmod(path, 0o600)
+    except Exception:
+        try:
+            os.unlink(temporary_path)
+        except OSError:
+            pass
+        raise
+
+
+def _load_progress(text: str) -> int:
+    """Return a verified acknowledged prefix length, never a blind chunk count."""
+    try:
+        with open(PROGRESS_FILE, "r", encoding="utf-8") as stream:
+            progress = json.load(stream)
+        if progress.get("version") != PROGRESS_VERSION:
+            return 0
+        acknowledged = int(progress.get("acknowledged_chars", 0))
+        if acknowledged < 0 or acknowledged > len(text):
+            return 0
+        if progress.get("prefix_sha256") != _sha256(text[:acknowledged]):
+            return 0
+        return acknowledged
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return 0
+
+
+def _save_progress(text: str, acknowledged_chars: int) -> None:
+    _atomic_json(
+        PROGRESS_FILE,
+        {
+            "version": PROGRESS_VERSION,
+            "acknowledged_chars": acknowledged_chars,
+            "prefix_sha256": _sha256(text[:acknowledged_chars]),
+        },
+    )
+
+
+def _load_published_chunk_ids() -> set[str]:
+    published: set[str] = set()
+    try:
+        with open(OUTPUT_FILE, "r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                if line.startswith("<!-- batch-chunk:") and line.rstrip().endswith(" -->"):
+                    published.add(line[len("<!-- batch-chunk:") : -4].strip())
+    except FileNotFoundError:
+        pass
+    return published
+
+
+def _append_validated_chunk(chunk_id: str, heading: str, text: str) -> None:
+    Path(OUTPUT_FILE).parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    payload = f"\n\n<!-- batch-chunk:{chunk_id} -->\n{heading}\n\n{text}\n"
+    fd = os.open(OUTPUT_FILE, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        with os.fdopen(fd, "a", encoding="utf-8") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except Exception:
+        # fdopen owns the descriptor after construction.
+        raise
+
+
+def _atomic_write_text(path: str, text: str) -> None:
+    parent = os.path.dirname(path)
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    fd, temporary_path = tempfile.mkstemp(prefix=".tmp-", dir=parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+        os.chmod(path, 0o600)
+    except Exception:
+        try:
+            os.unlink(temporary_path)
+        except OSError:
+            pass
+        raise
+
+
+def _consume_snapshot(delta_file: str, snapshot: str) -> bool:
+    """Remove only bytes we processed, retaining exports appended mid-run."""
+    try:
+        with open(delta_file, "r", encoding="utf-8", errors="replace") as stream:
+            current = stream.read()
+    except OSError as exc:
+        logger.error("Could not re-read delta before acknowledgement: %s", exc)
+        return False
+    if not current.startswith(snapshot):
+        logger.warning("Delta changed non-append-only during indexing; preserving it unacknowledged")
+        return False
+    _atomic_write_text(delta_file, current[len(snapshot) :])
+    _save_progress("", 0)
+    return True
+
+
+async def run_indexing() -> BatchResult:
+    logger.info("Starting historical delta indexing")
+    os.makedirs(ARCHIVE_DIR, mode=0o700, exist_ok=True)
+    lock_fd = os.open(LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        delta_file = os.path.join(ARCHIVE_DIR, "delta_export.txt")
+        if not os.path.exists(delta_file):
+            return BatchResult(BatchStatus.OK, detail="no delta file")
+        try:
+            with open(delta_file, "r", encoding="utf-8", errors="replace") as stream:
+                snapshot = stream.read()
+        except OSError as exc:
+            return BatchResult(BatchStatus.ERROR, detail=f"failed to read delta: {exc}")
+        if not snapshot.strip():
+            return BatchResult(BatchStatus.OK, detail="delta is empty")
+
+        acknowledged = _load_progress(snapshot)
+        published_ids = _load_published_chunk_ids()
+        remaining_text = snapshot[acknowledged:]
+        chunks = list(chunk_text(remaining_text))
+        if not chunks:
+            return BatchResult(BatchStatus.OK, detail="delta already acknowledged")
+
+        for offset, chunk in enumerate(chunks):
+            start = acknowledged + offset * CHUNK_SIZE
+            end = start + len(chunk)
+            chunk_id = _sha256(f"delta_export\0{chunk}")
+            part_number = (start // CHUNK_SIZE) + 1
+            logger.info("Processing delta chunk %s (%s/%s remaining)", chunk_id[:12], offset + 1, len(chunks))
+
+            # If publication completed but the process died before progress
+            # fsync, the stable marker makes replay an acknowledgement only.
+            if chunk_id not in published_ids:
+                result = await process_chunk(chunk, part_number, "delta_export")
+                if not result.ok:
+                    logger.warning(
+                        "Delta preserved at character %s after %s result: %s",
+                        start,
+                        result.status.value,
+                        result.detail,
+                    )
+                    return result
+                _append_validated_chunk(
+                    chunk_id,
+                    f"## Source: Nightly Delta (Part {part_number})",
+                    result.text,
+                )
+                published_ids.add(chunk_id)
+            acknowledged = end
+            _save_progress(snapshot, acknowledged)
+
+        if not _consume_snapshot(delta_file, snapshot):
+            return BatchResult(
+                BatchStatus.INVALID,
+                detail="all chunks published, but delta changed before acknowledgement",
+            )
+        logger.info("Delta indexing complete; processed input acknowledged")
+        return BatchResult(BatchStatus.OK, detail=f"published {len(chunks)} chunks")
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+
 
 if __name__ == "__main__":
-    asyncio.run(run_indexing())
+    result = asyncio.run(run_indexing())
+    raise SystemExit(0 if result.ok else 1)

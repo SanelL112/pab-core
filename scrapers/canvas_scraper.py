@@ -9,6 +9,7 @@ to a separate token file.
 
 from __future__ import annotations
 
+from collections import deque
 import json
 import logging
 import os
@@ -17,19 +18,18 @@ import stat
 import time
 import tempfile
 from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urlencode, urljoin, urlsplit, urlunsplit
 
 import requests
-from dotenv import load_dotenv
+from config import get_setting
 
 logger = logging.getLogger(__name__)
 
-load_dotenv()
-
-CANVAS_API_URL = os.getenv("CANVAS_API_URL", "https://canvas.instructure.com").rstrip("/")
-CLASSLINK_URL = os.getenv("CANVAS_SSO_ENTRY_URL", "https://launchpad.classlink.com/forsyth")
+CANVAS_API_URL = get_setting("CANVAS_API_URL", "https://canvas.instructure.com").rstrip("/")
+CLASSLINK_URL = get_setting("CANVAS_SSO_ENTRY_URL", "https://launchpad.classlink.com/forsyth")
 DEFAULT_PROFILE_DIR = Path.home() / ".local" / "share" / "personal-assistant-bot" / "canvas-firefox-profile"
 DEFAULT_DAEMON_URL = "http://127.0.0.1:8976"
 
@@ -43,7 +43,7 @@ class CanvasSignInRequired(CanvasSessionError):
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
+    value = get_setting(name, "")
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
@@ -77,8 +77,8 @@ def _assignment_is_actionable(assignment: dict[str, Any], now: datetime | None =
         return False
 
     now = now or datetime.now(timezone.utc)
-    overdue_grace_days = max(0, int(os.getenv("CANVAS_ASSIGNMENT_OVERDUE_GRACE_DAYS", "7")))
-    undated_update_days = max(0, int(os.getenv("CANVAS_NO_DUE_UPDATE_DAYS", "21")))
+    overdue_grace_days = max(0, int(get_setting("CANVAS_ASSIGNMENT_OVERDUE_GRACE_DAYS", "7")))
+    undated_update_days = max(0, int(get_setting("CANVAS_NO_DUE_UPDATE_DAYS", "21")))
     due_at = _parse_canvas_date(assignment.get("due_at"))
 
     if due_at is not None:
@@ -101,7 +101,7 @@ def _assignment_sort_key(assignment: dict[str, Any]) -> tuple[int, datetime]:
 def _is_recent_canvas_update(item: dict[str, Any], *fields: str, now: datetime | None = None) -> bool:
     """Keep informational Canvas content out of the digest after it goes stale."""
     now = now or datetime.now(timezone.utc)
-    update_days = max(0, int(os.getenv("CANVAS_CONTENT_UPDATE_DAYS", "21")))
+    update_days = max(0, int(get_setting("CANVAS_CONTENT_UPDATE_DAYS", "21")))
     for field in fields:
         value = _parse_canvas_date(item.get(field))
         if value is not None:
@@ -109,11 +109,275 @@ def _is_recent_canvas_update(item: dict[str, Any], *fields: str, now: datetime |
     return False
 
 
+class _CanvasPageHTMLParser(HTMLParser):
+    """Extract readable text and anchors without following arbitrary URLs."""
+
+    _BLOCK_TAGS = {"br", "div", "li", "p", "section", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.text_parts: list[str] = []
+        self.links: list[dict[str, str]] = []
+        self._active_link: dict[str, str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() in self._BLOCK_TAGS:
+            self.text_parts.append("\n")
+        if tag.lower() != "a" or self._active_link is not None:
+            return
+        values = {key.lower(): value or "" for key, value in attrs}
+        href = values.get("href", "").strip()
+        if href:
+            self._active_link = {"href": href, "label": values.get("title", "").strip()}
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "a" and self._active_link is not None:
+            self.links.append(self._active_link)
+            self._active_link = None
+        if tag.lower() in self._BLOCK_TAGS:
+            self.text_parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not data:
+            return
+        self.text_parts.append(data)
+        if self._active_link is not None and not self._active_link["label"]:
+            self._active_link["label"] = data.strip()
+
+
+def _parse_canvas_page_html(html_body: str) -> tuple[str, list[dict[str, str]]]:
+    """Return plain page text plus the links declared in its HTML."""
+    parser = _CanvasPageHTMLParser()
+    try:
+        parser.feed(html_body or "")
+        parser.close()
+    except Exception:
+        logger.debug("Canvas page contained malformed HTML", exc_info=True)
+    text = re.sub(r"[ \t]*\n[ \t]*", "\n", "".join(parser.text_parts))
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text, parser.links
+
+
+def _canvas_link_target(href: str, course_id: str) -> tuple[str, str] | None:
+    """Map a same-course Canvas UI URL to its safe, read-only API endpoint."""
+    if not href or href.startswith(("#", "javascript:", "mailto:")):
+        return None
+    target = urlsplit(urljoin(f"{CANVAS_API_URL}/", href))
+    canvas_origin = urlsplit(CANVAS_API_URL)
+    if target.netloc and target.netloc != canvas_origin.netloc:
+        return None
+    parts = [unquote(part) for part in target.path.split("/") if part]
+    if len(parts) < 4 or parts[0] != "courses" or parts[1] != str(course_id):
+        return None
+    collection, object_id = parts[2], parts[3]
+    if collection == "pages" and object_id:
+        return "page", f"/api/v1/courses/{course_id}/pages/{quote(object_id, safe='')}"
+    if not object_id.isdigit():
+        return None
+    kinds = {
+        "assignments": "assignment",
+        "discussion_topics": "discussion",
+        "files": "file",
+        "modules": "module",
+    }
+    kind = kinds.get(collection)
+    if kind is None:
+        return None
+    return kind, f"/api/v1/courses/{course_id}/{collection}/{object_id}"
+
+
+def _describe_linked_canvas_item(kind: str, payload: Any) -> str:
+    """Make API payloads useful to the digest without reproducing an entire page."""
+    if not isinstance(payload, dict):
+        return ""
+    if kind == "page":
+        body, _links = _parse_canvas_page_html(str(payload.get("body") or ""))
+        title = str(payload.get("title") or "Untitled page")
+        return f"Page: {title}" + (f" — {body}" if body else "")
+    if kind == "assignment":
+        title = str(payload.get("name") or "Untitled assignment")
+        due = _short_date(payload.get("due_at"), "")
+        description, _links = _parse_canvas_page_html(str(payload.get("description") or ""))
+        return f"Assignment: {title}" + (f" (due {due})" if due else "") + (f" — {description}" if description else "")
+    if kind == "discussion":
+        title = str(payload.get("title") or "Untitled discussion")
+        message, _links = _parse_canvas_page_html(str(payload.get("message") or ""))
+        return f"Discussion: {title}" + (f" — {message}" if message else "")
+    if kind == "file":
+        title = str(payload.get("display_name") or payload.get("filename") or "Untitled file")
+        size = payload.get("size")
+        return f"File: {title}" + (f" ({size} bytes)" if isinstance(size, int) else "")
+    if kind == "module":
+        return f"Module: {str(payload.get('name') or 'Untitled module')}"
+    return ""
+
+
+def _linked_canvas_item_html(kind: str, payload: Any) -> str:
+    """Return the only HTML field that may contain more contextual links."""
+    if not isinstance(payload, dict):
+        return ""
+    fields = {
+        "page": "body",
+        "assignment": "description",
+        "discussion": "message",
+    }
+    return str(payload.get(fields.get(kind, "")) or "")
+
+
+_CONTEXT_STOP_WORDS = {
+    "about", "after", "also", "and", "are", "assignment", "canvas", "class", "course", "from",
+    "have", "here", "information", "instructions", "into", "just", "learn", "link", "more", "need",
+    "only", "page", "please", "read", "resource", "site", "that", "the", "their", "there", "these",
+    "this", "through", "visit", "website", "with", "your",
+}
+
+
+def _context_terms(*values: str) -> set[str]:
+    """Derive a small local topic vocabulary from the Canvas source context."""
+    terms: set[str] = set()
+    for value in values:
+        for word in re.findall(r"[a-zA-Z][a-zA-Z0-9'-]{3,}", value.lower()):
+            if word not in _CONTEXT_STOP_WORDS:
+                terms.add(word)
+    return terms
+
+
+def _is_contextual_external_text(text: str, terms: set[str]) -> bool:
+    """Reject public pages that do not substantively match the Canvas context."""
+    # Two distinct terms keeps a generic word from a course page (for example,
+    # "read" or "resource") from being enough to take the crawl off-topic.
+    minimum = max(1, int(get_setting("CANVAS_EXTERNAL_LINK_MIN_CONTEXT_MATCHES", "2")))
+    words = set(re.findall(r"[a-zA-Z][a-zA-Z0-9'-]{3,}", text.lower()))
+    return len(words.intersection(terms)) >= minimum
+
+
+def _fetch_contextual_external_page(href: str, terms: set[str]) -> tuple[str, str, list[str]]:
+    """Fetch a public page only when its text remains on the Canvas topic."""
+    from scrapers.web_precacher import fetch_public_page
+
+    source_url, text, links = fetch_public_page(
+        href,
+        max_chars=max(200, int(get_setting("CANVAS_EXTERNAL_LINK_TEXT_LIMIT", "1200"))),
+    )
+    if not source_url or not text or not _is_contextual_external_text(text, terms):
+        return "", "", []
+    host = urlsplit(source_url).netloc
+    return source_url, f"Public source ({host}): {text}", links
+
+
+def _crawl_canvas_page_links(
+    canvas: "CanvasBrowserClient",
+    course_id: str,
+    html_body: str,
+    *,
+    initial_seen: set[str] | None = None,
+    context_terms: set[str] | None = None,
+) -> list[tuple[int, str]]:
+    """Traverse contextual Canvas links deeply while bounding work and output.
+
+    A Canvas course can contain arbitrary cycles (for example, page A → page B
+    → page A).  Canonical API paths are marked as seen before they are queued,
+    so every Canvas resource is fetched at most once per root page. Each public
+    HTTPS page must independently match the original Canvas context before its
+    text or child links are allowed into the crawl.
+    """
+    max_depth = min(12, max(0, int(get_setting("CANVAS_PAGE_LINK_MAX_DEPTH", "8"))))
+    max_items = min(120, max(0, int(get_setting("CANVAS_PAGE_LINK_MAX_ITEMS", "60"))))
+    text_limit = max(200, int(get_setting("CANVAS_PAGE_LINK_TEXT_LIMIT", "1200")))
+    total_limit = max(text_limit, int(get_setting("CANVAS_PAGE_LINK_TOTAL_TEXT_LIMIT", "10000")))
+    external_limit = min(24, max(0, int(get_setting("CANVAS_EXTERNAL_LINK_LIMIT", "8"))))
+    # Public pages receive the same depth allowance as Canvas pages. They must
+    # still independently pass the original source-context check above.
+    external_depth = min(max_depth, max(0, int(get_setting("CANVAS_EXTERNAL_LINK_MAX_DEPTH", "8"))))
+    if max_depth == 0 or max_items == 0:
+        return []
+
+    queue: deque[tuple[int, str, str]] = deque()
+    seen = set(initial_seen or ())
+    requested_external: set[str] = set()
+    terms = context_terms or set()
+    descriptions: list[tuple[int, str]] = []
+    total_chars = 0
+
+    def append_description(depth: int, description: str) -> bool:
+        nonlocal total_chars
+        if not description or len(descriptions) >= max_items or total_chars >= total_limit:
+            return False
+        remaining = total_limit - total_chars
+        clipped = description[:min(text_limit, remaining)]
+        descriptions.append((depth, clipped))
+        total_chars += len(clipped)
+        return True
+
+    def queue_public_link(href: str, depth: int) -> None:
+        if depth > external_depth or len(requested_external) >= external_limit:
+            return
+        # A cross-course Canvas URL remains out of scope even though it shares
+        # the hostname. Public URLs are revalidated before every fetch.
+        absolute = urljoin(f"{CANVAS_API_URL}/", href)
+        if urlsplit(absolute).netloc == urlsplit(CANVAS_API_URL).netloc:
+            return
+        if absolute in requested_external:
+            return
+        requested_external.add(absolute)
+        queue.append((depth, "public", absolute))
+
+    def queue_links(source_html: str, depth: int) -> None:
+        _text, links = _parse_canvas_page_html(source_html)
+        for link in links:
+            href = link.get("href", "")
+            target = _canvas_link_target(href, course_id)
+            if target is not None:
+                if depth > max_depth:
+                    continue
+                kind, api_path = target
+                if api_path in seen:
+                    continue
+                seen.add(api_path)
+                queue.append((depth, kind, api_path))
+                continue
+
+            # Do not treat a cross-course Canvas URL as a public-web URL: it
+            # escapes the current course context and requires a separate scan.
+            if terms:
+                queue_public_link(href, depth)
+
+    queue_links(html_body, 1)
+    while queue and len(descriptions) < max_items and total_chars < total_limit:
+        depth, kind, api_path = queue.popleft()
+        if kind == "public":
+            source_url, preview, public_links = _fetch_contextual_external_page(api_path, terms)
+            if not source_url:
+                continue
+            append_description(depth, preview)
+            if depth < external_depth:
+                for public_link in public_links:
+                    queue_public_link(public_link, depth + 1)
+            continue
+        try:
+            payload = canvas.get_json(api_path)
+        except CanvasSessionError as exc:
+            logger.info("Could not read linked Canvas %s: %s", kind, exc)
+            continue
+        description = _describe_linked_canvas_item(kind, payload)
+        append_description(depth, description)
+        if depth < max_depth:
+            queue_links(_linked_canvas_item_html(kind, payload), depth + 1)
+    return descriptions
+
+
+def _follow_canvas_page_links(
+    canvas: "CanvasBrowserClient", course_id: str, html_body: str
+) -> list[str]:
+    """Compatibility wrapper that returns the text from the recursive crawl."""
+    return [description for _depth, description in _crawl_canvas_page_links(canvas, course_id, html_body)]
+
+
 def _canvas_coursework_window() -> tuple[datetime, datetime]:
     """Return the past/future window used for current Canvas work."""
     now = datetime.now(timezone.utc)
-    overdue_days = max(0, int(os.getenv("CANVAS_OVERDUE_LOOKBACK_DAYS", "30")))
-    due_soon_days = max(1, int(os.getenv("CANVAS_DUE_SOON_DAYS", "14")))
+    overdue_days = max(0, int(get_setting("CANVAS_OVERDUE_LOOKBACK_DAYS", "30")))
+    due_soon_days = max(1, int(get_setting("CANVAS_DUE_SOON_DAYS", "14")))
     return now - timedelta(days=overdue_days), now + timedelta(days=due_soon_days)
 
 
@@ -172,12 +436,12 @@ class CanvasBrowserClient:
     """
 
     def __init__(self, *, headless: bool | None = None, use_daemon: bool | None = None) -> None:
-        profile_value = os.getenv("CANVAS_FIREFOX_PROFILE_DIR", str(DEFAULT_PROFILE_DIR))
+        profile_value = get_setting("CANVAS_FIREFOX_PROFILE_DIR", str(DEFAULT_PROFILE_DIR))
         self.profile_dir = Path(profile_value).expanduser().resolve()
         self.headless = _env_bool("CANVAS_BROWSER_HEADLESS", True) if headless is None else headless
-        self.login_timeout = int(os.getenv("CANVAS_LOGIN_TIMEOUT_SECONDS", "90"))
+        self.login_timeout = int(get_setting("CANVAS_LOGIN_TIMEOUT_SECONDS", "90"))
         self.use_daemon = _env_bool("CANVAS_USE_BROWSER_DAEMON", True) if use_daemon is None else use_daemon
-        self.daemon_url = os.getenv("CANVAS_BROWSER_DAEMON_URL", DEFAULT_DAEMON_URL).rstrip("/")
+        self.daemon_url = get_setting("CANVAS_BROWSER_DAEMON_URL", DEFAULT_DAEMON_URL).rstrip("/")
         self.driver: Any | None = None
         self.classlink_post_login_location = "not reached"
         self.canvas_app_opened = False
@@ -355,8 +619,8 @@ class CanvasBrowserClient:
 
     def _sign_in_via_classlink(self) -> None:
         assert self.driver is not None
-        username = os.getenv("CLASSLINK_USERNAME")
-        password = os.getenv("CLASSLINK_PASSWORD")
+        username = get_setting("CLASSLINK_USERNAME")
+        password = get_setting("CLASSLINK_PASSWORD")
         if not username or not password:
             raise CanvasSignInRequired(
                 "Set CLASSLINK_USERNAME and CLASSLINK_PASSWORD in .env; do not put them in chat."
@@ -370,7 +634,7 @@ class CanvasBrowserClient:
 
         self.driver.get(CLASSLINK_URL)
         wait = WebDriverWait(self.driver, self.login_timeout)
-        username_selector = os.getenv(
+        username_selector = get_setting(
             "CLASSLINK_USERNAME_SELECTOR",
             "input[name='username'], input[name='user'], input#username, input#user, "
             "input#login, input#loginId, input[name='login'], input[name='loginId'], "
@@ -378,12 +642,12 @@ class CanvasBrowserClient:
             "input[name='identifier'], input[type='email'], input[autocomplete='username'], "
             "input[placeholder*='Username']",
         )
-        password_selector = os.getenv(
+        password_selector = get_setting(
             "CLASSLINK_PASSWORD_SELECTOR",
             "input[name='password'], input#password, input[type='password'], "
             "input#passwordInput, input[autocomplete='current-password']",
         )
-        submit_selector = os.getenv(
+        submit_selector = get_setting(
             "CLASSLINK_SUBMIT_SELECTOR",
             "button[type='submit'], input[type='submit'], #submitButton, #loginButton",
         )
@@ -488,7 +752,7 @@ class CanvasBrowserClient:
     def _click_classlink_sign_in_entry(self) -> None:
         """Advance a LaunchPad landing page to its username/password form when present."""
         assert self.driver is not None
-        custom_selector = os.getenv("CLASSLINK_START_SELECTOR")
+        custom_selector = get_setting("CLASSLINK_START_SELECTOR")
         try:
             if custom_selector:
                 entry = self._find_deep_css(custom_selector)
@@ -645,7 +909,7 @@ class CanvasBrowserClient:
         except ImportError:
             return False
 
-        selector = os.getenv("CLASSLINK_CANVAS_APP_SELECTOR")
+        selector = get_setting("CLASSLINK_CANVAS_APP_SELECTOR")
         handles_before = set(self.driver.window_handles)
         try:
             if selector:
@@ -782,7 +1046,7 @@ def _get_upcoming_assignments(canvas: CanvasBrowserClient, courses: list[dict[st
     completed: list[tuple[datetime, str]] = []
     lookback, upcoming_cutoff = _canvas_coursework_window()
     now = datetime.now(timezone.utc)
-    per_section_limit = max(1, int(os.getenv("CANVAS_ACTION_ITEMS_LIMIT", "8")))
+    per_section_limit = max(1, int(get_setting("CANVAS_ACTION_ITEMS_LIMIT", "8")))
 
     for course in courses:
         course_id = course.get("id")
@@ -847,15 +1111,127 @@ def get_upcoming_assignments() -> str:
     return _with_client(_get_upcoming_assignments)
 
 
+def _calendar_task_type(title: str) -> str:
+    normalized = title.lower()
+    if any(word in normalized for word in ("test", "quiz", "exam")):
+        return "Test"
+    if "project" in normalized:
+        return "Project"
+    if any(word in normalized for word in ("reading", "read ")):
+        return "Reading"
+    return "Assignment"
+
+
+def _get_calendar_assignments(
+    canvas: CanvasBrowserClient,
+    courses: list[dict[str, Any]] | None = None,
+) -> list[dict[str, str]]:
+    """Return structured Canvas deadlines for the calendar sync service."""
+    courses = courses if courses is not None else canvas.get_favorite_courses()
+    now = datetime.now(timezone.utc)
+    result: list[dict[str, str]] = []
+
+    for course in courses:
+        course_id = course.get("id")
+        course_name = str(course.get("name") or "Unnamed course")
+        if not course_id:
+            continue
+        try:
+            assignments = canvas.get_paginated(
+                f"/api/v1/courses/{course_id}/assignments?include[]=submission&order_by=due_at&order=asc&per_page=100",
+                max_pages=1,
+            )
+        except CanvasSessionError as exc:
+            logger.info("Could not fetch Canvas calendar assignments for %s: %s", course_name, exc)
+            continue
+
+        for assignment in assignments:
+            due_at = assignment.get("due_at")
+            assignment_id = assignment.get("id")
+            if not due_at or not assignment_id or not _assignment_is_actionable(assignment, now):
+                continue
+            submission = assignment.get("submission") or {}
+            if isinstance(submission, dict) and submission.get("excused"):
+                continue
+            state = _submission_state(assignment, now)
+            title = str(assignment.get("name") or "Untitled")
+            result.append({
+                "id": f"{course_id}:{assignment_id}",
+                "title": title,
+                "course": course_name,
+                "due_at": str(due_at),
+                "url": str(assignment.get("html_url") or "") or None,
+                "task_type": _calendar_task_type(title),
+                "status": "Completed" if state in {"Completed", "Submitted late"} else "Not started",
+                "official": True,
+            })
+
+        # AI Extraction for recently updated course pages
+        try:
+            pages_to_check = []
+            try:
+                pages_list = canvas.get_paginated(
+                    f"/api/v1/courses/{course_id}/pages?sort=updated_at&order=desc&per_page=1",
+                    max_pages=1,
+                )
+                pages_to_check.extend(pages_list)
+            except Exception:
+                pass  # Pages index might be hidden by teacher
+
+            try:
+                front_page, _ = canvas._request_json(f"/api/v1/courses/{course_id}/front_page")
+                if isinstance(front_page, dict) and front_page.get("url"):
+                    pages_to_check.append(front_page)
+            except Exception:
+                pass
+
+            seen = set()
+            recent_pages = []
+            for page in pages_to_check:
+                url = page.get("url")
+                if url and url not in seen and _is_recent_canvas_update(page, "updated_at", "created_at"):
+                    seen.add(url)
+                    recent_pages.append(page)
+
+            for page in recent_pages:
+                page_url = page.get("url")
+                page_title = page.get("title", "Untitled")
+                if page_url:
+                    page_detail = canvas.get_json(f"/api/v1/courses/{course_id}/pages/{page_url}")
+                    if isinstance(page_detail, dict) and page_detail.get("body"):
+                        try:
+                            from scrapers.canvas_page_extractor import extract_assignments_from_html
+                            extracted = extract_assignments_from_html(
+                                str(course_id), course_name, page_title, page_url, page_detail["body"]
+                            )
+                            result.extend(extracted)
+                        except Exception as e:
+                            logger.error("Error extracting from page %s: %s", page_url, e)
+        except Exception as exc:
+            logger.info("Could not fetch Canvas pages for AI extraction %s: %s", course_name, exc)
+
+    return result
+
+
+def get_calendar_assignments() -> list[dict[str, str]]:
+    """Fetch structured Canvas assignments without formatting a Telegram digest."""
+    try:
+        with CanvasBrowserClient() as canvas:
+            return _get_calendar_assignments(canvas)
+    except CanvasSessionError as exc:
+        logger.warning("Canvas calendar collection skipped: %s", exc)
+        return []
+
+
 def _get_canvas_study_files(
     canvas: CanvasBrowserClient,
     courses: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     """Find recently updated PDF/DOCX/text materials suitable for study guides."""
     courses = courses if courses is not None else canvas.get_favorite_courses()
-    update_days = max(1, int(os.getenv("CANVAS_STUDY_FILE_UPDATE_DAYS", "60")))
-    per_course_limit = max(1, int(os.getenv("CANVAS_STUDY_FILES_PER_COURSE", "3")))
-    max_file_bytes = max(1, int(os.getenv("CANVAS_STUDY_FILE_MAX_MB", "15"))) * 1024 * 1024
+    update_days = max(1, int(get_setting("CANVAS_STUDY_FILE_UPDATE_DAYS", "60")))
+    per_course_limit = max(1, int(get_setting("CANVAS_STUDY_FILES_PER_COURSE", "3")))
+    max_file_bytes = max(1, int(get_setting("CANVAS_STUDY_FILE_MAX_MB", "15"))) * 1024 * 1024
     cutoff = datetime.now(timezone.utc) - timedelta(days=update_days)
     candidates: list[dict[str, str]] = []
 
@@ -986,6 +1362,7 @@ def _get_canvas_pages(canvas: CanvasBrowserClient, courses: list[dict[str, Any]]
     courses = courses if courses is not None else canvas.get_favorite_courses()
     lines = ["📄 **Recently Updated Canvas Pages:**"]
     found = 0
+    page_text_limit = max(200, int(get_setting("CANVAS_PAGE_TEXT_LIMIT", "1800")))
 
     for course in courses:
         course_id = course.get("id")
@@ -1003,6 +1380,29 @@ def _get_canvas_pages(canvas: CanvasBrowserClient, courses: list[dict[str, Any]]
                 updated = _short_date(page.get("updated_at"), "")
                 lines.append(f"- [{course_name}] {title}" + (f" (updated {updated})" if updated else ""))
                 found += 1
+                page_url = str(page.get("url") or "")
+                if not page_url:
+                    continue
+                try:
+                    page_detail = canvas.get_json(
+                        f"/api/v1/courses/{course_id}/pages/{quote(page_url, safe='')}"
+                    )
+                    if not isinstance(page_detail, dict):
+                        continue
+                    page_text, _links = _parse_canvas_page_html(str(page_detail.get("body") or ""))
+                    if page_text:
+                        lines.append(f"  {page_text[:page_text_limit]}")
+                    root_api_path = f"/api/v1/courses/{course_id}/pages/{quote(page_url, safe='')}"
+                    for depth, linked in _crawl_canvas_page_links(
+                        canvas,
+                        str(course_id),
+                        str(page_detail.get("body") or ""),
+                        initial_seen={root_api_path},
+                        context_terms=_context_terms(str(course_name), str(title), page_text),
+                    ):
+                        lines.append(f"{'  ' * depth}↳ {linked}")
+                except CanvasSessionError as exc:
+                    logger.info("Could not read Canvas page %s: %s", title, exc)
         except CanvasSessionError as exc:
             logger.info("Could not fetch pages for %s: %s", course_name, exc)
 

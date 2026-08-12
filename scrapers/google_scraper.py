@@ -4,6 +4,8 @@ import warnings
 import time as _time
 import threading
 import datetime
+import tempfile
+from pathlib import Path
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -66,8 +68,27 @@ SCOPES = [
     # then re-add: 'https://www.googleapis.com/auth/classroom.coursework.me.readonly',
 ]
 
-CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), '..', 'credentials.json')
-TOKEN_PATH = os.path.join(os.path.dirname(__file__), '..', 'token.json')
+def _persist_refreshed_token(creds: Credentials) -> None:
+    """Durably save a refreshed OAuth token outside the source checkout."""
+    destination = Path(TOKEN_PATH)
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if destination.is_symlink():
+        raise OSError("refusing to replace OAuth token through a symlink")
+    fd, temporary = tempfile.mkstemp(prefix=".token-", suffix=".tmp", dir=destination.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(creds.to_json())
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+        destination.chmod(0o600)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
 
 def get_google_credentials():
     """Get Google credentials with caching and retry on refresh.
@@ -97,26 +118,23 @@ def get_google_credentials():
                 for attempt in range(3):
                     try:
                         creds.refresh(Request())
+                        _persist_refreshed_token(creds)
                         break
                     except Exception as e:
                         if attempt < 2:
                             _time.sleep(2 ** attempt)
                         else:
                             logger.error(
-                                f"Failed to refresh Google token after 3 attempts: {e}. "
-                                "The refresh token may have been revoked. "
-                                "Run 'python3 google_auth_setup.py' on a machine with a browser to regenerate token.json."
+                                "Failed to refresh Google token after 3 attempts (%s). "
+                                "Run google_auth_setup.py locally to regenerate the private token.",
+                                type(e).__name__,
                             )
                             return None
 
             if not creds or not creds.valid:
-                # Token refresh failed — cannot auto-re-auth on headless server.
-                # Run google_auth_setup.py on a machine with a browser, then copy
-                # token.json back to the server.
                 logger.error(
-                    "Google token expired and cannot be auto-refreshed on a headless server. "
-                    "Run 'python3 google_auth_setup.py' on a machine with a browser, "
-                    "then copy token.json to the server and restart the bot."
+                    "Google token expired and cannot be auto-refreshed. "
+                    "Run google_auth_setup.py locally and install the token through the approved secret workflow."
                 )
                 return None
 
@@ -213,6 +231,62 @@ def get_classroom_assignments() -> str:
         return f"Error: {e}"
 
 
+def _calendar_task_type(title: str) -> str:
+    normalized = title.lower()
+    if any(word in normalized for word in ("test", "quiz", "exam")):
+        return "Test"
+    if "project" in normalized:
+        return "Project"
+    if any(word in normalized for word in ("reading", "read ")):
+        return "Reading"
+    return "Assignment"
+
+
+def get_calendar_assignments() -> list[dict]:
+    """Return due-dated Classroom coursework as structured calendar records."""
+    creds = get_google_credentials()
+    if not creds:
+        return []
+    try:
+        service = build("classroom", "v1", credentials=creds)
+        courses = service.courses().list(courseStates=["ACTIVE"]).execute().get("courses", [])
+    except Exception as exc:
+        logger.warning("Could not list Classroom courses for calendar sync: %s", exc)
+        return []
+
+    result: list[dict] = []
+    for course in courses:
+        course_id = str(course.get("id") or "")
+        course_name = str(course.get("name") or "Unnamed course")
+        if not course_id:
+            continue
+        try:
+            works = service.courses().courseWork().list(
+                courseId=course_id,
+                courseWorkStates=["PUBLISHED"],
+                orderBy="updateTime desc",
+                pageSize=100,
+            ).execute().get("courseWork", [])
+        except Exception as exc:
+            logger.info("Could not fetch Classroom calendar work for %s: %s", course_name, exc)
+            continue
+        for work in works:
+            if not _classroom_work_is_actionable(work) or not work.get("dueDate") or not work.get("id"):
+                continue
+            title = str(work.get("title") or "Untitled")
+            result.append({
+                "id": f"{course_id}:{work['id']}",
+                "title": title,
+                "course": course_name,
+                "due_date": work.get("dueDate"),
+                "url": work.get("alternateLink"),
+                "task_type": _calendar_task_type(title),
+                "status": "Not started",
+                "official": True,
+            })
+    return result
+
+
 def get_classroom_announcements() -> str:
     """Fetch announcements from Google Classroom (last 30 days)."""
     creds = get_google_credentials()
@@ -266,39 +340,83 @@ def get_classroom_announcements() -> str:
         return f"Error: {e}"
 
 
-def get_recent_google_docs() -> str:
-    """Fetch recently modified Google Docs from Drive (last 30 days)."""
+def _google_doc_plaintext(document: dict) -> str:
+    """Flatten paragraphs, tables, and table-of-contents blocks from a Doc."""
+    parts: list[str] = []
+
+    def collect(elements: list[dict]) -> None:
+        for element in elements:
+            paragraph = element.get("paragraph") or {}
+            text = "".join(
+                str(run.get("textRun", {}).get("content") or "")
+                for run in paragraph.get("elements", [])
+            ).strip()
+            if text:
+                parts.append(text)
+            table = element.get("table") or {}
+            for row in table.get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    collect(cell.get("content", []))
+            toc = element.get("tableOfContents") or {}
+            collect(toc.get("content", []))
+
+    collect(document.get("body", {}).get("content", []))
+    return "\n".join(parts)
+
+
+def get_recent_google_doc_records(limit: int = 10) -> list[dict]:
+    """Return recent Docs metadata and plaintext for calendar deadline extraction."""
     creds = get_google_credentials()
     if not creds:
-        return "Google API credentials not configured."
+        return []
 
     try:
         service = build('drive', 'v3', credentials=creds)
+        docs_service = build('docs', 'v1', credentials=creds)
         import datetime
         cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
         query = f"mimeType='application/vnd.google-apps.document' and modifiedTime > '{cutoff}' and trashed=false"
         results = service.files().list(
             q=query,
             orderBy='modifiedTime desc',
-            pageSize=10,
+            pageSize=max(1, limit),
             fields="files(id, name, modifiedTime, webViewLink)",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True
         ).execute()
-        files = results.get('files', [])
-
-        if not files:
-            return "No recent Google Docs found."
-
-        output = []
-        for f in files:
-            output.append(f"  {f['name']} — Modified: {f['modifiedTime'][:10]} — {f.get('webViewLink', '')}")
-
-        return "Recent Google Docs:\n" + "\n".join(output)
+        records: list[dict] = []
+        for file_data in results.get('files', []):
+            doc_id = str(file_data.get("id") or "")
+            if not doc_id:
+                continue
+            try:
+                document = docs_service.documents().get(documentId=doc_id).execute()
+            except Exception as exc:
+                logger.info("Could not read Google Doc %s (%s)", doc_id, type(exc).__name__)
+                continue
+            records.append({
+                "id": doc_id,
+                "title": str(file_data.get("name") or "Untitled"),
+                "url": str(file_data.get("webViewLink") or f"https://docs.google.com/document/d/{doc_id}/edit"),
+                "content": _google_doc_plaintext(document)[:20_000],
+            })
+        return records
 
     except Exception as e:
         logger.error(f"Error fetching Google Docs: {e}")
-        return f"Error connecting to Google Drive/Docs: {e}"
+        return []
+
+
+def get_recent_google_docs() -> str:
+    """Fetch recently modified Google Docs from Drive (last 30 days)."""
+    records = get_recent_google_doc_records()
+    if not records:
+        return "No recent Google Docs found."
+    output = [
+        f"  {item['title']} — {item['url']}"
+        for item in records
+    ]
+    return "Recent Google Docs:\n" + "\n".join(output)
 
 
 def download_drive_file(file_id: str, output_path: str) -> bool:

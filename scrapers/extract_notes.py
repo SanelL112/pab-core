@@ -22,7 +22,18 @@ def _agy_model(alias: str) -> str:
 
 
 def transcribe_handwritten_pdf(pdf_path: str) -> str:
-    """Uploads a PDF to Gemini Vision via Antigravity CLI and extracts handwritten notes."""
+    """Optionally use an explicitly approved cloud vision transcription service.
+
+    Uploaded school documents are private by default.  The caller must opt in
+    at process start with ``PAB_ALLOW_CLOUD_DOCUMENT_TRANSCRIPTION=1``; the
+    CLI is never given unattended host-tool permissions.
+    """
+    if os.getenv("PAB_ALLOW_CLOUD_DOCUMENT_TRANSCRIPTION", "").strip() != "1":
+        return (
+            "Error: Cloud document transcription is disabled for private files. "
+            "Use the local OCR pipeline or explicitly enable the approved service."
+        )
+
     logger.info(f"Asking Antigravity CLI to transcribe {pdf_path}...")
     
     prompt = (
@@ -33,9 +44,8 @@ def transcribe_handwritten_pdf(pdf_path: str) -> str:
     )
     
     try:
-        # Run agy with --dangerously-skip-permissions so it can autonomously use view_file without prompting the user
         result = subprocess.run(
-            [AGENTAPI_BIN, "--dangerously-skip-permissions", "--model", _agy_model("pro"), "--print", prompt],
+            [AGENTAPI_BIN, "--model", _agy_model("pro"), "--print", prompt],
             capture_output=True,
             text=True,
             timeout=300

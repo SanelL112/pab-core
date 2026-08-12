@@ -1,148 +1,213 @@
-import os
-import json
-import logging
+"""Opt-in, bounded public-web enrichment.
+
+This module never sends the private curated brain, digests, chat history, or
+scraped source text to cloud inference.  It derives a conservative topic
+locally, fetches a small number of public HTTPS documents, and writes the
+result into the private runtime study database.
+"""
+from __future__ import annotations
+
 import asyncio
+import ipaddress
+import logging
+from pathlib import Path
+import re
+import socket
+from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlsplit, urlunsplit
+
 import httpx
 from bs4 import BeautifulSoup
-import re
+
+import config
+
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+_USER_AGENT = "PersonalAssistantBot/1.0 (+local educational cache)"
+_TOPIC = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 &'\-]{1,72}$")
+_BLOCKED_HOSTS = {"localhost", "localhost.localdomain", "metadata.google.internal"}
 
-# Import config for fallback models
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import OR_FALLBACK_MODEL
 
-async def pre_cache_web():
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    brain_file = os.path.join(base_dir, "curated_brain.md")
-    
-    if not os.path.exists(brain_file):
-        logger.info("No curated brain found. Skipping web pre-caching.")
-        return
-       
-    with open(brain_file, "r") as f:
-        brain = f.read()
-       
-    # 1. Ask local model what topics we should research
-    logger.info("Asking local model to identify research topics...")
-    prompt = (
-        "Based on the following curated brain of a student, identify ONE specific academic topic they are currently learning that would benefit from extra web research (e.g., 'Quadratic Formula', 'Cellular Respiration').\n"
-        "Reply with ONLY the topic name. If there are no academic topics, reply with 'NONE'.\n\n"
-        f"BRAIN:\n{brain}"
-    )
-    
+def _safe_topic(candidate: str) -> str | None:
+    text = " ".join(str(candidate).strip().split())
+    if not _TOPIC.fullmatch(text):
+        return None
+    return text
+
+
+def _host_is_public(host: str) -> bool:
+    host = host.rstrip(".").lower()
+    if not host or host in _BLOCKED_HOSTS or host.endswith((".local", ".internal", ".localhost")):
+        return False
     try:
-        from dotenv import load_dotenv
-        load_dotenv()
-        api_key = os.getenv("OPENROUTER_API_KEY")
-        if not api_key:
-            logger.warning("No OPENROUTER_API_KEY found, aborting web precache.")
-            return
+        addresses = {item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
+    except OSError:
+        return False
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        if not ip.is_global:
+            return False
+    return bool(addresses)
 
-        from llm_router import call_local_rpc, call_openrouter
-        
-        def _call_or(m_name, prompt_text):
-            try:
-                return call_openrouter(model=m_name, prompt=prompt_text, task="web-precache", timeout=120)
-            except Exception:
-                return None
-        
-        # Try local RPC first (no rate limits)
-        topic = call_local_rpc(prompt=prompt, max_tokens=50, timeout=120)
-        if not topic or any(p in topic.lower()[:50] for p in ["i cannot", "i'm sorry", "i don't know", "as an ai", "none"]):
-            logger.info("Web precacher: local RPC failed, trying OpenRouter free tier...")
-                      
-            topic = _call_or("nvidia/nemotron-3-ultra-550b-a55b:free", prompt)
-            if not topic or any(p in topic.lower()[:50] for p in ["i cannot", "i'm sorry", "i don't know", "as an ai"]):
-                logger.warning(f"Nemotron failed in precacher, falling back to {OR_FALLBACK_MODEL}...")
-                fallback = _call_or(OR_FALLBACK_MODEL, prompt)
-                if fallback and not any(p in fallback.lower()[:50] for p in ["i cannot", "i'm sorry", "i don't know", "as an ai"]):
-                    topic = fallback
-                else:
-                    logger.warning("Fallback failed, falling back to local G1 Flash...")
-                    from ai_processor import call_agy
-                    topic = call_agy(prompt, timeout=120, model="flash")
-           
-        if not topic: topic = ""
-        topic = re.sub(r'[^a-zA-Z0-9\s]', '', topic)
-       
-        if not topic or "NONE" in topic.upper() or len(topic) > 50:
-            logger.info("No valid topics found to research.")
-            return
-           
-        logger.info(f"Identified topic for pre-caching: {topic}")
-       
-        # 2. Search the web (using a simple DuckDuckGo HTML scrape)
-        from urllib.parse import quote_plus
-        search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(topic + ' explanation examples')}"
-       
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)) as client:
-            res = await client.get(search_url, headers={"User-Agent": "Mozilla/5.0"})
 
-        soup = BeautifulSoup(res.text, "html.parser")
-        results = soup.find_all('a', class_='result__snippet', limit=3)
-        urls_to_scrape = [a['href'] for a in results if 'href' in a.attrs]
+def _safe_https_url(value: str, *, allow_duckduckgo_redirect: bool = False) -> str | None:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return None
+    if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port not in (None, 443):
+        return None
+    if not _host_is_public(parsed.hostname or ""):
+        return None
+    if allow_duckduckgo_redirect and parsed.hostname and parsed.hostname.endswith("duckduckgo.com"):
+        target = parse_qs(parsed.query).get("uddg", [""])[0]
+        return _safe_https_url(unquote(target)) if target else None
+    return urlunsplit(("https", parsed.netloc, parsed.path or "/", parsed.query, ""))
 
-        # DuckDuckGo returns URLs in several forms that httpx 0.28+ rejects:
-        #   - protocol-relative: //duckduckgo.com/l/?uddg=... -> prepend "https:"
-        #   - path-relative:     /l/?uddg=...                   -> prepend "https://duckduckgo.com"
-        # Normalize both so the scraping client (with follow_redirects=True)
-        # follows the uddg redirect chain to the actual target.
-        def _normalize(u):
-            if u.startswith("//"):
-                return "https:" + u
-            if u.startswith("/"):
-                return "https://duckduckgo.com" + u
-            return u
-        urls_to_scrape = [_normalize(u) for u in urls_to_scrape]
 
-        if not urls_to_scrape:
-            logger.warning("No search results found.")
-            return
+def fetch_public_page(url: str, *, max_chars: int = 12_000, max_links: int = 16) -> tuple[str, str, list[str]]:
+    """Fetch one public HTTPS page with SSRF-safe redirects and extract its text.
 
-        # 3. Scrape the sites and summarize
-        combined_research = ""
-        for url in urls_to_scrape:
-            try:
-                async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)) as client:
-                    page_res = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
-                page_soup = BeautifulSoup(page_res.text, "html.parser")
-                text = " ".join([p.text for p in page_soup.find_all('p')])
-               
-                # Summarize — try local RPC first
-                sum_prompt = f"Summarize the following educational text about {topic}. Extract key formulas, facts, and examples.\n\nTEXT:\n{text[:10000]}"
-                summary = call_local_rpc(prompt=sum_prompt, max_tokens=500, timeout=120)
-                if not summary or any(p in summary.lower()[:50] for p in ["i cannot", "i'm sorry", "i don't know", "as an ai"]):
-                    logger.info("Web precacher summarization: local RPC failed, trying OpenRouter...")
-                    summary = _call_or("nvidia/nemotron-3-ultra-550b-a55b:free", sum_prompt)
-                if not summary or any(p in summary.lower()[:50] for p in ["i cannot", "i'm sorry", "i don't know", "as an ai"]):
-                    logger.warning(f"Nemotron failed summarization, falling back to {OR_FALLBACK_MODEL}...")
-                    fallback = _call_or(OR_FALLBACK_MODEL, sum_prompt)
-                    if fallback and not any(p in fallback.lower()[:50] for p in ["i cannot", "i'm sorry", "i don't know", "as an ai"]):
-                        summary = fallback
-                    else:
-                        logger.warning("Fallback failed summarization, falling back to local G1 Flash...")
-                        from ai_processor import call_agy
-                        summary = call_agy(sum_prompt, timeout=120, model="flash")
-                if not summary: summary = "Summary unavailable."
-               
-                combined_research += f"\n### Source: {url}\n{summary}\n"
-            except Exception as e:
-                logger.error(f"Failed to scrape {url}: {e}")
-               
-        # 4. Save to study database
-        db_dir = os.path.join(base_dir, "study_database")
-        os.makedirs(db_dir, exist_ok=True)
-        filename = f"{topic.replace(' ', '_').lower()}.md"
-        with open(os.path.join(db_dir, filename), "w") as f:
-            f.write(f"# Pre-Cached Research: {topic}\n{combined_research}")
-           
-        logger.info(f"Successfully cached research for {topic}")
-       
-    except Exception as e:
-        logger.error(f"Web pre-cacher failed: {e}")
+    This is intentionally synchronous for callers that already run in a worker
+    thread (such as the browser-backed Canvas scraper).  It sends no cookies,
+    credentials, Canvas text, or other private data to the destination.
+    """
+    current = url
+    timeout = httpx.Timeout(connect=5.0, read=15.0, write=10.0, pool=5.0)
+    headers = {"User-Agent": _USER_AGENT}
+    try:
+        with httpx.Client(timeout=timeout, headers=headers, follow_redirects=False) as client:
+            for _ in range(3):
+                safe_url = _safe_https_url(current)
+                if not safe_url:
+                    return "", "", []
+                response = client.get(safe_url)
+                if response.is_redirect:
+                    current = urljoin(safe_url, response.headers.get("location", ""))
+                    continue
+                if response.status_code != 200:
+                    return "", "", []
+                content_type = response.headers.get("content-type", "").lower()
+                if "html" not in content_type or len(response.content) > config.MAX_WEB_FETCH_BYTES:
+                    return "", "", []
+                soup = BeautifulSoup(response.text, "html.parser")
+                for node in soup(["script", "style", "nav", "footer", "noscript"]):
+                    node.decompose()
+                links: list[str] = []
+                for anchor in soup.find_all("a", href=True):
+                    candidate = _safe_https_url(urljoin(safe_url, str(anchor["href"])))
+                    if candidate and candidate not in links:
+                        links.append(candidate)
+                    if len(links) >= max_links:
+                        break
+                text = " ".join(part.strip() for part in soup.stripped_strings)
+                return safe_url, text[:max(0, max_chars)], links
+    except (httpx.HTTPError, OSError, ValueError):
+        return "", "", []
+    return "", "", []
+
+
+async def _fetch_text(client: httpx.AsyncClient, url: str) -> str:
+    """Fetch one prevalidated public HTTPS URL with redirect revalidation."""
+    current = url
+    for _ in range(3):
+        validated = _safe_https_url(current, allow_duckduckgo_redirect=True)
+        if not validated:
+            return ""
+        response = await client.get(validated, follow_redirects=False)
+        if response.is_redirect:
+            location = response.headers.get("location", "")
+            current = urljoin(validated, location)
+            continue
+        if response.status_code != 200:
+            return ""
+        content_type = response.headers.get("content-type", "").lower()
+        if "html" not in content_type or len(response.content) > config.MAX_WEB_FETCH_BYTES:
+            return ""
+        soup = BeautifulSoup(response.text, "html.parser")
+        for node in soup(["script", "style", "nav", "footer", "noscript"]):
+            node.decompose()
+        return " ".join(part.strip() for part in soup.stripped_strings)[:40_000]
+    return ""
+
+
+async def _public_search(client: httpx.AsyncClient, topic: str) -> list[str]:
+    url = "https://html.duckduckgo.com/html/?q=" + quote_plus(f"{topic} explanation examples")
+    response = await client.get(url, follow_redirects=False)
+    if response.status_code != 200 or len(response.content) > config.MAX_WEB_FETCH_BYTES:
+        return []
+    soup = BeautifulSoup(response.text, "html.parser")
+    results: list[str] = []
+    for anchor in soup.select("a.result__a, a.result__url"):
+        href = anchor.get("href", "")
+        if href.startswith("//"):
+            href = "https:" + href
+        elif href.startswith("/"):
+            href = urljoin("https://duckduckgo.com", href)
+        safe = _safe_https_url(href, allow_duckduckgo_redirect=True)
+        if safe and safe not in results:
+            results.append(safe)
+        if len(results) >= config.MAX_WEB_SOURCES:
+            break
+    return results
+
+
+async def pre_cache_web() -> bool:
+    if not config.ENABLE_WEB_RESEARCH:
+        logger.info("Web enrichment is disabled")
+        return False
+    try:
+        brain = config.CURATED_BRAIN_FILE.read_text(encoding="utf-8", errors="replace")[-12_000:]
+    except OSError:
+        logger.info("No curated brain available for local topic extraction")
+        return False
+    if not brain.strip():
+        return False
+
+    from llm_router import call_local_rpc_result
+
+    topic_result = await asyncio.to_thread(
+        call_local_rpc_result,
+        prompt=(
+            "Extract one general academic topic from these private notes. "
+            "Reply with the topic only; do not repeat names, dates, assignments, or private details.\n\n"
+            + brain
+        ),
+        max_tokens=30,
+        timeout=60,
+        allow_cloud=False,
+    )
+    topic = _safe_topic(topic_result.text if topic_result.ok else "")
+    if not topic:
+        logger.info("Local topic extraction produced no safe public query")
+        return False
+
+    timeout = httpx.Timeout(connect=5.0, read=15.0, write=10.0, pool=5.0)
+    limits = httpx.Limits(max_connections=4, max_keepalive_connections=2)
+    async with httpx.AsyncClient(timeout=timeout, limits=limits, headers={"User-Agent": _USER_AGENT}) as client:
+        try:
+            urls = await _public_search(client, topic)
+            texts = await asyncio.gather(*(_fetch_text(client, url) for url in urls))
+        except (httpx.HTTPError, OSError) as exc:
+            logger.info("Public web enrichment unavailable: %s", type(exc).__name__)
+            return False
+    entries = [(url, text) for url, text in zip(urls, texts) if text]
+    if not entries:
+        return False
+
+    filename = re.sub(r"[^a-z0-9]+", "_", topic.lower()).strip("_")[:60] or "topic"
+    output = config.STUDY_DATABASE_DIR / f"{filename}.md"
+    output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    body = "# Public web reference: " + topic + "\n\n" + "\n\n".join(
+        f"## Source\n{url}\n\n{text}" for url, text in entries
+    )
+    temporary = output.with_suffix(".tmp")
+    temporary.write_text(body, encoding="utf-8")
+    temporary.chmod(0o600)
+    temporary.replace(output)
+    output.chmod(0o600)
+    logger.info("Cached %d public reference(s) for %s", len(entries), topic)
+    return True
+
 
 if __name__ == "__main__":
-    asyncio.run(pre_cache_web())
+    raise SystemExit(0 if asyncio.run(pre_cache_web()) else 1)

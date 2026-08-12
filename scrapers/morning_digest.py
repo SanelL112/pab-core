@@ -1,17 +1,14 @@
-import os
 import requests
 import asyncio
 from telegram import Bot
 import logging
-from dotenv import load_dotenv
-
-load_dotenv()
+import config
 logger = logging.getLogger(__name__)
 
-NOTION_API_KEY = os.getenv("NOTION_API_KEY")
-DATABASE_ID = "38309c49-e758-8004-8005-c5440093e2cb"
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-from config import SANEL_CHAT_ID
+NOTION_API_KEY = config.NOTION_API_KEY
+DATABASE_ID = config.NOTION_DATABASE_ID
+TELEGRAM_BOT_TOKEN = config.TELEGRAM_BOT_TOKEN
+SANEL_CHAT_ID = config.SANEL_CHAT_ID
 
 def get_pending_tasks():
     """Fetch ALL pending Notion tasks with pagination (not just first 100)."""
@@ -58,12 +55,11 @@ async def send_morning_digest():
         logger.error("TELEGRAM_BOT_TOKEN not set")
         return
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    context_file = os.path.join(base_dir, "bot_context.txt")
+    context_file = config.BOT_CONTEXT_FILE
     
     bot_context = ""
-    if os.path.exists(context_file):
-        with open(context_file, "r", encoding="utf-8") as f:
+    if context_file.is_file() and not context_file.is_symlink():
+        with context_file.open("r", encoding="utf-8") as f:
             bot_context = f.read().strip()
             
     tasks = await asyncio.to_thread(get_pending_tasks)
