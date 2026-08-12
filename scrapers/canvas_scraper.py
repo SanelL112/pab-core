@@ -1131,6 +1131,14 @@ def _get_calendar_assignments(
     now = datetime.now(timezone.utc)
     result: list[dict[str, str]] = []
 
+    # Start a fresh per-pass budget for AI page extraction so a slow/cold
+    # inference pass cannot stall the whole calendar collection.
+    try:
+        from scrapers.canvas_page_extractor import reset_extraction_budget
+        reset_extraction_budget()
+    except Exception:
+        pass
+
     for course in courses:
         course_id = course.get("id")
         course_name = str(course.get("name") or "Unnamed course")
