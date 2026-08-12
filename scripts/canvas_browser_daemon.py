@@ -33,6 +33,7 @@ from scrapers.canvas_scraper import (  # noqa: E402
     CanvasSessionError,
     CanvasSignInRequired,
 )
+from config import get_setting  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("canvas_browser_daemon")
@@ -58,7 +59,7 @@ class VirtualDisplay:
         binary = shutil.which("Xvfb")
         if not binary:
             raise RuntimeError("DISPLAY is not set and Xvfb is not installed.")
-        display = os.getenv("CANVAS_VIRTUAL_DISPLAY", ":99")
+        display = get_setting("CANVAS_VIRTUAL_DISPLAY", ":99")
         self.process = subprocess.Popen(
             [binary, display, "-screen", "0", "1440x900x24", "-nolisten", "tcp"],
             stdout=subprocess.DEVNULL,
@@ -84,7 +85,7 @@ class BrowserDaemon:
         self.lock = threading.Lock()
         self.was_authenticated = False
         self.last_reauth_attempt = 0.0
-        self.reauth_cooldown = int(os.getenv("CANVAS_REAUTH_COOLDOWN_SECONDS", "900"))
+        self.reauth_cooldown = int(get_setting("CANVAS_REAUTH_COOLDOWN_SECONDS", "900"))
 
     def start(self) -> None:
         self.client._start_browser()
@@ -206,7 +207,7 @@ class BrowserDaemon:
 
     def auto_reauthenticate(self) -> None:
         """Run the ordinary ClassLink → ADFS → Canvas flow without a manual bootstrap."""
-        if not os.getenv("CLASSLINK_USERNAME") or not os.getenv("CLASSLINK_PASSWORD"):
+        if not get_setting("CLASSLINK_USERNAME") or not get_setting("CLASSLINK_PASSWORD"):
             logger.warning("Automatic ClassLink sign-in is disabled: credentials are not configured")
             return
         if time.monotonic() - self.last_reauth_attempt < self.reauth_cooldown:
@@ -240,7 +241,7 @@ class BrowserDaemon:
         """Download a bounded Canvas file through Firefox, never via copied cookies."""
         if not file_id.isdigit():
             raise CanvasSessionError("Canvas file IDs must be numeric.")
-        max_bytes = max(1, int(os.getenv("CANVAS_STUDY_FILE_MAX_MB", "15"))) * 1024 * 1024
+        max_bytes = max(1, int(get_setting("CANVAS_STUDY_FILE_MAX_MB", "15"))) * 1024 * 1024
         with self.lock:
             if not self._select_canvas_tab():
                 raise CanvasSignInRequired("Canvas is not open in the persistent Firefox session.")
@@ -364,7 +365,7 @@ class CanvasDaemonServer(ThreadingHTTPServer):
 
 def monitor_session(daemon: BrowserDaemon, stop_event: threading.Event) -> None:
     """Check the live browser periodically without blocking local scraper requests."""
-    interval = max(60, int(os.getenv("CANVAS_REAUTH_CHECK_SECONDS", "300")))
+    interval = max(60, int(get_setting("CANVAS_REAUTH_CHECK_SECONDS", "300")))
     while not stop_event.wait(interval):
         try:
             if not daemon.health().get("authenticated"):

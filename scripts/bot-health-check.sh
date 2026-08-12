@@ -9,6 +9,8 @@ set -euo pipefail
 BOT_DIR="/home/sanel/personal-assistant-bot"
 TELEGRAM_TOKEN=$(grep TELEGRAM_BOT_TOKEN "$BOT_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '"')
 CHAT_ID="8534649457"
+PYTHON_BIN="$BOT_DIR/venv/bin/python"
+[ -x "$PYTHON_BIN" ] || PYTHON_BIN="python3"
 
 # ── Gather health data ────────────────────────────────────────────────────────
 
@@ -74,7 +76,7 @@ if [ -f "$BOT_DIR/latest_digest.txt" ]; then
 fi
 
 # Google scrapers
-GOOGLE_TOKEN=$(python3 -c "
+GOOGLE_TOKEN=$("$PYTHON_BIN" -c "
 import json, os, sys
 sys.path.insert(0, '$BOT_DIR')
 os.chdir('$BOT_DIR')

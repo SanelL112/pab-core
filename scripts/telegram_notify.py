@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
 """Telegram notification script for cron jobs.
 
-Loads TELEGRAM_BOT_TOKEN from .env using python-dotenv to avoid shell token masking issues.
+Reads Telegram configuration through the application's private config loader.
 
 Usage:
   python3 telegram_notify.py "your message here"
   python3 telegram_notify.py --health-check   # Runs full bot health check and sends report
 """
-import os
 import sys
 import subprocess
 import requests
+import shutil
 from datetime import datetime
-from dotenv import load_dotenv
+from pathlib import Path
+import config
 
-load_dotenv('/home/sanel/personal-assistant-bot/.env')
-
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-CHAT_ID = '8534649457'
+TOKEN = config.TELEGRAM_BOT_TOKEN
+CHAT_ID = str(config.SANEL_CHAT_ID)
 
 
 def send_message(text: str, parse_mode: str = None) -> dict:
     """Send a message via Telegram Bot API."""
     if not TOKEN:
-        return {'ok': False, 'error': 'TELEGRAM_BOT_TOKEN not loaded from .env'}
+        return {'ok': False, 'error': 'Telegram notification is not configured'}
 
     url = f'https://api.telegram.org/bot{TOKEN}/sendMessage'
     payload = {
@@ -36,8 +35,8 @@ def send_message(text: str, parse_mode: str = None) -> dict:
     try:
         response = requests.post(url, json=payload, timeout=10)
         return response.json()
-    except Exception as e:
-        return {'ok': False, 'error': str(e)}
+    except requests.RequestException:
+        return {'ok': False, 'error': 'Telegram request failed'}
 
 
 def send_plain_message(text: str) -> dict:
@@ -45,10 +44,28 @@ def send_plain_message(text: str) -> dict:
     return send_message(text, parse_mode=None)
 
 
-def run_cmd(cmd: str) -> tuple[str, int]:
-    """Run a shell command and return (stdout, exit_code)."""
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
-    return result.stdout.strip(), result.returncode
+def run_cmd(args: list[str]) -> tuple[str, int]:
+    """Run a fixed diagnostic command without invoking a shell."""
+    try:
+        result = subprocess.run(args, shell=False, capture_output=True, text=True, timeout=30, check=False)
+        return result.stdout.strip(), result.returncode
+    except (OSError, subprocess.SubprocessError):
+        return "", 1
+
+
+def journal_output(*, since: str, until: str | None = None) -> str:
+    args = ["journalctl", "-u", "bot.service", "--since", since, "--no-pager"]
+    if until:
+        args.extend(["--until", until])
+    output, _status = run_cmd(args)
+    return output
+
+
+def directory_size(path: Path) -> int:
+    try:
+        return sum(entry.stat().st_size for entry in path.rglob("*") if entry.is_file() and not entry.is_symlink())
+    except OSError:
+        return 0
 
 
 def escape_markdown_v2(text: str) -> str:
@@ -65,42 +82,44 @@ def run_health_check() -> str:
     now = datetime.now().strftime('%Y-%m-%d %H:%M %Z')
 
     # CHECK 1: Bot Service Status
-    bot_status, _ = run_cmd('systemctl is-active bot.service')
+    bot_status, _ = run_cmd(['systemctl', 'is-active', 'bot.service'])
     bot_running = bot_status == 'active'
 
     # CHECK 2: Ollama Status
-    ollama_status, _ = run_cmd('systemctl is-active ollama')
+    ollama_status, _ = run_cmd(['systemctl', 'is-active', 'ollama'])
     ollama_running = ollama_status == 'active'
 
     # CHECK 3: Disk Space
-    df_out, _ = run_cmd("df -h / | awk 'NR==2 {print $5}'")
-    disk_pct = int(df_out.replace('%', '')) if df_out else 0
+    usage = shutil.disk_usage('/')
+    disk_pct = int((usage.used / usage.total) * 100) if usage.total else 0
 
     # CHECK 4: Study Guides Size
-    du_out, _ = run_cmd('du -sh /home/sanel/personal-assistant-bot/study_guides/')
-    study_size = du_out.split('\t')[0] if du_out else 'unknown'
+    guide_bytes = directory_size(config.PRIVATE_STUDY_GUIDES_DIR)
+    study_size = f"{guide_bytes / (1024 * 1024):.1f} MiB"
 
     # CHECK 5: Google Scope Warnings (last 4h)
-    scope_count, _ = run_cmd('journalctl -u bot.service --since "4 hours ago" 2>/dev/null | grep -c "Not all requested scopes"')
-    scope_count = int(scope_count) if scope_count else 0
+    recent_logs = journal_output(since='4 hours ago')
+    scope_count = sum('not all requested scopes' in line.lower() for line in recent_logs.splitlines())
 
     # CHECK 6: Crashes (last 4h)
-    crash_out, _ = run_cmd(r'journalctl -u bot.service --since "4 hours ago" 2>/dev/null | grep -i "crash\|traceback\|fatal\|segfault"')
-    crash_count = len(crash_out.strip().split('\n')) if crash_out.strip() else 0
+    crash_markers = ('crash', 'traceback', 'fatal', 'segfault')
+    crash_count = sum(any(marker in line.lower() for marker in crash_markers) for line in recent_logs.splitlines())
 
     # CHECK 7: Nightly Log Errors (last 50 lines)
-    nightly_out, _ = run_cmd('tail -50 /home/sanel/personal-assistant-bot/nightly.log 2>/dev/null')
+    try:
+        nightly_out = (config.LOG_DIR / 'nightly.log').read_text(encoding='utf-8', errors='replace')[-20_000:]
+    except OSError:
+        nightly_out = ''
     nightly_errors = 0
     if 'ERROR' in nightly_out or 'FAILED' in nightly_out.upper():
         nightly_errors = 1  # flag if any errors found
 
     # CHECK 8: Morning Digest (last 12h) + specific 7 AM check
-    digest_out, _ = run_cmd('journalctl -u bot.service --since "12 hours ago" 2>/dev/null | grep -i "digest"')
-    digest_sent = bool(digest_out.strip())
+    digest_sent = any('digest' in line.lower() for line in journal_output(since='12 hours ago').splitlines())
 
     # CHECK 8b: Specific 7 AM today check
-    today_7am_out, _ = run_cmd(r'journalctl -u bot.service --since "today 07:00" --until "today 07:10" 2>/dev/null | grep -i "digest\|morning\|send_morning"')
-    digest_7am_fired = bool(today_7am_out.strip())
+    today_7am = journal_output(since='today 07:00', until='today 07:10').lower()
+    digest_7am_fired = any(marker in today_7am for marker in ('digest', 'morning', 'send_morning'))
 
     # Build report - use plain text to avoid MarkdownV2 escaping issues
     status_bot = 'running' if bot_running else 'stopped'

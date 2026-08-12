@@ -21,15 +21,13 @@ import requests
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from dotenv import load_dotenv
 
 # Ensure project root is importable for llm_router (this file lives in scripts/)
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-# Load environment
-load_dotenv('/home/sanel/personal-assistant-bot/.env')
+import config
 
 # Setup logging
 logging.basicConfig(
@@ -39,13 +37,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-CACHE_DIR = Path('/home/sanel/personal-assistant-bot/cache')
-OUTPUT_DIR = Path('/home/sanel/personal-assistant-bot/output')
-OLLAMA_URL = os.getenv('OLLAMA_URL', 'http://localhost:11434')
+CACHE_DIR = config.CACHE_DIR
+OUTPUT_DIR = config.EXPORT_DIR / 'daily_digests'
+OLLAMA_URL = config.OLLAMA_LOCAL_URL
 CLASSIFY_MODEL = 'qwen2:0.5b'  # Fast model for classification
 DIGEST_MODEL = 'hf.co/unsloth/Llama-3.2-3B-Instruct-GGUF:latest'  # Better model for digest assembly
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '8534649457')
+TELEGRAM_BOT_TOKEN = config.TELEGRAM_BOT_TOKEN
+TELEGRAM_CHAT_ID = str(config.SANEL_CHAT_ID)
 
 # Filter categories we want in the daily digest
 KEEP_CATEGORIES = {'URGENT', 'HOMEWORK', 'GRADE', 'ANNOUNCEMENT', 'MEETING', 'DELIVERY'}
@@ -441,6 +439,7 @@ async def send_telegram_digest(digest: str) -> bool:
 
 
 async def main():
+    config.initialize_runtime()
     """Main daily digest generation pipeline."""
     start_time = datetime.now()
     logger.info("=" * 60)
