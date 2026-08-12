@@ -1,14 +1,11 @@
 """Non-blocking, rate-limited Telegram alert logging."""
 import logging
-import os
 import queue
 import threading
 import time
 
 import requests
-from dotenv import load_dotenv
-
-load_dotenv()
+from config import SANEL_CHAT_ID, TELEGRAM_BOT_TOKEN
 
 
 class TelegramHandler(logging.Handler):
@@ -25,9 +22,7 @@ class TelegramHandler(logging.Handler):
 
     def __init__(self, *, max_queue_size: int = 100, cooldown_seconds: float = 15.0):
         super().__init__()
-        from config import SANEL_CHAT_ID
-
-        self.token = os.getenv("TELEGRAM_BOT_TOKEN")
+        self.token = TELEGRAM_BOT_TOKEN
         self.chat_id = SANEL_CHAT_ID
         self._queue: queue.Queue[dict] = queue.Queue(maxsize=max_queue_size)
         self._cooldown_seconds = cooldown_seconds

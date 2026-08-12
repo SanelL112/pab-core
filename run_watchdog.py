@@ -25,23 +25,24 @@ from scrapers.composio_fetcher import (
     get_recent_google_docs
 )
 from scrapers.groupme_scraper import get_latest_messages
+import config
 
-CACHE_DIR = Path('/home/sanel/personal-assistant-bot/cache')
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
+CACHE_DIR = config.CACHE_DIR
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Pi classifier endpoint
-PI_CLASSIFIER_URL = "http://10.10.10.2:8080"
+PI_CLASSIFIER_URL = config.PI_CLASSIFIER_URL
 
 async def pi_classify_batch(items: list[dict]) -> list[dict] | None:
     """Send batch to Orange Pi 5 classifier."""
     try:
         import aiohttp
         timeout = aiohttp.ClientTimeout(total=60, connect=5)
+        headers = {"Authorization": f"Bearer {config.PI_CLASSIFIER_TOKEN}"} if config.PI_CLASSIFIER_TOKEN else None
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(f"{PI_CLASSIFIER_URL}/classify", json=items) as resp:
+            async with session.post(f"{PI_CLASSIFIER_URL}/classify", json=items, headers=headers) as resp:
                 if resp.status == 200:
                     return await resp.json()
                 logger.warning(f"Pi classifier returned HTTP {resp.status}")
@@ -144,13 +145,15 @@ async def classify_items(raw_data: dict) -> dict:
         lines = text.split('\n')
         current_item = []
         for line in lines:
-            if line.strip().startswith(('-', '[', '📧', '💬', '📚', '🏫', '📢', '📄')) and current_item:
+            if line.strip().startswith(('-', '[', '📧', '💬', '📚', '🏫', '📢', '📄')) and any(
+                part.strip() for part in current_item
+            ):
                 items.append({"id": str(item_id), "source": source, "text": "\n".join(current_item)[:2000]})
                 item_id += 1
                 current_item = [line]
             else:
                 current_item.append(line)
-        if current_item:
+        if any(part.strip() for part in current_item):
             items.append({"id": str(item_id), "source": source, "text": "\n".join(current_item)[:2000]})
             item_id += 1
     
@@ -187,7 +190,9 @@ async def classify_items_with_ids(raw_data: dict) -> tuple[dict, dict]:
             # Skip section header lines (emoji + **...** format)
             if re.match(r'^[\U0001F000-\U0001FFFF]\s*\*\*.*\*\*:?\s*$', line.strip()):
                 continue
-            if line.strip().startswith(('-', '[', '📧', '💬', '📚', '🏫', '📢', '📄')) and current_item:
+            if line.strip().startswith(('-', '[', '📧', '💬', '📚', '🏫', '📢', '📄')) and any(
+                part.strip() for part in current_item
+            ):
                 items.append({"id": str(item_id), "source": source, "text": "\n".join(current_item)[:2000]})
                 item_id_map[(source, local_index)] = str(item_id)
                 item_id += 1
@@ -195,7 +200,7 @@ async def classify_items_with_ids(raw_data: dict) -> tuple[dict, dict]:
                 current_item = [line]
             else:
                 current_item.append(line)
-        if current_item:
+        if any(part.strip() for part in current_item):
             items.append({"id": str(item_id), "source": source, "text": "\n".join(current_item)[:2000]})
             item_id_map[(source, local_index)] = str(item_id)
             item_id += 1
@@ -234,8 +239,10 @@ def filter_and_summarize(raw_data: dict, classifications: dict, item_id_map: dic
             # Skip section header lines (emoji + **...** format)
             if re.match(r'^[\U0001F000-\U0001FFFF]\s*\*\*.*\*\*:?\s*$', line.strip()):
                 continue
-            if line.strip().startswith(('-', '[', '📧', '💬', '📚', '🏫', '📢', '📄')) and current_item:
-                item_text = "\n".join(current_item)
+            if line.strip().startswith(('-', '[', '📧', '💬', '📚', '🏫', '📢', '📄')) and any(
+                part.strip() for part in current_item
+            ):
+                item_text = "\n".join(current_item).strip()
                 global_id = item_id_map.get((source, local_index))
                 if global_id:
                     cls = classifications.get(global_id, {})
@@ -253,8 +260,8 @@ def filter_and_summarize(raw_data: dict, classifications: dict, item_id_map: dic
             else:
                 current_item.append(line)
         
-        if current_item:
-            item_text = "\n".join(current_item)
+        if any(part.strip() for part in current_item):
+            item_text = "\n".join(current_item).strip()
             global_id = item_id_map.get((source, local_index))
             if global_id:
                 cls = classifications.get(global_id, {})
@@ -319,13 +326,9 @@ Summaries:
 
 async def send_telegram(message: str):
     """Send Telegram message."""
-    import os
-    from dotenv import load_dotenv
     import requests
-    
-    load_dotenv('/home/sanel/personal-assistant-bot/.env')
-    token = os.getenv('TELEGRAM_BOT_TOKEN')
-    chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    token = config.TELEGRAM_BOT_TOKEN
+    chat_id = config.SANEL_CHAT_ID
     
     if not token or not chat_id:
         logger.error("Telegram credentials not configured")
@@ -351,6 +354,7 @@ async def send_telegram(message: str):
 
 async def main():
     logger.info("=== Watchdog cycle started ===")
+    config.initialize_runtime()
     
     # 1. Scrape all sources
     raw_data = await scrape_sources()

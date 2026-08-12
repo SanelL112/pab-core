@@ -1,29 +1,21 @@
 #!/usr/bin/env python3
+"""Explicit, local-only Google OAuth token generator.
+
+Run this on the machine that has the browser and the Google client-secret file.
+It writes a private token file locally; deployment of that token is an explicit
+operator action and is deliberately not performed by this script.
 """
-Standalone Google OAuth token generator for the personal assistant bot.
+from __future__ import annotations
 
-Run this on any computer with a browser.  It will copy the generated token.json
-to the server (100.68.88.100) via SCP.
-
-Usage:
-    python3 google_auth_setup.py              # re-auth only if token expires soon
-    python3 google_auth_setup.py --force      # force re-auth regardless
-
-Designed to be called weekly by a launchd job – pops up a browser when the
-refresh token is about to expire (Google testing-app refresh tokens last ~7 days).
-"""
-
-import os
-import sys
-import json
-import shutil
-import subprocess
 import argparse
-from datetime import datetime, timezone, timedelta
+import os
+import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import config
 
-# ── Config ─────────────────────────────────────────────────────────────────────
+
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/classroom.courses.readonly",
@@ -32,181 +24,96 @@ SCOPES = [
     "https://www.googleapis.com/auth/documents.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/calendar.events",
-    # TODO: add classroom.coursework.me.readonly in Google Cloud Console
-    # → https://console.cloud.google.com/apis/credentials/consent → project unique-sentinel-486019-r1
-    # then re-add: "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
 ]
-
-SCRIPT_DIR = Path(__file__).parent.resolve()
-CREDENTIALS_PATH = SCRIPT_DIR / "credentials.json"
-TOKEN_OUTPUT = SCRIPT_DIR / "token.json"
-LOG_FILE = SCRIPT_DIR / "logs" / "google_token_refresh.log"
-
-# Remote server where the bot runs
-REMOTE_USER = "root"
-REMOTE_HOST = "100.68.88.100"
-REMOTE_TOKEN_PATH = "/home/sanel/personal-assistant-bot/token.json"
-REMOTE_SERVICE = "bot.service"
-
-# Re-auth if token expires within this many days
 MIN_VALID_DAYS = 3
+# The checked-in desktop OAuth client registers the loopback redirect as
+# ``http://localhost``.  Keep the generated redirect URI on that hostname;
+# using the numerically equivalent 127.0.0.1 changes the URI and Google can
+# reject it with ``redirect_uri_mismatch`` after the user signs in.
+OAUTH_LOOPBACK_HOST = "localhost"
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
-def log(msg: str) -> None:
-    """Timestamped print + append to log file."""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{now}] {msg}"
-    print(line)
-    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(LOG_FILE, "a") as f:
-        f.write(line + "\n")
+def _write_private_token(destination: Path, token_json: str) -> None:
+    destination = destination.expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        destination.parent.chmod(0o700)
+    except OSError:
+        pass
+    if destination.is_symlink():
+        raise OSError("refusing to write OAuth token through a symlink")
+    fd, temporary = tempfile.mkstemp(prefix=".token-", suffix=".tmp", dir=destination.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(token_json)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+        destination.chmod(0o600)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
 
 
-def token_is_fresh() -> bool:
-    """Return True if token.json exists and is valid for at least MIN_VALID_DAYS."""
-    if not TOKEN_OUTPUT.exists():
-        log("No local token.json found — re-auth needed.")
+def token_is_fresh(token_path: Path) -> bool:
+    """Return whether the existing token remains valid for the safety window."""
+    if not token_path.is_file() or token_path.is_symlink():
         return False
-
     try:
         from google.oauth2.credentials import Credentials
-        creds = Credentials.from_authorized_user_file(str(TOKEN_OUTPUT), SCOPES)
-    except Exception as e:
-        log(f"Could not read token.json: {e} — re-auth needed.")
+
+        creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+    except Exception:
         return False
-
-    if not creds or not creds.valid:
-        log("Local token is invalid/expired — re-auth needed.")
+    if not creds or not creds.valid or not creds.expiry:
         return False
-
-    if creds.expiry:
-        expiry = creds.expiry
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=timezone.utc)
-        remaining = expiry - datetime.now(timezone.utc)
-        days_left = remaining.total_seconds() / 86400
-        if days_left < MIN_VALID_DAYS:
-            log(f"Token expires in {days_left:.1f} days (< {MIN_VALID_DAYS}) — re-auth needed.")
-            return False
-        log(f"Token valid for {days_left:.1f} more days — skipping re-auth.")
-        return True
-
-    # No expiry info — assume it's fine
-    log("Token has no expiry field — assuming fresh, skipping.")
-    return True
+    expiry = creds.expiry if creds.expiry.tzinfo else creds.expiry.replace(tzinfo=timezone.utc)
+    return expiry - datetime.now(timezone.utc) >= timedelta(days=MIN_VALID_DAYS)
 
 
-def copy_to_server() -> bool:
-    """SCP token.json to the remote server and restart the bot service."""
-    log(f"Copying token.json to {REMOTE_HOST}...")
+def do_auth(credentials_path: Path, output_path: Path, *, open_browser: bool) -> None:
+    """Run the loopback-only browser OAuth flow and store the resulting token."""
+    if not credentials_path.is_file() or credentials_path.is_symlink():
+        raise FileNotFoundError(f"Google OAuth client secret is unavailable: {credentials_path}")
+    from google_auth_oauthlib.flow import InstalledAppFlow
 
-    try:
-        result = subprocess.run(
-            [
-                "scp",
-                "-o", "ConnectTimeout=10",
-                "-o", "StrictHostKeyChecking=no",
-                str(TOKEN_OUTPUT),
-                f"{REMOTE_USER}@{REMOTE_HOST}:{REMOTE_TOKEN_PATH}",
-            ],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            log(f"SCP failed: {result.stderr.strip()}")
-            return False
-
-        log("Token copied. Restarting bot service...")
-        result = subprocess.run(
-            [
-                "ssh", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no",
-                f"{REMOTE_USER}@{REMOTE_HOST}",
-                f"systemctl restart {REMOTE_SERVICE}",
-            ],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            log(f"Service restart failed: {result.stderr.strip()}")
-            return False
-
-        log("Bot service restarted successfully.")
-        return True
-    except Exception as e:
-        log(f"Copy to server failed: {e}")
-        return False
-
-
-def do_auth() -> bool:
-    """Run the browser-based OAuth flow. Returns True on success."""
-    try:
-        from google_auth_oauthlib.flow import InstalledAppFlow
-    except ImportError:
-        log("ERROR: google-auth-oauthlib not installed. Run: pip3 install google-auth-oauthlib")
-        return False
-
-    if not CREDENTIALS_PATH.exists():
-        log(f"ERROR: credentials.json not found at {CREDENTIALS_PATH}")
-        return False
-
-    log("Opening browser for Google OAuth...")
-    print("Scopes being requested:")
-    for scope in SCOPES:
-        print(f"  - {scope}")
-    print()
-
-    flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
-
-    try:
-        creds = flow.run_local_server(
-            host="127.0.0.1",
-            port=8080,
-            prompt="consent",
-            open_browser=True,
-            success_message="Authentication successful! You can close this tab.",
-        )
-    except Exception as e:
-        log(f"Browser OAuth failed: {e}")
-        return False
-
-    with open(TOKEN_OUTPUT, "w") as f:
-        f.write(creds.to_json())
-
-    log(f"Token saved locally: {TOKEN_OUTPUT}")
-    log(f"Token expires: {creds.expiry}")
-    return True
-
-
-# ── Main ───────────────────────────────────────────────────────────────────────
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Refresh Google OAuth token for the bot.")
-    parser.add_argument(
-        "--force", action="store_true",
-        help="Force re-authentication even if the current token is still fresh.",
+    flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), SCOPES)
+    creds = flow.run_local_server(
+        host=OAUTH_LOOPBACK_HOST,
+        port=0,
+        prompt="consent",
+        open_browser=open_browser,
+        success_message="Authentication successful. You may close this tab.",
     )
+    _write_private_token(output_path, creds.to_json())
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Generate a local private Google OAuth token.")
+    parser.add_argument("--force", action="store_true", help="Authenticate even if the current token is fresh.")
+    parser.add_argument("--credentials", type=Path, default=config.CREDENTIALS_PATH, help="OAuth client-secret JSON path.")
+    parser.add_argument("--output", type=Path, default=config.TOKEN_PATH, help="Private token output path.")
+    parser.add_argument("--no-browser", action="store_true", help="Print the local authorization URL instead of opening a browser.")
     args = parser.parse_args()
 
-    # ── Smart skip: if token is fresh, do nothing ──────────────────────────
-    if not args.force and token_is_fresh():
-        log("Token is fresh — nothing to do. (Use --force to re-auth anyway.)")
+    config.initialize_runtime()
+    output_path = args.output.expanduser()
+    if not args.force and token_is_fresh(output_path):
+        print("Existing token is still fresh; use --force to re-authenticate.")
         return 0
-
-    # ── Run browser-based OAuth ────────────────────────────────────────────
-    log("Starting Google OAuth re-authentication...")
-    if not do_auth():
-        log("OAuth failed — token was NOT refreshed.")
+    try:
+        do_auth(args.credentials.expanduser(), output_path, open_browser=not args.no_browser)
+    except Exception as exc:
+        print(f"Google OAuth did not complete ({type(exc).__name__}).")
         return 1
-
-    # ── Copy to server ─────────────────────────────────────────────────────
-    if copy_to_server():
-        log("Done! Token refreshed and deployed to server.")
-    else:
-        log("WARNING: Token generated locally but could NOT copy to server.")
-        log(f"  Manually SCP {TOKEN_OUTPUT} to {REMOTE_HOST}:{REMOTE_TOKEN_PATH}")
-        log(f"  Then run: ssh {REMOTE_HOST} systemctl restart {REMOTE_SERVICE}")
-        return 1
-
+    print(f"Token written locally with mode 0600: {output_path}")
+    print("Install it through your approved secret-management/deployment workflow; this script does not copy files or restart services.")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

@@ -8,11 +8,13 @@ import subprocess
 import urllib.request
 import urllib.parse
 import re
-import shlex
+import threading
+from pathlib import Path
 
-PORT = 3000
-CONFIG_PATH = "/home/sanel-lathiya/llama-config.env"
-MODELS_DIR = "/home/sanel-lathiya/models"
+PORT = int(os.getenv("CLUSTER_MANAGER_PORT", "3000"))
+CONFIG_PATH = os.getenv("CLUSTER_MANAGER_CONFIG_PATH", "/home/sanel-lathiya/llama-config.env")
+MODELS_DIR = os.getenv("CLUSTER_MANAGER_MODELS_DIR", "/home/sanel-lathiya/models")
+MAX_REQUEST_BYTES = 8 * 1024
 
 HTML = """
 <!DOCTYPE html>
@@ -500,6 +502,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         provided_token = auth_header[7:]
         return secrets.compare_digest(provided_token, token)
 
+    def read_json_body(self):
+        try:
+            length = int(self.headers.get("Content-Length", self.headers.get("content-length", "0")))
+        except ValueError:
+            return None
+        if not 0 < length <= MAX_REQUEST_BYTES:
+            return None
+        try:
+            body = json.loads(self.rfile.read(length))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return body if isinstance(body, dict) else None
+
     def do_GET(self):
         if self.path == '/':
             self.send_response(200)
@@ -641,10 +656,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return
 
         if self.path == '/api/switch':
-            length = int(self.headers.get('content-length'))
-            body = json.loads(self.rfile.read(length))
+            body = self.read_json_body()
+            if body is None:
+                self.send_response(400); self.end_headers(); return
             model_name = body.get('model')
-            if not model_name or '/' in model_name:
+            if not isinstance(model_name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.gguf", model_name):
                 self.send_response(400); self.end_headers(); return
                 
             model_path = os.path.join(MODELS_DIR, model_name)
@@ -671,13 +687,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps({"status": "success"}).encode('utf-8'))
                 
         elif self.path == '/api/download':
-            length = int(self.headers.get('content-length'))
-            body = json.loads(self.rfile.read(length))
+            body = self.read_json_body()
+            if body is None:
+                self.send_response(400); self.end_headers(); return
             url = body.get('url')
             filename = body.get('filename')
             
-            if url and filename:
-                if '/' in filename or '\\' in filename or '..' in filename:
+            if isinstance(url, str) and filename:
+                if not isinstance(filename, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.gguf", filename):
                     self.send_response(400); self.end_headers(); return
 
                 if not url.startswith('https://huggingface.co/') or '/resolve/' not in url:
@@ -685,8 +702,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
                 out_path = os.path.join(MODELS_DIR, filename)
                 log_path = os.path.join(MODELS_DIR, f"wget_{filename}.log")
-                cmd = f"wget -c {shlex.quote(url)} -O {shlex.quote(out_path)} > {shlex.quote(log_path)} 2>&1 && rm -f {shlex.quote(log_path)}"
-                subprocess.Popen(['sh', '-c', cmd])
+
+                def download() -> None:
+                    try:
+                        with open(log_path, "wb") as log_file:
+                            result = subprocess.run(
+                                ["wget", "-c", url, "-O", out_path],
+                                stdout=log_file,
+                                stderr=subprocess.STDOUT,
+                                check=False,
+                                timeout=8 * 60 * 60,
+                            )
+                        if result.returncode == 0:
+                            Path(log_path).unlink(missing_ok=True)
+                    except (OSError, subprocess.SubprocessError):
+                        pass
+
+                threading.Thread(target=download, daemon=True, name="cluster-model-download").start()
                 self.send_response(200); self.send_header('Content-type', 'application/json'); self.end_headers()
                 self.wfile.write(json.dumps({"status": "started"}).encode('utf-8'))
             else:
@@ -697,6 +729,8 @@ class ThreadingSimpleServer(socketserver.ThreadingMixIn, http.server.HTTPServer)
 
 if __name__ == '__main__':
     bind_host = os.environ.get('CLUSTER_MANAGER_BIND_HOST', '127.0.0.1')
+    if bind_host not in {'127.0.0.1', '::1', 'localhost'} and not os.environ.get('CLUSTER_MANAGER_API_TOKEN'):
+        raise SystemExit('CLUSTER_MANAGER_API_TOKEN is required outside loopback')
     with ThreadingSimpleServer((bind_host, PORT), Handler) as httpd:
         print("Serving at", bind_host, "port", PORT)
         httpd.serve_forever()

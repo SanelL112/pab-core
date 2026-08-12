@@ -1,63 +1,54 @@
-import os
-import glob
-import subprocess
 import logging
-from config import COMBINED_SUMMARIES_FILE, CURATED_BRAIN_FILE
-try:
-    import telegram_logger
-    telegram_logger.setup_telegram_logging()
-except Exception:
-    pass
+from pathlib import Path
+
+from config import COMBINED_SUMMARIES_FILE, CURATED_BRAIN_FILE, PRIVATE_RESEARCH_DIR
 
 
 logger = logging.getLogger(__name__)
 
-BASE_DIR = "/home/sanel/personal-assistant-bot"
-KB_DIR = os.path.join(BASE_DIR, "knowledge_base")
+KB_DIR = Path(PRIVATE_RESEARCH_DIR)
 
 
-def _agy_model(alias: str) -> str:
-    """Resolve an internal agy alias (flash/pro) to the current valid model ID."""
+def _local_inference(prompt: str, *, max_tokens: int, timeout: int) -> str:
+    """Run private overnight work on owner-controlled inference only."""
     try:
-        import sys
-        if BASE_DIR not in sys.path:
-            sys.path.insert(0, BASE_DIR)
-        from llm_router import _resolve_agy_model
-        return _resolve_agy_model(alias)
-    except Exception:
-        return "Gemini 3.1 Pro (Low)" if alias == "pro" else "Gemini 3.5 Flash (Medium)"
-AGENTAPI_BIN = "/home/sanel/.local/bin/agy"
+        from llm_router import Sensitivity, call_local_rpc_result
+
+        result = call_local_rpc_result(
+            prompt=prompt,
+            max_tokens=max_tokens,
+            timeout=timeout,
+            allow_cloud=False,
+            sensitivity=Sensitivity.PERSONAL,
+        )
+        if result.ok:
+            return result.text
+        logger.warning("Local overnight inference unavailable: %s", result.detail or result.status.value)
+    except Exception as exc:
+        logger.warning("Local overnight inference failed: %s", type(exc).__name__)
+    return ""
 
 def run_overnight_research():
     """
-    Run overnight research pipeline with RPC-aware fallbacks.
-
-    Order of preference:
-      1. RPC llama-server (7B+ model) — for deep, high-quality research
-      2. agy flash (local) — fast but less thorough
-      3. Mega Study Builder (cloud via OpenRouter) — full power, uses credits
-
-    Each stage checks availability and falls back gracefully.
+    Run the overnight research pipeline without exporting private corpus data.
     """
-    os.makedirs(KB_DIR, exist_ok=True)
+    KB_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     
     brain_file = CURATED_BRAIN_FILE
     summaries = COMBINED_SUMMARIES_FILE
     
     context = ""
-    if os.path.exists(brain_file):
-        with open(brain_file, "r") as f:
-            context += f.read() + "\n"
-    if os.path.exists(summaries):
-        with open(summaries, "r") as f:
-            context += f.read()[:10000] # first 10k chars
+    if Path(brain_file).is_file():
+        context += Path(brain_file).read_text(encoding="utf-8", errors="replace")[-20_000:] + "\n"
+    if Path(summaries).is_file():
+        context += Path(summaries).read_text(encoding="utf-8", errors="replace")[-10_000:]
             
     if not context.strip():
         logger.warning("No context found to extract topics from.")
         return
 
-    # ── Step 1: Extract topics (lightweight — always use agy flash) ──────
-    logger.info("Extracting academic topics from context using agy flash (PII safe)...")
+    # ── Step 1: Extract topics with local inference ──────────────────────
+    logger.info("Extracting academic topics from private context locally...")
     topic_prompt = (
         "You are an academic topic extractor. Read the following personal context and extract ONLY the academic, general, or professional topics "
         "that require deep-dive research (e.g. 'Quadratic Equations', 'American Revolution', 'Photosynthesis', 'SAT Math').\n"
@@ -66,28 +57,22 @@ def run_overnight_research():
         f"CONTEXT:\n{context}"
     )
     
-    try:
-        r = subprocess.run([AGENTAPI_BIN, "--model", _agy_model("flash"), "--dangerously-skip-permissions", "--print", topic_prompt],
-                           capture_output=True, text=True, timeout=120)
-        topics_raw = r.stdout.strip()
-        
-        # Clean up output
-        if "```" in topics_raw:
-            topics_raw = topics_raw.split("```")[1].lstrip("json").lstrip()
-            
-        topics = [t.strip() for t in topics_raw.split(",") if t.strip()]
-    except Exception as e:
-        logger.error(f"Failed to extract topics: {e}")
+    topics_raw = _local_inference(topic_prompt, max_tokens=500, timeout=120)
+    if not topics_raw:
+        logger.error("Failed to extract topics with local inference")
         return
+    if "```" in topics_raw:
+        topics_raw = topics_raw.split("```")[1].lstrip("json").lstrip()
+    topics = [t.strip() for t in topics_raw.split(",") if t.strip()]
         
     logger.info(f"Extracted topics to research: {topics}")
 
     # ── Step 2: Research each topic (RPC first, with fallbacks) ──────────
     for topic in topics[:5]:  # Max 5 topics a night
         safe_topic = "".join(c for c in topic if c.isalnum() or c in " -_").strip()
-        kb_file = os.path.join(KB_DIR, f"{safe_topic.replace(' ', '_').lower()}.md")
+        kb_file = KB_DIR / f"{safe_topic.replace(' ', '_').lower()}.md"
         
-        if os.path.exists(kb_file):
+        if kb_file.exists():
             logger.info(f"Skipping {topic}, already researched.")
             continue
             
@@ -96,8 +81,11 @@ def run_overnight_research():
         research_text = _research_topic_with_fallbacks(topic, context)
         
         if research_text and len(research_text) > 500:
-            with open(kb_file, "w") as f:
-                f.write(research_text)
+            temporary = kb_file.with_suffix(".tmp")
+            temporary.write_text(research_text, encoding="utf-8")
+            temporary.chmod(0o600)
+            temporary.replace(kb_file)
+            kb_file.chmod(0o600)
             logger.info(f"Saved research guide for {topic} ({len(research_text)} chars).")
         else:
             logger.warning(f"Research for {topic} failed or was too short — all fallbacks exhausted.")
@@ -105,10 +93,7 @@ def run_overnight_research():
 
 def _research_topic_with_fallbacks(topic: str, context: str) -> str:
     """
-    Research a single topic with fallback chain:
-      1. RPC llama-server (7B+, highest quality)
-      2. Mega Study Builder (cloud, full power)
-      3. agy flash (local, lightweight)
+    Research a single topic with owner-controlled local inference.
     """
     research_prompt = (
         f"Create a comprehensive study guide for: {topic}\n\n"
@@ -122,58 +107,11 @@ def _research_topic_with_fallbacks(topic: str, context: str) -> str:
         f"Be thorough and detailed — this runs overnight."
     )
 
-    # ── Try 1: RPC llama-server (best quality for academic content) ───
-    try:
-        from llm_router import call_llamacpp_rpc_with_fallback, is_rpc_server_healthy
-        if is_rpc_server_healthy():
-            logger.info(f"  Attempting RPC for '{topic}'...")
-            result = call_llamacpp_rpc_with_fallback(
-                prompt=research_prompt,
-                system_prompt="You are an expert academic tutor creating comprehensive study materials.",
-                max_tokens=4000,
-                task=f"overnight-research-{topic[:30]}",
-                timeout=600,
-                skip_cloud_fallback=True,
-            )
-            if result and len(result) > 500:
-                logger.info(f"  RPC success for '{topic}' ({len(result)} chars)")
-                return result
-            logger.warning(f"  RPC returned insufficient content for '{topic}', trying next fallback")
-        else:
-            logger.info(f"  RPC server not healthy, skipping RPC for '{topic}'")
-    except ImportError:
-        logger.info(f"  llm_router not available, skipping RPC for '{topic}'")
-    except Exception as e:
-        logger.warning(f"  RPC failed for '{topic}': {e}")
-
-    # ── Try 2: Mega Study Builder (cloud, best quality) ──────────────
-    try:
-        import sys
-        sys.path.insert(0, BASE_DIR)
-        from scrapers.mega_study_builder import generate_mega_guide
-        logger.info(f"  Attempting Mega Study Builder for '{topic}'...")
-        result = generate_mega_guide(topic)
-        if result and len(result) > 500:
-            logger.info(f"  Mega Study Builder success for '{topic}' ({len(result)} chars)")
-            return result
-        logger.warning(f"  Mega Study Builder returned insufficient content for '{topic}'")
-    except Exception as e:
-        logger.warning(f"  Mega Study Builder failed for '{topic}': {e}")
-
-    # ── Try 3: agy flash (local, last resort) ────────────────────────
-    try:
-        logger.info(f"  Falling back to agy flash for '{topic}'...")
-        r = subprocess.run(
-            [AGENTAPI_BIN, "--model", _agy_model("flash"), "--dangerously-skip-permissions", "--print", research_prompt],
-            capture_output=True, text=True, timeout=300
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            result = r.stdout.strip()
-            logger.info(f"  agy flash success for '{topic}' ({len(result)} chars)")
-            return result
-    except Exception as e:
-        logger.error(f"  agy flash failed for '{topic}': {e}")
-
+    result = _local_inference(research_prompt, max_tokens=4_000, timeout=600)
+    if len(result) > 500:
+        logger.info("Local research succeeded for %r (%s chars)", topic, len(result))
+        return result
+    logger.warning("Local research returned insufficient content for %r", topic)
     return ""
 
 if __name__ == "__main__":

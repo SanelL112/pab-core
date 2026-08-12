@@ -2,7 +2,7 @@ import os
 import json
 import logging
 
-from activity_log import log_event, log_llm_call, log_scrape, log_system, log_nightly, get_recent_events, format_events
+from activity_log import close_activity_log, log_event, log_llm_call, log_scrape, log_system, log_nightly, get_recent_events, format_events
 from utils import scrub_pii
 import time
 import asyncio
@@ -10,44 +10,44 @@ import subprocess
 import sys
 import datetime
 from zoneinfo import ZoneInfo
-from telegram import Update
+from telegram import BotCommand, Update
+from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 from bot.security import require_auth
-from bot.commands import model_command, summary_command, bash_command, priority_command, ping_command, stats_command, backup_command, restore_command, correlations_command, classroom_pdfs_command, canvas_command, help_command, server_command, errors_command, handle_callback
+from bot.commands import model_command, summary_command, bash_command, priority_command, ping_command, stats_command, backup_command, restore_command, correlations_command, classroom_pdfs_command, canvas_command, calendar_command, help_command, server_command, errors_command, handle_callback, dashboard_message
+from bot.ui import begin_progress, edit_progress, escape_html, render_assistant_text, send_assistant_response
 
 import config
 import tempfile
-from inline_keyboards import get_digest_topic_keyboard, get_task_actions_keyboard
+from inline_keyboards import get_digest_topic_keyboard, get_photo_response_keyboard, get_task_actions_keyboard
 from utils import correlate_items, enforce_all_rotations, create_backup
 from voice_handler import transcribe_voice
 from bot.runtime import _track_task, _cleanup_background_tasks
 
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN")
-CONVERSATION_ID     = os.getenv("CONVERSATION_ID")
-AGENTAPI_BIN        = os.getenv("AGENTAPI_BIN", "/home/sanel/.local/bin/agy")
-SUDO_PASSWORD       = os.getenv("SUDO_PASSWORD", "")
-TRANSCRIPT_PATH     = os.getenv(
-    "TRANSCRIPT_PATH",
-    f"/home/sanellathiya/.gemini/antigravity-cli/brain/{CONVERSATION_ID}/.system_generated/logs/transcript.jsonl"
-)
-user_models = {}
-POLL_INTERVAL       = 2    # seconds between transcript polls
+TELEGRAM_BOT_TOKEN = config.TELEGRAM_BOT_TOKEN
+# Kept solely for legacy helper compatibility.  It never reads an unrelated
+# CLI transcript outside the application's private runtime root.
+TRANSCRIPT_PATH = str(config.STATE_DIR / "legacy_transcript.jsonl")
 
 # ── Data source toggle – Composio remains available for Google sources. ──
 # Canvas always uses the local Firefox/ClassLink session in canvas_scraper.py.
-USE_COMPOSIO = True
+USE_COMPOSIO = config.USE_COMPOSIO
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-try:
-    import telegram_logger
-    telegram_logger.setup_telegram_logging()
-except Exception:
-    pass
+def configure_logging() -> None:
+    """Configure stdout logging during application startup, not import."""
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            format="%(asctime)s %(levelname)s %(name)s %(message)s",
+            level=logging.INFO,
+        )
+    # HTTPX logs full request URLs at INFO.  Telegram Bot API URLs contain the
+    # bot token, so transport-level request logging must never reach journald.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +130,7 @@ async def _watchdog_impl(context: ContextTypes.DEFAULT_TYPE):
     """Runs every 30 mins to check for urgent anomalies using tiny local model Qwen2 0.5B."""
     if is_sleep_window(): return
     chat_id = context.job.chat_id
+    state = load_state()
     # sys.path already set at module level
     from scrapers.canvas_scraper import get_all_canvas_data
     if USE_COMPOSIO:
@@ -172,67 +173,66 @@ async def _watchdog_impl(context: ContextTypes.DEFAULT_TYPE):
     # Match all attached files
     all_files = re.findall(r"📎\s+([^\(]+)\s*\((https://drive\.google\.com/file/d/([^/]+)/[^\)]+)\)", classroom)
 
-    nightly_queue_path = config.NIGHTLY_QUEUE_FILE
-    try:
-        with open(nightly_queue_path, "r") as f:
-            nightly_queue = json.load(f)
-    except Exception:
-        nightly_queue = []
-
-    queue_updated = False
+    pending_queue_items: list[dict] = []
 
     for title, full_link, file_id in all_files:
         thash = get_hash("file_" + file_id)
         if thash not in state.get("seen_tasks", []):
-            from bot.state import update_state
-            update_state(lambda s: s.setdefault("seen_tasks", []).append(thash))
-
             title = title.strip()
             if "A_MWF" in title:
                 # Auto-read handwritten notes
-                await context.bot.send_message(chat_id=chat_id, text=f"📝 **Auto-Reading Notes**: I noticed `{title}`. Automatically extracting the handwriting in the background to learn what you did today...")
+                await context.bot.send_message(chat_id=chat_id, text=f"📝 Reading notes from {title[:120]} locally.")
 
                 # Run it in a background thread to not block the event loop
-                loop = asyncio.get_running_loop()
                 def _extract():
-                    import tempfile
                     from scrapers.google_scraper import download_drive_file
                     from scrapers.extract_notes import transcribe_handwritten_pdf
                     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
                         path = tmp.name
-                    if download_drive_file(file_id, path):
+                    try:
+                        if not download_drive_file(file_id, path):
+                            return False
                         transcript = transcribe_handwritten_pdf(path)
-                        os.remove(path)
+                        if "Error:" in transcript:
+                            return False
+                        notes_file = config.COMBINED_SUMMARIES_FILE
+                        notes_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                        with open(notes_file, "a", encoding="utf-8") as handle:
+                            handle.write(f"\n--- DAILY NOTES ({title[:200]}) ---\n{transcript}\n")
+                        return True
+                    finally:
+                        try:
+                            os.unlink(path)
+                        except OSError:
+                            pass
 
-                        if "Error:" not in transcript:
-                            # Save to combined_summaries
-                            notes_file = os.path.join(config.CACHE_DIR, "combined_summaries.txt")
-                            os.makedirs(os.path.dirname(notes_file), exist_ok=True)
-                            with open(notes_file, "a") as f:
-                                f.write(f"\n--- DAILY NOTES ({title}) ---\n{transcript}\n")
-                            return True
-                    return False
-
-                await asyncio.to_thread(_extract)
+                if await asyncio.to_thread(_extract):
+                    update_state(lambda s, item_hash=thash: s.setdefault("seen_tasks", []).append(item_hash))
             else:
-                # Add to nightly queue
-                nightly_queue.append({"title": title, "file_id": file_id})
-                queue_updated = True
+                pending_queue_items.append({"title": title[:200], "file_id": file_id, "source": "google_drive"})
 
-    if queue_updated:
-        # Atomic write for nightly_queue.json
-        import tempfile
-        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(nightly_queue_path), suffix='.tmp')
-        try:
-            with os.fdopen(fd, 'w', encoding="utf-8") as f:
-                json.dump(nightly_queue, f, indent=2)
-            os.replace(tmp_path, nightly_queue_path)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-        await context.bot.send_message(chat_id=chat_id, text=f"🛏️ Queued {len(nightly_queue)} new practice materials for processing offline tonight.")
+    if pending_queue_items:
+        from bot.storage import AtomicJSONStore
+
+        added = 0
+        def enqueue(queue):
+            nonlocal added
+            if not isinstance(queue, list):
+                queue = []
+            existing = {str(item.get("file_id")) for item in queue if isinstance(item, dict)}
+            for item in pending_queue_items:
+                if item["file_id"] not in existing:
+                    queue.append(item)
+                    existing.add(item["file_id"])
+                    added += 1
+            return queue
+
+        AtomicJSONStore(config.NIGHTLY_QUEUE_FILE, list).update(enqueue)
+        if added:
+            update_state(lambda s: s.setdefault("seen_tasks", []).extend(
+                get_hash("file_" + item["file_id"]) for item in pending_queue_items
+            ))
+            await context.bot.send_message(chat_id=chat_id, text=f"🌙 Queued {added} study document(s) for local overnight processing.")
 
     prompt = (
             "You are an urgent alert watchdog. Read the following recent school and email notifications.\n"
@@ -353,8 +353,27 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
         ai_result = await asyncio.to_thread(process_all_sources, c, cl, gm, grp, cla, gd)
     except Exception as e:
         logger.error(f"AI processing failed: {e}")
-        await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Digest processing failed: {e}")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "<b>I couldn’t refresh the background digest.</b>\n\n"
+                "Your existing tasks and calendar entries were not changed. "
+                "Open Today and retry when your connected sources are available."
+            ),
+            parse_mode=ParseMode.HTML,
+        )
         return
+
+    # Calendar writes are disabled by default. Once explicitly enabled, only
+    # official Canvas/Classroom work is reconciled during this normal refresh.
+    try:
+        from scrapers.assignment_calendar import AssignmentCalendarService
+        calendar_service = AssignmentCalendarService()
+        if calendar_service.store.is_enabled():
+            calendar_changes = await asyncio.to_thread(calendar_service.sync_official)
+            logger.info("Assignment calendar reconciled %d official change(s)", calendar_changes)
+    except Exception as exc:
+        logger.warning("Assignment calendar reconciliation failed: %s", exc)
 
     # 1. Notion Tasks
     import difflib
@@ -417,11 +436,11 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
 
         if successful_tasks:
             tasks_str = "".join(
-                f"{priority_emoji(priority)} **{task.get('title')}** — {priority.capitalize()}\n"
+                f"{priority_emoji(priority)} {escape_html(task.get('title'))} — {escape_html(priority.capitalize())}\n"
                 for task, _page_id, priority in successful_tasks
             )
             msg_text = (
-                "🗂️ **NEW TASKS SYNCED TO NOTION**\n\n"
+                "<b>New tasks synced to Notion</b>\n\n"
                 f"{tasks_str}\n"
                 "Each task below has controls to adjust its priority or mark it started/done."
             )
@@ -429,7 +448,7 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=msg_text,
-                    parse_mode="Markdown",
+                    parse_mode=ParseMode.HTML,
                 )
             except Exception:
                 await context.bot.send_message(chat_id=chat_id, text=msg_text)
@@ -479,23 +498,23 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
                     source_line += f" • {task['course']}"
                 due_line = task.get("due_date") or "No due date"
                 task_message = (
-                    f"{priority_emoji(priority)} **{task.get('title', 'Untitled task')}**\n"
-                    f"📌 {source_line}\n"
-                    f"📅 Due: {due_line}\n"
-                    f"Priority: **{priority.capitalize()}**\n\n"
+                    f"{priority_emoji(priority)} <b>{escape_html(task.get('title', 'Untitled task'))}</b>\n"
+                    f"📌 {escape_html(source_line)}\n"
+                    f"📅 Due: {escape_html(due_line)}\n"
+                    f"Priority: <b>{escape_html(priority.capitalize())}</b>\n\n"
                     "Choose a priority or update its status:"
                 )
                 try:
                     await context.bot.send_message(
                         chat_id=chat_id,
                         text=task_message,
-                        parse_mode="Markdown",
+                        parse_mode=ParseMode.HTML,
                         reply_markup=get_task_actions_keyboard(short_id),
                     )
                 except Exception:
                     await context.bot.send_message(
                         chat_id=chat_id,
-                        text=task_message.replace("**", ""),
+                        text=task_message.replace("<b>", "").replace("</b>", ""),
                         reply_markup=get_task_actions_keyboard(short_id),
                     )
 
@@ -515,27 +534,25 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
                 f.write(digest)
         except Exception:
             pass
-        digest_msg = f"📋 **Briefing**\n\n{digest}"
-        max_len = 4096
-        for i in range(0, len(digest_msg), max_len):
-            chunk = digest_msg[i:i+max_len]
-            try:
-                await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="Markdown")
-            except Exception:
-                await context.bot.send_message(chat_id=chat_id, text=chunk)
+        await send_assistant_response(context, chat_id, digest, title="Briefing")
 
     # 3. Ask to Compile Mega Study Guides (with inline keyboard)
     topics = ai_result.get("topics", [])
     if topics:
         topics_str = "\n".join([f"- {t}" for t in topics])
         msg = (
-            f"🧠 **I detected you have upcoming assignments/tests for the following topics:**\n"
+            "I detected upcoming assignments or tests for these topics:\n"
             f"{topics_str}\n\n"
-            f"Would you like me to compile a Mega Study Guide for any of these? 📚"
+            "Choose a topic below to compile a study guide."
         )
         keyboard = get_digest_topic_keyboard(topics)
         try:
-            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown", reply_markup=keyboard)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=render_assistant_text(msg, title="Study opportunities"),
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
         except Exception:
             await context.bot.send_message(chat_id=chat_id, text=msg)
 
@@ -560,20 +577,20 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
 
 @require_auth
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
+    # The service normally schedules this on boot.  For a direct/dev start,
+    # create it only when it does not already exist; never duplicate jobs.
+    current_jobs = list(context.job_queue.get_jobs_by_name(str(config.SANEL_CHAT_ID)))
+    if not current_jobs:
+        context.job_queue.run_repeating(
+            check_updates,
+            interval=config.DIGEST_INTERVAL_SECONDS,
+            first=5,
+            chat_id=config.SANEL_CHAT_ID,
+            name=str(config.SANEL_CHAT_ID),
+        )
 
-    # Enable background polling every 5 minutes
-    current_jobs = context.job_queue.get_jobs_by_name(str(config.SANEL_CHAT_ID))
-    for job in current_jobs:
-        job.schedule_removal()
-
-    context.job_queue.run_repeating(check_updates, interval=14400, first=5, chat_id=config.SANEL_CHAT_ID, name=str(config.SANEL_CHAT_ID))
-
-    await update.message.reply_text(
-        "👋 Hey! I'm your personal Antigravity assistant.\n\n"
-        "🟢 **Background Automation is ACTIVE.** I will now check your Canvas, Gmail, Classroom, and GroupMe and send you a comprehensive digest every 4 hours.\n\n"
-        "You can also message me anytime to run a specific command."
-    )
+    text, keyboard = dashboard_message()
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
 
 # ── Concurrency Locks ─────────────────────────────────────────────────────────
@@ -607,9 +624,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_text = f"[In reply to your message: \"{reply_text}\"]\n\n{user_text}"
 
     # Send a "thinking" indicator
-    thinking_msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text="⏳ Thinking... (You are in a queue if you sent multiple messages)"
+    thinking_msg = await begin_progress(
+        context,
+        chat_id,
+        "I’m working on your request. If another request is running, yours will continue as soon as it is ready.",
     )
 
     try:
@@ -619,34 +637,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         log_event("message", {"preview": user_text[:50], "routed_to": "unknown"}, notify=False)
 
-        # Delete the thinking message
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=thinking_msg.message_id)
-        except Exception:
-            pass
-
-        # Telegram messages max out at 4096 chars; split if needed
-        max_len = 4096
-        for i in range(0, len(reply), max_len):
-            try:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=reply[i:i+max_len],
-                    parse_mode="Markdown"
-                )
-            except Exception:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=reply[i:i+max_len]
-                )
+        await edit_progress(context, chat_id, thinking_msg.message_id, "Your response is ready below.")
+        await send_assistant_response(context, chat_id, reply)
     except Exception as e:
         logger.error(f"Error handling message: {e}")
         log_event("error", {"message": str(e)[:80], "source": "handle_message"})
         try:
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=thinking_msg.message_id,
-                text="❌ An error occurred while processing your request. Please try again later."
+            await edit_progress(
+                context,
+                chat_id,
+                thinking_msg.message_id,
+                "**I couldn’t complete that request.**\n\nPlease try again in a moment. If it persists, open More → Diagnostics for the next step.",
             )
         except Exception:
             pass
@@ -661,7 +662,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("")
         return
 
-    msg = await update.message.reply_text("🎤 Transcribing voice message...")
+    msg = await begin_progress(context, chat_id, "Transcribing your voice note locally.")
 
     try:
         voice_file = await update.message.voice.get_file()
@@ -676,12 +677,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 os.unlink(tmp_path)
 
         if transcription.startswith("❌"):
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text=transcription)
+            await edit_progress(context, chat_id, msg.message_id, "**I couldn’t transcribe that voice note.**\n\nPlease try a clearer recording or send the request as text.")
             return
 
-        await context.bot.edit_message_text(
-            chat_id=chat_id, message_id=msg.message_id,
-            text=f"🎙 Transcribed: \"{transcription[:200]}{'...' if len(transcription) > 200 else ''}\"\n\nThinking..."
+        await edit_progress(
+            context,
+            chat_id,
+            msg.message_id,
+            f"**Transcription complete**\n\n{transcription[:200]}{'...' if len(transcription) > 200 else ''}\n\nThinking…",
         )
 
         # Route transcription through the AI
@@ -689,21 +692,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with user_lock:
             reply = await send_to_antigravity_and_wait(transcription, chat_id, context, msg)
 
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=msg.message_id)
-        except Exception:
-            pass
-
-        for i in range(0, len(reply), 4096):
-            try:
-                await context.bot.send_message(chat_id=chat_id, text=reply[i:i+4096], parse_mode="Markdown")
-            except Exception:
-                await context.bot.send_message(chat_id=chat_id, text=reply[i:i+4096])
+        await edit_progress(context, chat_id, msg.message_id, "Your response is ready below.")
+        await send_assistant_response(context, chat_id, reply)
 
     except Exception as e:
         logger.error(f"Error handling voice: {e}")
         try:
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="❌ Error processing voice message.")
+            await edit_progress(context, chat_id, msg.message_id, "**I couldn’t process that voice note.**\n\nPlease try again or send the request as text.")
         except Exception:
             pass
 
@@ -713,7 +708,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Downloads a photo sent to the bot, saves it, and asks the AI to process it."""
     chat_id = update.effective_chat.id
 
-    msg = await update.message.reply_text("📸 Downloading image...")
+    msg = await begin_progress(context, chat_id, "Downloading your image for local processing.", action="upload_photo")
 
     # Get the largest resolution photo
     photo_file = await update.message.photo[-1].get_file()
@@ -724,18 +719,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await photo_file.download_to_drive(download_path)
 
         caption = update.message.caption or ""
-        await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="🔍 Running local OCR (Tesseract)...")
+        await edit_progress(context, chat_id, msg.message_id, "Reading the text in your image locally.")
 
         try:
             import pytesseract
             from PIL import Image
-            ocr_text = await asyncio.to_thread(pytesseract.image_to_string, Image.open(download_path))
+            def _ocr() -> str:
+                with Image.open(download_path) as image:
+                    return pytesseract.image_to_string(image)
+            ocr_text = await asyncio.to_thread(_ocr)
             if not ocr_text.strip():
                 ocr_text = "(No text found in image)"
             log_event("photo", {"ocr_chars": len(ocr_text), "has_question": bool(caption.strip())}, notify=False)
         except Exception as e:
             log_event("error", {"message": str(e)[:80], "source": "ocr"})
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="❌ Error processing photo.")
+            await edit_progress(context, chat_id, msg.message_id, "**I couldn’t read that image.**\n\nTry a clearer photo with more contrast, then send it again.")
             return
     finally:
         if os.path.exists(download_path):
@@ -743,31 +741,22 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # If the user asked a question in the caption, route the OCR text into the primary AI so it can use the PDFs
     if caption.strip():
-        await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="🧠 Analyzing your question using the Knowledge Base & PDFs...")
+        await edit_progress(context, chat_id, msg.message_id, "Analyzing your question with the knowledge base and your uploaded text.")
         user_text = f"[I have uploaded a photo. Here is the exact text written in the photo:\n{ocr_text}]\n\nMy Question: {caption}"
         try:
             user_lock = get_user_lock(chat_id)
             async with user_lock:
                 reply = await send_to_antigravity_and_wait(user_text, chat_id, context, msg)
 
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=msg.message_id)
-            except Exception:
-                pass
-
-            max_len = 4096
-            for i in range(0, len(reply), max_len):
-                try:
-                    await context.bot.send_message(chat_id=chat_id, text=reply[i:i+max_len], parse_mode="Markdown")
-                except Exception:
-                    await context.bot.send_message(chat_id=chat_id, text=reply[i:i+max_len])
+            await edit_progress(context, chat_id, msg.message_id, "Your photo answer is ready below.")
+            await send_assistant_response(context, chat_id, reply)
             return
         except Exception as e:
             logger.error(f"Error answering photo question: {e}")
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="❌ Error analyzing photo.")
+            await edit_progress(context, chat_id, msg.message_id, "**I couldn’t analyze that photo.**\n\nTry again with a clearer image or ask your question as text.")
             return
 
-    await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="🧠 Filtering with local Qwen2 model...")
+    await edit_progress(context, chat_id, msg.message_id, "Checking the image for assignments and deadlines.")
 
     prompt = (
         "You are an offline filtering AI. Read the text extracted from this photo.\n"
@@ -778,6 +767,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Caption: {caption}\nPhoto OCR Text:\n{ocr_text}"
     )
 
+    extracted = "UNSURE"
     from llm_router import call_local_rpc
     try:
         # Try local RPC first (no rate limits).
@@ -793,199 +783,94 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if extracted and "⚠️ Local inference unavailable" in extracted:
             extracted = "UNSURE"
     except Exception:
-        logger.info("Falling back to G1 Flash for photo extraction...")
-        from ai_processor import call_agy
-        import asyncio
-        try:
-            extracted = await asyncio.to_thread(call_agy, prompt, 3600, "flash")
-        except Exception as e:
-            logger.error(f"Error calling local fallback: {e}")
-            extracted = None
-            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "important_extracts.txt"), "a") as f:
-                f.write(f"\n--- Photo Upload (Raw OCR) ---\n{ocr_text}\n")
-
-            # Add to the most recently active chat history so the user can ask follow-up questions!
-            import glob
-            history_files = glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), f"chat_history_{chat_id}_*.txt"))
-            if history_files:
-                latest_file = max(history_files, key=os.path.getmtime)
-                with open(latest_file, "a") as f:
-                    f.write(f"User: [I just uploaded a photo. Here is the raw text extracted from it: {ocr_text}]\\nModel: (Image received. I am ready for questions about it.)\\n\\n")
+        logger.info("Local photo extraction unavailable; preserving OCR for the next local digest")
+        extracted = "UNSURE"
 
     if extracted:
         if "NO_ALERT" not in extracted.upper() and "UNSURE" not in extracted.upper():
-            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "important_extracts.txt"), "a") as f:
+            config.IMPORTANT_EXTRACTS_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            with open(config.IMPORTANT_EXTRACTS_FILE, "a", encoding="utf-8") as f:
                 f.write(f"\n--- Photo Upload ---\n{extracted}\n")
             reply = f"✅ Important text found and saved for the next digest!\n\n_Filtered preview:_\n{extracted}"
-            import glob
-            history_files = glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), f"chat_history_{chat_id}_*.txt"))
-            if history_files:
-                latest_file = max(history_files, key=os.path.getmtime)
-                with open(latest_file, "a") as f:
-                    f.write(f"User: [I just uploaded a photo. Here is the raw text extracted from it: {ocr_text}]\\nModel: (Image received. I am ready for questions about it.)\\n\\n")
         else:
             # User specifically sent a photo, so it's important regardless of what the small model thinks.
-            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "important_extracts.txt"), "a") as f:
+            config.IMPORTANT_EXTRACTS_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            with open(config.IMPORTANT_EXTRACTS_FILE, "a", encoding="utf-8") as f:
                 f.write(f"\n--- Photo Upload (Raw OCR) ---\n{ocr_text}\n")
-            reply = "⚠️ Local AI couldn't parse specific assignments, but I saved the raw text for the cloud AI to review!"
+            reply = "⚠️ I couldn’t identify a specific assignment locally, but saved the extracted text for your next local digest."
+    else:
+        reply = "⚠️ I couldn’t identify an assignment from that image. The text was not sent to a cloud provider."
 
     try:
-        await context.bot.edit_message_text(
-            chat_id=chat_id, message_id=msg.message_id, text=reply, parse_mode="Markdown"
+        await edit_progress(
+            context,
+            chat_id,
+            msg.message_id,
+            reply,
+            reply_markup=get_photo_response_keyboard(),
         )
     except Exception:
-        await context.bot.edit_message_text(
-            chat_id=chat_id, message_id=msg.message_id, text=reply
-        )
+        await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text=reply, reply_markup=get_photo_response_keyboard())
 
 async def nightly_wrapper(context: ContextTypes.DEFAULT_TYPE):
+    """Run bounded, local-only maintenance and report the real outcome."""
     chat_id = context.job.chat_id
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from scrapers.nightly_processor import run_nightly_job
     from scrapers.memory_consolidation import consolidate_memory
+    from scrapers.nightly_processor import run_nightly_job
     from scrapers.web_precacher import pre_cache_web
 
+    progress = await begin_progress(context, chat_id, "Starting the nightly local maintenance cycle.")
+    stages: list[str] = []
+    failures: list[str] = []
     try:
-        msg = await context.bot.send_message(chat_id=chat_id, text="💤 **Entering Sleep Cycle...** Initiating nightly background tasks.", disable_notification=True)
-
-        # 1. Discover recent Canvas PDFs/docs, then process all queued study material.
-        try: await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="💤 **Sleep Cycle:**\n1️⃣ Processing queued OCR/Practice PDFs...", parse_mode="Markdown")
-        except Exception: pass
         try:
             from scrapers.canvas_scraper import queue_recent_canvas_study_files
-            canvas_files_queued = await asyncio.to_thread(queue_recent_canvas_study_files)
-            if canvas_files_queued:
-                logger.info("Nightly: queued %d Canvas study file(s)", canvas_files_queued)
-        except Exception as e:
-            logger.warning("Nightly: Canvas study-file discovery failed (non-critical): %s", e)
-        await run_nightly_job(context.bot, chat_id)
+            discovered = await asyncio.to_thread(queue_recent_canvas_study_files)
+            stages.append(f"queued {discovered} Canvas file(s)")
+        except Exception as exc:
+            logger.warning("Nightly source discovery failed: %s", type(exc).__name__)
+            failures.append("source discovery")
 
-        # 1.5. Clean up stale Notion tasks (archive >60d)
-        try:
-            from scrapers.notion_client import archive_stale_tasks
-            archived = await asyncio.to_thread(archive_stale_tasks, dry_run=False, max_age_days=60)
-            if archived > 0:
-                logger.info(f"Nightly: archived {archived} stale Notion tasks")
-        except Exception as e:
-            logger.warning(f"Nightly: Notion archive failed (non-critical): {e}")
+        await edit_progress(context, chat_id, progress.message_id, "Processing queued study documents locally.")
+        documents = await run_nightly_job(context.bot, chat_id)
+        stages.append(documents.detail or documents.status.value)
+        if not documents.ok:
+            failures.append("document processing")
 
-        # 1.6. Warm up Orange Pi 5 classifier (pre-loads qwen2:0.5b for morning)
-        try:
-            import requests
-            resp = requests.get("http://10.10.10.2:8080/health", timeout=10)
-            if resp.status_code == 200:
-                logger.info("Nightly: Pi classifier health OK — model warm for morning")
-            else:
-                logger.warning(f"Nightly: Pi classifier health returned {resp.status_code}")
-        except Exception as e:
-            logger.info(f"Nightly: Pi classifier warmup skipped (Pi unreachable): {e}")
+        await edit_progress(context, chat_id, progress.message_id, "Consolidating private memory and refreshing retrieval.")
+        memory = await consolidate_memory()
+        stages.append(memory.detail or memory.status.value)
+        if not memory.ok:
+            failures.append("memory consolidation")
 
-        # 2. Consolidate raw logs into curated_brain.md
-        try: await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="💤 **Sleep Cycle:**\n✅ PDFs Processed.\n2️⃣ Consolidating short-term memory into `curated_brain.md`...", parse_mode="Markdown")
-        except Exception: pass
-        await consolidate_memory()
-
-        # 3. Deep overnight research via RPC (7B+ model) with OOM-protected fallbacks
-        try: await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="💤 **Sleep Cycle:**\n✅ Memory Consolidated.\n3️⃣ Running deep overnight research (RPC 7B with OOM protection)...", parse_mode="Markdown")
-        except Exception: pass
-        try:
-            from llm_router import call_llamacpp_rpc_with_fallback, check_rpc_memory_ok
-
-            # Read curated brain for research context
-            brain_file = os.path.join(BOT_DIR, "curated_brain.md")
-            research_context = ""
-            if os.path.exists(brain_file):
-                with open(brain_file, "r") as f:
-                    research_context = f.read()[:8000]
-
-            if research_context.strip():
-                rpc_prompt = (
-                    "You are an overnight deep-research engine. Using the user's curated brain below, "
-                    "identify 3-5 key academic topics that need comprehensive study guides. "
-                    "For each topic, write a detailed, well-structured study guide section with:\n"
-                    "- Key concepts and definitions\n"
-                    "- Important formulas or principles\n"
-                    "- Common mistakes to avoid\n"
-                    "- Practice problem types\n\n"
-                    "Format in Markdown. Be thorough — this runs overnight.\n\n"
-                    f"CURATED BRAIN:\n{research_context}"
-                )
-
-                logger.info("Nightly: Attempting RPC deep research...")
-                research_result = await asyncio.to_thread(
-                    call_llamacpp_rpc_with_fallback,
-                    prompt=rpc_prompt,
-                    system_prompt="You are an expert academic tutor creating comprehensive study materials.",
-                    max_tokens=4000,
-                    task="overnight-deep-research",
-                    timeout=600,
-                )
-
-                if research_result and len(research_result) > 200:
-                    # Save to knowledge base
-                    kb_dir = os.path.join(BOT_DIR, "knowledge_base")
-                    os.makedirs(kb_dir, exist_ok=True)
-                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d")
-                    kb_file = os.path.join(kb_dir, f"deep_research_{timestamp}.md")
-                    with open(kb_file, "w") as f:
-                        f.write(f"# Deep Research — {timestamp}\n\n{research_result}")
-                    logger.info(f"Nightly: RPC deep research saved to {kb_file} ({len(research_result)} chars)")
-                    log_nightly("rpc_deep_research", "completed", {"chars": len(research_result)})
-                else:
-                    logger.warning("Nightly: RPC deep research returned insufficient content")
-                    log_nightly("rpc_deep_research", "skipped", {"reason": "insufficient_content"})
-            else:
-                logger.info("Nightly: No curated brain content for deep research — skipping RPC step")
-        except Exception as e:
-            logger.warning(f"Nightly: RPC deep research failed (non-critical): {e}")
-            log_nightly("rpc_deep_research", "failed", {"message": str(e)[:80]})
-
-        # 4. Fetch tomorrow's research based on the new brain
-        try: await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="💤 **Sleep Cycle:**\n✅ Deep Research Complete.\n4️⃣ Pre-caching tomorrow's research from the web...", parse_mode="Markdown")
-        except Exception: pass
+        # Web enrichment is off by default and has its own outbound policy.
         await pre_cache_web()
+        stages.append("web enrichment checked")
+    except Exception as exc:
+        logger.exception("Nightly cycle failed")
+        failures.append("unexpected maintenance error")
 
-        from config import BASE_DIR, PDF_EXPORTS_FILE
-        python_bin = sys.executable
-        builder_script = os.path.join(BASE_DIR, 'run_builder.py')
-
-        # 5. Auto-Generate SAT Guides
-        try: await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="💤 **Sleep Cycle:**\n✅ Web Pre-cached.\n5️⃣ Building Separated SAT Study Guides (Math, Reading, Writing)...", parse_mode="Markdown")
-        except Exception: pass
-        await asyncio.to_thread(subprocess.run, [python_bin, builder_script, 'SAT Math and Geometry Master Guide'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        await asyncio.to_thread(subprocess.run, [python_bin, builder_script, 'SAT Reading Comprehension Master Guide'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        await asyncio.to_thread(subprocess.run, [python_bin, builder_script, 'SAT Writing and Grammar Master Guide'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        # 6. Dynamic Daily Topic Guide
-        try: await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text="💤 **Sleep Cycle:**\n✅ SAT Guide Built.\n6️⃣ Analyzing today's notes to build a dynamic subject guide...", parse_mode="Markdown")
-        except Exception: pass
-
-        from ai_processor import call_agy
-        pdf_exports_file = PDF_EXPORTS_FILE
-        dynamic_topic = "General Knowledge"
-        if os.path.exists(pdf_exports_file):
-            with open(pdf_exports_file, "r") as f:
-                recent_text = f.read().strip()[-5000:]
-            if recent_text:
-                dynamic_topic = call_agy(f"Based on these study notes, extract the single most specific 1-4 word subject or topic being studied. Respond ONLY with the topic name. Notes: {recent_text}", model="flash")
-                if not dynamic_topic or len(dynamic_topic) > 50:
-                    dynamic_topic = "General Academic Concepts"
-
-        await asyncio.to_thread(subprocess.run, [python_bin, builder_script, dynamic_topic], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-        try: await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text=f"💤 **Sleep Cycle Complete:**\n✅ PDFs Processed\n✅ Notion Cleaned\n✅ Memory Consolidated\n✅ Deep Research Complete\n✅ Web Pre-cached\n✅ SAT Guide Updated\n✅ '{dynamic_topic}' Guide Generated!\n\nGood night! 🌙", parse_mode="Markdown")
-        except Exception: pass
-
-    except Exception as e:
-        logger.error(f"Nightly sleep cycle error: {e}")
+    if failures:
+        log_nightly("maintenance", "partial", {"failed_stages": failures, "stages": stages})
+        await edit_progress(
+            context,
+            chat_id,
+            progress.message_id,
+            "Nightly maintenance finished with recoverable issues: " + ", ".join(failures) + ". Queued work was retained for retry.",
+        )
+    else:
+        log_nightly("maintenance", "completed", {"stages": stages})
+        await edit_progress(context, chat_id, progress.message_id, "Nightly local maintenance completed: " + "; ".join(stages) + ".")
 
 # ── NEW COMMAND HANDLERS ──────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "your_telegram_bot_token_here":
-        print("Please set TELEGRAM_BOT_TOKEN in .env")
-        exit(1)
+    try:
+        config.initialize_runtime()
+        config.validate_runtime_config("bot")
+    except ValueError as exc:
+        raise SystemExit(f"Configuration error: {exc}") from exc
+    configure_logging()
 
     async def post_shutdown(app):
         try:
@@ -996,8 +881,46 @@ if __name__ == "__main__":
             from llm_router import cleanup_llm_clients
             await cleanup_async_caches()
             await cleanup_llm_clients()
+            close_activity_log()
 
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_shutdown(post_shutdown).build()
+    async def post_init(app):
+        """Expose only the everyday power-user commands in Telegram's menu."""
+        try:
+            await app.bot.set_my_commands([
+                BotCommand("start", "Open the assistant dashboard"),
+                BotCommand("help", "Browse help by category"),
+                BotCommand("summary", "Refresh today's digest"),
+                BotCommand("canvas", "Check current coursework"),
+                BotCommand("calendar", "Manage assignment calendar"),
+                BotCommand("model", "View or choose an AI model"),
+                BotCommand("ping", "Check assistant health"),
+            ])
+        except Exception:
+            logger.warning("Unable to update Telegram command menu", exc_info=True)
+
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        error = context.error
+        logger.exception("Unhandled Telegram update failure", exc_info=error)
+        log_event("error", {"source": "telegram_update", "error_type": type(error).__name__})
+        # The user-facing boundary should never expose exception details or
+        # attempt delivery to an untrusted chat.
+        effective_chat = getattr(update, "effective_chat", None)
+        effective_user = getattr(update, "effective_user", None)
+        if (
+            getattr(effective_chat, "id", None) == config.TELEGRAM_CHAT_ID
+            and getattr(effective_user, "id", None) == config.TELEGRAM_OWNER_USER_ID
+            and getattr(effective_chat, "type", None) == "private"
+        ):
+            try:
+                await context.bot.send_message(
+                    chat_id=config.TELEGRAM_CHAT_ID,
+                    text="I hit an unexpected error. No action was completed; please retry once.",
+                )
+            except Exception:
+                logger.warning("Unable to send generic update error", exc_info=True)
+
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
+    app.add_error_handler(error_handler)
 
     # Auto-start the background 4-hour digest task for the user on boot
     SANEL_CHAT_ID = config.SANEL_CHAT_ID
@@ -1023,7 +946,7 @@ if __name__ == "__main__":
     except Exception:
         time_until_next = 5
 
-    job_queue.run_repeating(check_updates, interval=config.DIGEST_INTERVAL_SECONDS, first=time_until_next, chat_id=SANEL_CHAT_ID, name=f"{SANEL_CHAT_ID}_digest")
+    job_queue.run_repeating(check_updates, interval=config.DIGEST_INTERVAL_SECONDS, first=time_until_next, chat_id=SANEL_CHAT_ID, name=str(SANEL_CHAT_ID))
 
     async def run_rotation_enforcement(context: ContextTypes.DEFAULT_TYPE):
         await asyncio.to_thread(enforce_all_rotations)
@@ -1072,6 +995,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("correlations", correlations_command))
     app.add_handler(CommandHandler("classroom", classroom_pdfs_command))
     app.add_handler(CommandHandler("canvas", canvas_command))
+    app.add_handler(CommandHandler("calendar", calendar_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("server", server_command))
     app.add_handler(CommandHandler("errors", errors_command))
@@ -1085,7 +1009,7 @@ if __name__ == "__main__":
 
     # Run with graceful shutdown
     try:
-        app.run_polling(drop_pending_updates=True)
+        app.run_polling(drop_pending_updates=False)
     except KeyboardInterrupt:
         pass
     finally:

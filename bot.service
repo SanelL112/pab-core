@@ -12,6 +12,19 @@ WorkingDirectory=/home/sanel/personal-assistant-bot
 ExecStart=/home/sanel/personal-assistant-bot/venv/bin/python main.py
 Restart=always
 RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
 Environment=HOME=/home/sanel
 Environment=PYTHONWARNINGS=ignore::ResourceWarning
 

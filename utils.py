@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import threading
 import atexit
+import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -21,13 +22,15 @@ import httpx
 import requests
 
 from config import (
-    BASE_DIR, CACHE_DIR, ARCHIVE_DIR, BACKUP_DIR,
+    BASE_DIR, CACHE_DIR, ARCHIVE_DIR, BACKUP_DIR, CHAT_HISTORY_DIR, LOG_DIR,
+    NIGHTLY_QUEUE_FILE, STATE_DIR,
     STATE_FILE, CURATED_BRAIN_FILE, MEGA_INDEX_FILE,
     COMBINED_SUMMARIES_FILE, CORRELATION_GRAPH_FILE,
     MAX_COMBINED_SUMMARIES_CHARS, MAX_MEGA_INDEX_CHARS,
     MAX_CURATED_BRAIN_CHARS, MAX_SEEN_TASKS, MAX_CHAT_HISTORY_KB,
     BACKUP_FILES, BACKUP_RETENTION_DAYS, SANEL_CHAT_ID,
 )
+from bot.state import update_state
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +47,13 @@ def rotate_file_if_needed(filepath: Path, max_chars: int, keep_chars: int = None
         keep = keep_chars or int(max_chars * 0.7)
         # Add rotation marker
         date_str = datetime.now().strftime("%Y-%m-%d")
+        ARCHIVE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
         archived = content[:-keep]
         rotated_path = ARCHIVE_DIR / f"{filepath.stem}_{date_str}{filepath.suffix}"
-        rotated_path.write_text(archived, encoding="utf-8")
+        _atomic_write_private_text(rotated_path, archived)
         # Keep only the recent portion
         new_content = f"[rotated older content to {rotated_path.name}]\n" + content[-keep:]
-        filepath.write_text(new_content, encoding="utf-8")
+        _atomic_write_private_text(filepath, new_content)
         logger.info(f"Rotated {filepath.name}: {len(content)} -> {len(new_content)} chars")
     except Exception as e:
         logger.error(f"Rotation failed for {filepath}: {e}")
@@ -62,15 +66,20 @@ def enforce_all_rotations():
     rotate_file_if_needed(CURATED_BRAIN_FILE, MAX_CURATED_BRAIN_CHARS)
 
     # Rotate chat history files (per-topic)
-    for f in BASE_DIR.glob("chat_history_*.txt"):
+    for f in CHAT_HISTORY_DIR.glob("chat_history_*.txt"):
         rotate_file_if_needed(f, MAX_CHAT_HISTORY_KB * 1024)
 
     # Cap state.json seen_tasks
     try:
-        state = json.loads(STATE_FILE.read_text())
-        if len(state.get("seen_tasks", [])) > MAX_SEEN_TASKS:
-            state["seen_tasks"] = state["seen_tasks"][-MAX_SEEN_TASKS:]
-            STATE_FILE.write_text(json.dumps(state))
+        changed = False
+        def cap_seen_tasks(state):
+            nonlocal changed
+            seen = state.get("seen_tasks", [])
+            if len(seen) > MAX_SEEN_TASKS:
+                state["seen_tasks"] = seen[-MAX_SEEN_TASKS:]
+                changed = True
+        update_state(cap_seen_tasks)
+        if changed:
             logger.info("Capped seen_tasks in state.json")
     except Exception as e:
         logger.error(f"Failed to cap seen_tasks: {e}")
@@ -187,53 +196,49 @@ BLOCKED_PATTERNS = [
     '__import__', 'importlib', 'exec(', 'eval(', 'os.system',
 ]
 
-_audit_log_path = BASE_DIR / "command_audit.log"
+_audit_log_path = LOG_DIR / "command_audit.log"
 _rate_limit = {}  # chat_id -> [timestamps]
+
+# Fixed diagnostic actions.  There are intentionally no caller-provided
+# arguments or paths: even nominally read-only tools such as cat/ps can disclose
+# service credentials, environment variables, private files, or command lines.
+_DIAGNOSTIC_ACTIONS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "health": (
+        ("/usr/bin/uptime",),
+        ("/usr/bin/free", "-h"),
+        ("/usr/bin/df", "-h", "/"),
+    ),
+    "uptime": (("/usr/bin/uptime",),),
+    "memory": (("/usr/bin/free", "-h"),),
+    "disk": (("/usr/bin/df", "-h", "/"),),
+    "services": (("/usr/bin/systemctl", "--failed", "--no-pager", "--no-legend"),),
+    "ollama": (("/usr/local/bin/ollama", "list"),),
+}
+_DIAGNOSTIC_ALIASES = {
+    "free": "memory",
+    "free -h": "memory",
+    "df -h": "disk",
+    "df -h /": "disk",
+    "systemctl --failed": "services",
+    "ollama list": "ollama",
+}
+
+
+def _diagnostic_action(value: str) -> str | None:
+    normalized = value.strip().lower()
+    normalized = _DIAGNOSTIC_ALIASES.get(normalized, normalized)
+    return normalized if normalized in _DIAGNOSTIC_ACTIONS else None
 
 
 def _is_command_allowed(cmd: str) -> tuple[bool, str]:
-    """
-    Validate command against strict allowlist templates.
-    Returns (allowed, reason_if_blocked).
-    """
-    cmd_stripped = cmd.strip()
-    if not cmd_stripped:
-        return False, "Empty command"
+    """Accept only a fixed diagnostic action or an exact legacy alias."""
 
-    # Check blocklist first (safety net)
-    cmd_lower = cmd_stripped.lower()
-    for blocked in BLOCKED_PATTERNS:
-        if blocked in cmd_lower:
-            return False, f"Blocked pattern: {blocked}"
-
-    # Parse command to get base command and args
-    import shlex
-    try:
-        parts = shlex.split(cmd_stripped)
-    except ValueError as e:
-        return False, f"Shell parsing error: {e}"
-
-    if not parts:
-        return False, "No command parsed"
-
-    base_cmd = parts[0]
-    args = parts[1:]
-
-    # Check against ALLOWED_COMMAND_TEMPLATES
-    matched_template = False
-    for template_cmd, template_args in ALLOWED_COMMAND_TEMPLATES:
-        if base_cmd != template_cmd:
-            continue
-        
-        # Match arguments against template
-        if _match_args(args, template_args):
-            matched_template = True
-            break
-    
-    if not matched_template:
-        return False, f"Command not in allowlist: {base_cmd} {args}"
-
-    return True, "OK"
+    if not isinstance(cmd, str) or not cmd.strip():
+        return False, "Empty diagnostic action"
+    action = _diagnostic_action(cmd)
+    if action is None:
+        return False, "Only fixed diagnostics are allowed: health, uptime, memory, disk, services, ollama"
+    return True, action
 
 
 def _match_args(args: list[str], template_args: list[str]) -> bool:
@@ -271,16 +276,14 @@ def _match_args(args: list[str], template_args: list[str]) -> bool:
 
 
 def run_bash_safely(cmd: str, chat_id: int = 0, timeout: int = 60) -> str:
+    """Run one fixed, read-only diagnostic action without a shell.
+
+    ``cmd`` is retained as the parameter name for API compatibility.  It is an
+    action ID, not a shell command, and cannot carry caller-controlled options
+    or filesystem paths.
     """
-    Run a shell command with safety checks and audit logging.
-    Returns stdout+stderr or error message.
-    
-    SECURITY: Uses allowlist validation, NO shell=True, arguments passed as list.
-    """
-    import shlex
 
     # Rate limit: max 10 commands per minute per chat - use thread-safe version
-    now = time.time()
     recent = get_rate_limit_timestamps(chat_id)
     if len(recent) >= 10:
         return "⛔ Rate limit exceeded (10 commands/min). Wait a bit."
@@ -291,33 +294,43 @@ def run_bash_safely(cmd: str, chat_id: int = 0, timeout: int = 60) -> str:
     if not allowed:
         _audit_log(cmd, chat_id, "BLOCKED")
         return f"⛔ BLOCKED: {reason}"
+    action = reason
 
-    # Log the command
-    _audit_log(cmd, chat_id, "EXECUTED")
+    _audit_log(action, chat_id, "EXECUTED")
+    command_timeout = min(max(int(timeout), 1), 30)
+    safe_env = {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+    }
 
-    # Parse command into args (NO shell=True)
     try:
-        args = shlex.split(cmd)
-    except ValueError as e:
-        return f"⛔ Command parsing error: {e}"
-
-    try:
-        result = subprocess.run(
-            args,  # List of args, no shell
-            shell=False,  # CRITICAL: No shell=True
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        output = (result.stdout + result.stderr).strip()
-        output = "\n".join(l for l in output.splitlines() if not l.startswith("[sudo]"))
-        return output[:2000] if output else "(no output)"
+        sections: list[str] = []
+        for argv in _DIAGNOSTIC_ACTIONS[action]:
+            result = subprocess.run(
+                list(argv),
+                shell=False,
+                capture_output=True,
+                text=True,
+                timeout=command_timeout,
+                stdin=subprocess.DEVNULL,
+                cwd="/",
+                env=safe_env,
+                check=False,
+            )
+            output = (result.stdout + result.stderr).strip()
+            if len(_DIAGNOSTIC_ACTIONS[action]) > 1:
+                sections.append(f"$ {Path(argv[0]).name} {' '.join(argv[1:])}\n{output or '(no output)'}")
+            else:
+                sections.append(output or "(no output)")
+        return "\n\n".join(sections)[:4000]
     except subprocess.TimeoutExpired:
-        return f"⏱ Command timed out after {timeout}s"
+        return f"⏱ Diagnostic timed out after {command_timeout}s"
     except FileNotFoundError:
-        return f"⛔ Command not found: {args[0]}"
-    except Exception as e:
-        return f"Error: {e}"
+        return "⛔ Diagnostic tool is not installed."
+    except Exception as exc:
+        logger.warning("Diagnostic action failed: %s", type(exc).__name__)
+        return "⛔ Diagnostic failed."
 
 
 def _audit_log(cmd: str, chat_id: int, status: str):
@@ -329,8 +342,21 @@ def _audit_log(cmd: str, chat_id: int, status: str):
     except Exception:
         ts = datetime.now().isoformat()
 
-    with open(_audit_log_path, "a") as f:
-        f.write(f"[{ts}] chat={chat_id} status={status} cmd={cmd[:200]}\n")
+    try:
+        _audit_log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if _audit_log_path.is_symlink():
+            return
+        flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(_audit_log_path, flags, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            os.write(fd, f"[{ts}] chat={chat_id} status={status} action={cmd[:80]}\n".encode())
+        finally:
+            os.close(fd)
+    except OSError:
+        logger.warning("Unable to write diagnostic audit log", exc_info=True)
 
 
 # ── PII Scrubber (Security) ──────────────────────────────────────────────────
@@ -446,42 +472,71 @@ def sanitize_markdown(text: str) -> str:
 
 
 # ── Backup System (Feature 8) ────────────────────────────────────────────────
+def _atomic_write_private_text(path: Path, content: str) -> None:
+    """Replace a private text file without a partial-write window."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary_path = Path(temporary)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+        path.chmod(0o600)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            temporary_path.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _backup_members() -> list[tuple[Path, str]]:
+    """Return only regular, private runtime files with safe archive names."""
+    members: list[tuple[Path, str]] = []
+    for filename in BACKUP_FILES:
+        path = STATE_DIR / filename
+        if path.is_file() and not path.is_symlink():
+            members.append((path, f"state/{filename}"))
+    for root, prefix, pattern in (
+        (CHAT_HISTORY_DIR, "chat_history", "chat_history_*.txt"),
+        (CACHE_DIR, "cache", "*.txt"),
+    ):
+        if not root.exists():
+            continue
+        for path in root.glob(pattern):
+            if path.is_file() and not path.is_symlink():
+                members.append((path, f"{prefix}/{path.name}"))
+    return members
+
+
 def create_backup() -> Optional[str]:
     """
     Create a timestamped backup of all critical state files.
     Returns the backup path or None on failure.
     """
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    BACKUP_DIR.chmod(0o700)
+    date_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     backup_name = f"backup_{date_str}.tar.gz"
     backup_path = BACKUP_DIR / backup_name
-
-    # Collect files that exist
-    files_to_backup = []
-    for fname in BACKUP_FILES:
-        fpath = BASE_DIR / fname
-        if fpath.exists():
-            files_to_backup.append(str(fpath))
-
-    # Also backup chat history
-    for fpath in BASE_DIR.glob("chat_history_*.txt"):
-        files_to_backup.append(str(fpath))
-
-    # Also backup source_cache summaries
-    for fpath in CACHE_DIR.glob("*.txt"):
-        files_to_backup.append(str(fpath))
-
-    if not files_to_backup:
+    members = _backup_members()
+    if not members:
         logger.warning("No files to backup")
         return None
 
     try:
-        # Create tar.gz with relative paths
-        cmd = ["tar", "-czf", str(backup_path), "-C", str(BASE_DIR)] + [
-            os.path.relpath(f, BASE_DIR) for f in files_to_backup
-        ]
-        subprocess.run(cmd, check=True, timeout=30)
-        logger.info(f"Backup created: {backup_path}")
+        with tarfile.open(backup_path, mode="w:gz", dereference=False) as archive:
+            for path, archive_name in members:
+                archive.add(path, arcname=archive_name, recursive=False)
+        backup_path.chmod(0o600)
+        logger.info("Backup created: %s", backup_path.name)
         # Clean old backups
         cleanup_old_backups()
         return str(backup_path)
@@ -518,25 +573,26 @@ def restore_backup(backup_path: str, dry_run: bool = True) -> str:
     """
     Restore from a backup. If dry_run, just list what would be restored.
     """
-    p = Path(backup_path)
-    if not p.exists():
-        return f"❌ Backup not found: {backup_path}"
-
-    if dry_run:
-        result = subprocess.run(
-            ["tar", "-tzf", str(p)], capture_output=True, text=True
-        )
-        files = result.stdout.strip().split("\n")[:30]
-        return f"📦 **Backup contents** ({len(files)}+ files):\n" + "\n".join(f"  {f}" for f in files)
-
-    # Actual restore
     try:
-        subprocess.run(
-            ["tar", "-xzf", str(p), "-C", str(BASE_DIR)], check=True, timeout=30
-        )
-        return f"✅ Restored from {p.name}"
-    except Exception as e:
-        return f"❌ Restore failed: {e}"
+        p = Path(backup_path).resolve(strict=True)
+        backup_root = BACKUP_DIR.resolve(strict=False)
+    except OSError:
+        return "❌ Backup not found."
+    if backup_root not in p.parents or not p.is_file():
+        return "❌ Backup path is not in the managed backup directory."
+
+    # Restore is intentionally unavailable from bot code.  It requires an
+    # operator-reviewed staging restore and an explicit operational approval.
+    if not dry_run:
+        return "⛔ Restore is disabled in the bot. Use an operator-reviewed staging restore."
+    try:
+        with tarfile.open(p, mode="r:gz") as archive:
+            names = [member.name for member in archive.getmembers() if member.isfile()]
+        files = names[:30]
+        suffix = "+" if len(names) > len(files) else ""
+        return f"📦 **Backup contents** ({len(names)} files):\n" + "\n".join(f"  {name}" for name in files) + suffix
+    except (tarfile.TarError, OSError):
+        return "❌ Backup cannot be read."
 
 
 # ── Cross-Source Correlation Engine (Feature 6) ──────────────────────────────
@@ -690,7 +746,7 @@ def get_health_status() -> str:
     # Nightly queue size
     queue_size = 0
     try:
-        qf = BASE_DIR / "nightly_queue.json"
+        qf = NIGHTLY_QUEUE_FILE
         if qf.exists():
             queue_size = len(json.loads(qf.read_text()))
     except Exception:

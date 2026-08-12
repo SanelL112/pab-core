@@ -114,6 +114,7 @@ CURATED_BRAIN_FILE = STATE_DIR / "curated_brain.md"
 MEGA_INDEX_FILE = STATE_DIR / "mega_index.md"
 BOT_CONTEXT_FILE = STATE_DIR / "bot_context.txt"
 NIGHTLY_QUEUE_FILE = STATE_DIR / "nightly_queue.json"
+NIGHTLY_DEAD_LETTER_FILE = STATE_DIR / "nightly_dead_letter.json"
 COST_LOG_FILE = STATE_DIR / "llm_cost_log.json"
 CORRELATION_GRAPH_FILE = STATE_DIR / "correlation_graph.json"
 CHAT_HISTORY_DIR = STATE_DIR / "chat_history"
@@ -196,7 +197,7 @@ BACKUP_RETENTION_DAYS = 30
 BACKUP_FILES = [
     "state.json", "curated_brain.md", "mega_index.md", "bot_context.txt",
     "latest_digest.txt", "correlation_graph.json", "llm_cost_log.json",
-    "nightly_queue.json", "runtime.sqlite3",
+    "nightly_queue.json", "nightly_dead_letter.json", "runtime.sqlite3",
 ]
 
 

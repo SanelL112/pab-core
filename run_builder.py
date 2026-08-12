@@ -1,61 +1,85 @@
-import asyncio
+"""Build one private study guide without publishing, staging, or pushing it."""
+from __future__ import annotations
+
+import argparse
 import os
+import re
+import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
-# Ensure the parent directory is in sys.path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-from scrapers.mega_study_builder import generate_mega_guide, logging
-try:
-    import telegram_logger
-    telegram_logger.setup_telegram_logging()
-except Exception as e:
-    print(f"Could not load telegram logger: {e}")
+import config
+from scrapers.mega_study_builder import generate_mega_guide
 
 
-async def main():
-    import datetime
-    import subprocess
-    
-    # Allow passing a dynamic topic via CLI, default to SAT
-    topic = sys.argv[1] if len(sys.argv) > 1 else "Comprehensive SAT Exam Prep Guide"
-    filename_base = topic.replace(" ", "_").replace("/", "_")
-    
-    print(f"Generating Mega Study Guide for: {topic}...")
-    # The pdf_exports.txt is automatically pulled inside generate_mega_guide
-    result = generate_mega_guide(topic)
-    
-    if result:
-        output_md = f"/home/sanel/personal-assistant-bot/study_guides/{filename_base}_Study_Guide.md"
-        output_docx = f"/home/sanel/personal-assistant-bot/{filename_base}_Study_Guide.docx"
-        
-        # Always overwrite the file so we don't end up with stacked/redundant versions
-        with open(output_md, "w", encoding="utf-8") as f:
-            f.write(result)
-        print(f"Successfully created study guide at {output_md}")
-        
-        # Convert to DOCX using Pandoc
-        print("Converting Markdown to DOCX format...")
+def _safe_filename(topic: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", topic).strip("_").lower()
+    if not cleaned:
+        raise ValueError("topic must include letters or numbers")
+    return cleaned[:80]
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary_path = Path(temporary)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary_path.replace(path)
+        path.chmod(0o600)
+    finally:
+        if fd >= 0:
+            os.close(fd)
         try:
-            subprocess.run(["pandoc", output_md, "-o", output_docx], check=True)
-            print(f"Successfully created Word document at {output_docx}")
-            
-            # Automatically push the generated study guides to GitHub
-            print("Pushing generated study guides to GitHub...")
-            os.chdir("/home/sanel/personal-assistant-bot")
-            subprocess.run(["git", "add", output_md, output_docx], check=True)
-            # Check if there are actually changes before committing
-            status = subprocess.run(["git", "diff", "--cached", "--quiet"], capture_output=True)
-            if status.returncode != 0:  # there are staged changes
-                subprocess.run(["git", "commit", "-m", f"docs: Auto-update {filename_base} study guide"], check=True)
-                subprocess.run(["git", "push"], check=True)
-                print("Successfully synced to GitHub!")
-            else:
-                print("No changes to commit — study guide is up to date.")
-        except Exception as e:
-            print(f"Post-processing pipeline failed: {e}")
-    else:
-        print("Failed to generate study guide.")
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("topic", nargs="?", default="Comprehensive SAT Exam Prep Guide")
+    parser.add_argument("--docx", action="store_true", help="also convert with locally installed pandoc")
+    args = parser.parse_args(argv)
+    topic = " ".join(args.topic.split())
+    if not 2 <= len(topic) <= 120:
+        parser.error("topic must be 2–120 characters")
+
+    config.initialize_runtime()
+    filename = _safe_filename(topic) + "_study_guide"
+    print(f"Building private study guide for: {topic}")
+    result = generate_mega_guide(topic)
+    if not result or len(result.strip()) < 80:
+        print("Study-guide generation did not return publishable content.", file=sys.stderr)
+        return 1
+
+    markdown_path = config.PRIVATE_STUDY_GUIDES_DIR / f"{filename}.md"
+    _atomic_write(markdown_path, result)
+    print(f"Created {markdown_path}")
+
+    if args.docx:
+        document_path = config.PRIVATE_STUDY_GUIDES_DIR / f"{filename}.docx"
+        completed = subprocess.run(
+            ["pandoc", str(markdown_path), "-o", str(document_path)],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if completed.returncode:
+            print("Pandoc conversion failed; the Markdown guide is still available.", file=sys.stderr)
+            return 1
+        document_path.chmod(0o600)
+        print(f"Created {document_path}")
+    return 0
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(main())

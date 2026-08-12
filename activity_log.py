@@ -1,331 +1,391 @@
+"""Structured, privacy-preserving activity diagnostics.
+
+Disk writes are bounded and serialized across processes.  Optional Telegram
+alerts are delivered by a bounded background queue, so an unavailable network
+cannot stall bot handlers or batch jobs.
 """
-Activity Log — a running feed of everything the bot does.
+from __future__ import annotations
 
-Writes timestamped entries to activity_log.jsonl (one JSON object per line).
-Also sends muted Telegram notifications for important events.
-
-Usage from anywhere in the bot:
-    from activity_log import log_event, log_llm_call, log_scrape, log_system
-
-    log_event("photo_processed", {"ocr_chars": 1234, "has_homework": True})
-    log_llm_call("openrouter/owl-alpha", "photo-extract", 1500, 2.3)
-    log_scrape("canvas", 5, "new assignments")
-    log_system("mc_server", "started", {"ram_mb": 1500})
-
-Events are also mirrored to Telegram as muted (silent) notifications
-for important events (errors, scrapes, LLM calls, system changes).
-"""
-
-import os
-import json
-import time
-import logging
-import threading
+import atexit
+from collections import deque
 from datetime import datetime, timezone
+import fcntl
+import json
+import logging
+import os
+from pathlib import Path
+import queue
+import re
+import tempfile
+import threading
+import time
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
+
+import config
+
 
 logger = logging.getLogger(__name__)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_PATH = os.path.join(BASE_DIR, "activity_log.jsonl")
-MAX_LOG_SIZE = 5 * 1024 * 1024  # 5 MB max, then rotate
-MAX_ENTRIES = 5000  # keep last 5000 entries after rotation
+# Keep this public compatibility name for diagnostic tools and tests.  Its
+# default is now the configured private log root instead of the checkout.
+BASE_DIR = str(config.LOG_DIR)
+LOG_PATH = str(config.ACTIVITY_LOG_FILE)
+MAX_LOG_SIZE = 5 * 1024 * 1024
+MAX_ENTRIES = 5_000
+MAX_DETAIL_ITEMS = 40
+MAX_COLLECTION_ITEMS = 20
+MAX_TEXT_LENGTH = 500
 
-# Thread-safe write lock
-_write_lock = threading.Lock()
-
-# Telegram notification config
-_TELEGRAM_TOKEN = None
-_TELEGRAM_CHAT_ID = None
-
-
-def _init_telegram():
-    """Lazily load Telegram credentials."""
-    global _TELEGRAM_TOKEN, _TELEGRAM_CHAT_ID
-    if _TELEGRAM_TOKEN is not None:
-        return
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(os.path.join(BASE_DIR, ".env"))
-        _TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-        _TELEGRAM_CHAT_ID = os.getenv("SANEL_CHAT_ID", "8534649457")
-    except Exception:
-        _TELEGRAM_TOKEN = ""
+_write_lock = threading.RLock()
+_notify_queue: queue.Queue[str | None] = queue.Queue(maxsize=100)
+_notify_thread: threading.Thread | None = None
+_notify_thread_lock = threading.Lock()
+_notify_stop = threading.Event()
+_dropped_notifications = 0
 
 
-# Event categories that should trigger a muted Telegram notification
 _NOTIFY_CATEGORIES = {
-    "error", "llm_call", "scrape", "system", "nightly",
-    "verification", "digest", "alert",
+    "error", "scrape", "system", "nightly", "verification", "digest", "alert",
 }
 
-# Short label map for Telegram
 _CATEGORY_ICONS = {
-    "message": "\U0001f4ac",
-    "photo": "\U0001f4f7",
-    "voice": "\U0001f3a4",
-    "llm_call": "\U0001f9e0",
-    "scrape": "\U0001f4e5",
-    "system": "\u2699\ufe0f",
-    "nightly": "\U0001f319",
-    "error": "\u274c",
-    "digest": "\U0001f4f0",
-    "verification": "\u2705",
-    "alert": "\u26a0\ufe0f",
-    "embed": "\U0001f9e0",
-    "mc_server": "\u26cf\ufe0f",
-    "guide_built": "\U0001f4da",
+    "message": "💬", "photo": "📷", "voice": "🎤", "llm_call": "🧠",
+    "scrape": "📥", "system": "⚙️", "nightly": "🌙", "error": "❌",
+    "digest": "📰", "verification": "✅", "alert": "⚠️", "embed": "🧠",
+    "mc_server": "⛏️", "guide_built": "📚",
 }
 
+_SECRET_KEY = re.compile(
+    r"(?:authorization|cookie|password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|bot[_-]?token)",
+    re.IGNORECASE,
+)
+_CONTENT_KEY = re.compile(
+    r"(?:^|_)(?:body|content|prompt|raw|transcript|ocr_text|user_text|response)(?:$|_)",
+    re.IGNORECASE,
+)
+_EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
+_PHONE = re.compile(r"(?<!\d)(?:\+?1[-. (]*)?(?:\d{3}[-. )]*)\d{3}[-. ]*\d{4}(?!\d)")
+_BOT_TOKEN_URL = re.compile(r"/bot[^/\s]+/", re.IGNORECASE)
+_KEY_VALUE_SECRET = re.compile(
+    r"(?i)\b(token|password|secret|api[_-]?key|authorization)\b\s*[:=]\s*[^\s,;]+"
+)
+_HOME_PATH = re.compile(r"/(?:home|root)/[^/\s]+(?:/[^\s]*)?")
 
-def _rotate_if_needed():
-    """Trim the log file if it exceeds MAX_LOG_SIZE."""
-    if not os.path.exists(LOG_PATH):
-        return
+
+def _redacted_length(value: object) -> str:
     try:
-        if os.path.getsize(LOG_PATH) < MAX_LOG_SIZE:
-            return
-        # Read all lines, keep last MAX_ENTRIES
-        with open(LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-        if len(lines) > MAX_ENTRIES:
-            with open(LOG_PATH, "w", encoding="utf-8") as f:
-                for line in lines[-MAX_ENTRIES:]:
-                    f.write(line)
-    except Exception:
-        pass
+        size = len(value)  # type: ignore[arg-type]
+    except (TypeError, AttributeError):
+        size = len(str(value))
+    return f"[redacted:{size}]"
 
 
-def _send_telegram_notification(text: str):
-    """Send a muted (silent) Telegram message.
-
-    SECURITY: PII is scrubbed before sending to Telegram cloud API.
-    """
-    _init_telegram()
-    if not _TELEGRAM_TOKEN or not _TELEGRAM_CHAT_ID:
-        return
-
-    # Scrub PII from notification text before sending to cloud
-    from utils import scrub_pii
-    safe_text = scrub_pii(text, aggressive=True)
+def _safe_url(match: re.Match[str]) -> str:
+    raw = match.group(0)
     try:
-        import httpx
-        httpx.post(
-            f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}/sendMessage",
-            json={
-                "chat_id": _TELEGRAM_CHAT_ID,
-                "text": safe_text,
-                "parse_mode": "Markdown",
-                "disable_notification": True,  # MUTED!
-            },
-            timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0),
-        )
-    except Exception:
-        pass  # notifications are best-effort
+        parsed = urlsplit(raw)
+        host = parsed.hostname or "private-host"
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+    except (ValueError, TypeError):
+        return "[redacted-url]"
 
 
-def log_event(category: str, details: dict = None, notify: bool = None):
-    """Log an activity event.
+_URL = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 
-    Args:
-        category: What happened (e.g. "message", "photo", "llm_call", "scrape", "error")
-        details: Optional dict with event-specific data
-        notify: Force notify (True) or suppress (False). Default: auto based on category.
-    """
-    entry = {
-        "ts": time.time(),
-        "time": datetime.now().strftime("%H:%M:%S"),
-        "date": datetime.now().strftime("%Y-%m-%d"),
-        "cat": category,
-        "details": details or {},
-    }
 
-    with _write_lock:
-        _rotate_if_needed()
+def _sanitize_text(value: object, *, limit: int = MAX_TEXT_LENGTH) -> str:
+    text = str(value)
+    text = _BOT_TOKEN_URL.sub("/bot[redacted]/", text)
+    text = _KEY_VALUE_SECRET.sub(lambda match: f"{match.group(1)}=[redacted]", text)
+    text = _EMAIL.sub("[redacted-email]", text)
+    text = _PHONE.sub("[redacted-phone]", text)
+    text = _URL.sub(_safe_url, text)
+    text = _HOME_PATH.sub("[private-path]", text)
+    text = " ".join(text.split())
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
+def _sanitize(value: Any, *, key: str = "", depth: int = 0) -> Any:
+    """Recursively bound and redact an event value before it reaches disk."""
+    if _SECRET_KEY.search(key):
+        return "[redacted]"
+    if _CONTENT_KEY.search(key):
+        return _redacted_length(value)
+    if depth >= 4:
+        return "[truncated]"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return _sanitize_text(value)
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for index, (item_key, item_value) in enumerate(value.items()):
+            if index >= MAX_DETAIL_ITEMS:
+                result["_truncated"] = len(value) - MAX_DETAIL_ITEMS
+                break
+            safe_key = _sanitize_text(item_key, limit=80)
+            result[safe_key] = _sanitize(item_value, key=safe_key, depth=depth + 1)
+        return result
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+        result = [_sanitize(item, key=key, depth=depth + 1) for item in items[:MAX_COLLECTION_ITEMS]]
+        if len(items) > MAX_COLLECTION_ITEMS:
+            result.append(f"[truncated:{len(items) - MAX_COLLECTION_ITEMS}]")
+        return result
+    return _sanitize_text(repr(value))
+
+
+def _path() -> Path:
+    return Path(LOG_PATH)
+
+
+def _atomic_replace(path: Path, data: bytes) -> None:
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary_path = Path(temporary)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        path.chmod(0o600)
+    except BaseException:
         try:
-            with open(LOG_PATH, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception:
+            os.close(fd)
+        except OSError:
             pass
+        try:
+            temporary_path.unlink()
+        except OSError:
+            pass
+        raise
 
-    # Telegram notification
-    should_notify = notify if notify is not None else (category in _NOTIFY_CATEGORIES)
+
+def _rotate_if_needed(path: Path | None = None) -> None:
+    path = path or _path()
+    if not path.exists() or path.stat().st_size < MAX_LOG_SIZE:
+        return
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        lines = deque(handle, maxlen=MAX_ENTRIES)
+    _atomic_replace(path, "".join(lines).encode("utf-8"))
+
+
+def _append_entry(entry: dict[str, Any]) -> None:
+    path = _path()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
+    lock_path = path.with_name(f".{path.name}.lock")
+    payload = (json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    with _write_lock:
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            _rotate_if_needed(path)
+            fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+                os.write(fd, payload)
+            finally:
+                os.close(fd)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+
+
+def _notification_worker() -> None:
+    """Deliver alerts with pooling and a ten-per-minute rate limit."""
+    import httpx
+
+    sent: deque[float] = deque()
+    timeout = httpx.Timeout(connect=5.0, read=15.0, write=10.0, pool=5.0)
+    limits = httpx.Limits(max_connections=2, max_keepalive_connections=1)
+    with httpx.Client(timeout=timeout, limits=limits) as client:
+        while not _notify_stop.is_set():
+            try:
+                text = _notify_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                if text is None:
+                    return
+                now = time.monotonic()
+                while sent and now - sent[0] >= 60:
+                    sent.popleft()
+                if len(sent) >= 10:
+                    continue
+                response = client.post(
+                    f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage",
+                    json={
+                        "chat_id": config.TELEGRAM_CHAT_ID,
+                        "text": text[:3500],
+                        "disable_notification": True,
+                    },
+                )
+                response.raise_for_status()
+                sent.append(now)
+            except Exception as exc:
+                # Never include the token-bearing request URL or response body.
+                logger.warning("Activity notification delivery failed (%s)", type(exc).__name__)
+            finally:
+                _notify_queue.task_done()
+
+
+def _ensure_notification_worker() -> bool:
+    global _notify_thread
+    if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
+        return False
+    with _notify_thread_lock:
+        if _notify_thread is None or not _notify_thread.is_alive():
+            _notify_stop.clear()
+            _notify_thread = threading.Thread(
+                target=_notification_worker,
+                name="activity-notifier",
+                daemon=True,
+            )
+            _notify_thread.start()
+    return True
+
+
+def _send_telegram_notification(text: str) -> None:
+    """Queue a scrubbed notification without blocking the caller."""
+    global _dropped_notifications
+    if not _ensure_notification_worker():
+        return
+    try:
+        _notify_queue.put_nowait(_sanitize_text(text, limit=3500))
+    except queue.Full:
+        _dropped_notifications += 1
+        logger.warning("Activity notification queue full; dropped=%d", _dropped_notifications)
+
+
+def close_activity_log(timeout: float = 2.0) -> None:
+    """Best-effort notifier shutdown for application lifecycle hooks."""
+    thread = _notify_thread
+    if thread is None or not thread.is_alive():
+        return
+    _notify_stop.set()
+    try:
+        _notify_queue.put_nowait(None)
+    except queue.Full:
+        pass
+    thread.join(timeout=max(0.0, timeout))
+
+
+atexit.register(close_activity_log)
+
+
+def log_event(category: str, details: dict | None = None, notify: bool | None = None) -> None:
+    """Persist a bounded event and optionally queue a muted owner alert."""
+    safe_category = _sanitize_text(category, limit=64) or "unknown"
+    now = datetime.now(timezone.utc)
+    entry = {
+        "ts": now.timestamp(),
+        "timestamp": now.isoformat().replace("+00:00", "Z"),
+        "time": now.astimezone().strftime("%H:%M:%S"),
+        "date": now.astimezone().strftime("%Y-%m-%d"),
+        "cat": safe_category,
+        "details": _sanitize(details or {}),
+    }
+    try:
+        _append_entry(entry)
+    except Exception as exc:
+        logger.error("Unable to persist activity event (%s)", type(exc).__name__)
+
+    should_notify = notify if notify is not None else safe_category in _NOTIFY_CATEGORIES
     if should_notify:
-        icon = _CATEGORY_ICONS.get(category, "\U0001f4e5")
-        # Build short summary
-        summary = _format_event_short(icon, entry)
-        _send_telegram_notification(summary)
+        _send_telegram_notification(_format_event_short(_CATEGORY_ICONS.get(safe_category, "📥"), entry))
 
 
 def _format_event_short(icon: str, entry: dict) -> str:
-    """Format an event for a compact Telegram notification."""
-    d = entry.get("details", {})
-    cat = entry.get("cat", "?")
-    t = entry.get("time", "?")
-
-    # SCRUB ALL VALUES before formatting - PII protection
-    from utils import scrub_pii
-    safe_details = {k: scrub_pii(str(v), aggressive=True) for k, v in d.items()}
-
-    # Category-specific formatting (use safe_details only)
+    d = _sanitize(entry.get("details", {}))
+    cat = _sanitize_text(entry.get("cat", "?"), limit=64)
+    t = _sanitize_text(entry.get("time", "?"), limit=16)
+    if not isinstance(d, dict):
+        d = {}
     if cat == "llm_call":
-        model = safe_details.get("model", "?")
-        task = safe_details.get("task", "")
-        dur = safe_details.get("duration_s", "?")
-        try:
-            cost = float(safe_details.get("cost_usd", 0))
-        except ValueError:
-            cost = 0.0
-        return f"{icon} `{t}` `{model}` {task} ({dur}s, ${cost:.4f})"
-
+        return f"{icon} {t} {d.get('model', '?')} {d.get('task', '')} ({d.get('duration_s', '?')}s)"
     if cat == "scrape":
-        source = safe_details.get("source", "?")
-        count = safe_details.get("count", "?")
-        note = safe_details.get("note", "")
-        return f"{icon} `{t}` Scraped {source}: {count} {note}".strip()
-
+        return f"{icon} {t} scrape {d.get('source', '?')}: {d.get('count', '?')}"
     if cat == "system":
-        subsystem = safe_details.get("subsystem", "?")
-        action = safe_details.get("action", "?")
-        return f"{icon} `{t}` {subsystem}: {action}"
-
+        return f"{icon} {t} {d.get('subsystem', '?')}: {d.get('action', '?')}"
     if cat == "error":
-        msg = safe_details.get("message", "unknown error")[:80]
-        source = safe_details.get("source", "")
-        return f"{icon} `{t}` {source}: {msg}" if source else f"{icon} `{t}` {msg}"
-
+        return f"{icon} {t} {d.get('source', 'application')}: {d.get('message', 'error')}"
     if cat == "nightly":
-        phase = safe_details.get("phase", "?")
-        status = safe_details.get("status", "?")
-        return f"{icon} `{t}` Nightly: {phase} {status}"
-
+        return f"{icon} {t} nightly {d.get('phase', '?')}: {d.get('status', '?')}"
     if cat == "digest":
-        sources = safe_details.get("sources", "?")
-        action = safe_details.get("action", "sent")
-        return f"{icon} `{t}` Digest {action} ({sources} sources)"
-
-    # Generic
-    detail_str = ""
-    if safe_details:
-        detail_str = " " + " ".join(f"{k}={v}" for k, v in list(safe_details.items())[:3])
-    return f"{icon} `{t}` {cat}{detail_str}"
+        return f"{icon} {t} digest {d.get('action', 'sent')}"
+    return f"{icon} {t} {cat}"
 
 
 def log_llm_call(model: str, task: str, duration_s: float, cost_usd: float = 0,
-                 tokens_in: int = 0, tokens_out: int = 0, is_local: bool = False):
-    """Convenience: log an LLM call."""
+                 tokens_in: int = 0, tokens_out: int = 0, is_local: bool = False) -> None:
     log_event("llm_call", {
-        "model": model,
-        "task": task,
-        "duration_s": round(duration_s, 1),
-        "cost_usd": round(cost_usd, 6),
-        "tokens_in": tokens_in,
-        "tokens_out": tokens_out,
-        "local": is_local,
+        "model": model, "task": task, "duration_s": round(duration_s, 1),
+        "cost_usd": round(cost_usd, 6), "tokens_in": tokens_in,
+        "tokens_out": tokens_out, "local": is_local,
     })
 
 
-def log_scrape(source: str, count: int, note: str = ""):
-    """Convenience: log a scrape event."""
+def log_scrape(source: str, count: int, note: str = "") -> None:
     log_event("scrape", {"source": source, "count": count, "note": note})
 
 
-def log_system(subsystem: str, action: str, details: dict = None):
-    """Convenience: log a system event (MC server start/stop, etc)."""
-    d = {"subsystem": subsystem, "action": action}
+def log_system(subsystem: str, action: str, details: dict | None = None) -> None:
+    payload = {"subsystem": subsystem, "action": action}
     if details:
-        d.update(details)
-    log_event("system", d)
+        payload.update(details)
+    log_event("system", payload)
 
 
-def log_nightly(phase: str, status: str, details: dict = None):
-    """Convenience: log a nightly pipeline event."""
-    d = {"phase": phase, "status": status}
+def log_nightly(phase: str, status: str, details: dict | None = None) -> None:
+    payload = {"phase": phase, "status": status}
     if details:
-        d.update(details)
-    log_event("nightly", d, notify=True)
+        payload.update(details)
+    log_event("nightly", payload, notify=True)
 
 
-def get_recent_events(n: int = 30, category: str = None) -> list[dict]:
-    """Read the last N events from the activity log, optionally filtered by category."""
-    if not os.path.exists(LOG_PATH):
+def get_recent_events(n: int = 30, category: str | None = None) -> list[dict]:
+    """Return at most ``n`` recent valid entries without loading the whole log."""
+    if n <= 0:
+        return []
+    path = _path()
+    if not path.exists():
         return []
     try:
-        with open(LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-    except Exception:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            candidates = deque(handle, maxlen=min(max(n * 5, n), MAX_ENTRIES))
+    except OSError:
         return []
-
-    events = []
-    for line in reversed(lines):
-        line = line.strip()
-        if not line:
-            continue
+    events: list[dict] = []
+    for line in reversed(candidates):
         try:
             entry = json.loads(line)
-            if category and entry.get("cat") != category:
-                continue
-            events.append(entry)
-            if len(events) >= n:
-                break
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             continue
-
-    return list(reversed(events))  # newest last (chronological order)
+        if category and entry.get("cat") != category:
+            continue
+        events.append(_sanitize(entry))
+        if len(events) >= n:
+            break
+    return list(reversed(events))
 
 
 def format_events(events: list[dict]) -> str:
-    """Format events for display in Telegram."""
+    """Format stored events as bounded plain text for Telegram."""
     if not events:
         return "No events logged yet."
-
-    lines = []
-    for e in events:
-        cat = e.get("cat", "?")
-        icon = _CATEGORY_ICONS.get(cat, "\U0001f4e5")
-        t = e.get("time", "?")
-        d = e.get("details", {})
-
-        if cat == "llm_call":
-            model = d.get("model", "?")
-            task = d.get("task", "")
-            dur = d.get("duration_s", "?")
-            local = "LOCAL" if d.get("local") else "cloud"
-            lines.append(f"`{t}` {icon} `{model}` {task} ({dur}s, {local})")
-        elif cat == "scrape":
-            source = d.get("source", "?")
-            count = d.get("count", "?")
-            note = d.get("note", "")
-            lines.append(f"`{t}` {icon} {source}: {count} {note}".strip())
-        elif cat == "system":
-            subsystem = d.get("subsystem", "?")
-            action = d.get("action", "?")
-            lines.append(f"`{t}` {icon} {subsystem}: {action}")
-        elif cat == "error":
-            msg = d.get("message", "?")[:60]
-            source = d.get("source", "")
-            lines.append(f"`{t}` {icon} {source}: {msg}" if source else f"`{t}` {icon} {msg}")
-        elif cat == "nightly":
-            phase = d.get("phase", "?")
-            status = d.get("status", "?")
-            lines.append(f"`{t}` {icon} {phase}: {status}")
-        elif cat == "message":
-            msg = d.get("preview", "?")[:50]
-            routed = d.get("routed_to", "?")
-            lines.append(f"`{t}` {icon} \"{msg}\" -> {routed}")
-        elif cat == "photo":
-            has_q = d.get("has_question", False)
-            chars = d.get("ocr_chars", 0)
-            lines.append(f"`{t}` {icon} photo (OCR: {chars} chars, question: {has_q})")
-        elif cat == "digest":
-            action = d.get("action", "sent")
-            sources = d.get("sources", "?")
-            lines.append(f"`{t}` {icon} digest {action} ({sources} sources)")
-        elif cat == "embed":
-            action = d.get("action", "?")
-            chunks = d.get("chunks", "?")
-            lines.append(f"`{t}` {icon} embed: {action} ({chunks} chunks)")
-        else:
-            detail_str = " ".join(f"{k}={v}" for k, v in list(d.items())[:3]) if d else ""
-            lines.append(f"`{t}` {icon} {cat} {detail_str}".strip())
-
-    return "\n".join(lines)
+    lines: list[str] = []
+    for raw in events[:100]:
+        entry = _sanitize(raw)
+        if not isinstance(entry, dict):
+            continue
+        icon = _CATEGORY_ICONS.get(str(entry.get("cat")), "📥")
+        lines.append(_format_event_short(icon, entry))
+    return "\n".join(lines) or "No valid events logged yet."

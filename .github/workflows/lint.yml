@@ -36,13 +36,13 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Install pyflakes + bot dependencies
+      - name: Install lint, test, and bot dependencies
         # Install the bot's full requirements so the import check actually runs
         # (otherwise all SAFE_MODULES would be silently skipped as "missing dep"
         # and the DeprecationWarning-as-error check would be a no-op).
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install pyflakes -r requirements.txt
+          python3 -m pip install pyflakes -r requirements.txt -r requirements-test.in
 
       - name: Collect all .py files
         id: files
@@ -87,7 +87,7 @@ jobs:
               "config",
           ]
 
-          ok, skipped, failed = 0, 0, 0
+          ok, failed = 0, 0
           for m in SAFE_MODULES:
               try:
                   __import__(m)
@@ -95,12 +95,14 @@ jobs:
                   ok += 1
               except DeprecationWarning as e:
                   print(f"  DEPRECATION in {m}: {e}")
-                  sys.exit(1)
+                  failed += 1
               except Exception as e:
-                  print(f"  (skip {m}: {type(e).__name__}: {str(e)[:80]})")
-                  skipped += 1
+                  print(f"  import FAILED {m}: {type(e).__name__}: {str(e)[:120]}")
+                  failed += 1
 
-          print(f"  -> {ok} ok, {skipped} skipped, {failed} failed")
+          print(f"  -> {ok} ok, {failed} failed")
+          if failed:
+              sys.exit(1)
           PYEOF
 
       - name: "[3/3] static grep for known 3.10+/3.12+ deprecation patterns"
@@ -122,3 +124,25 @@ jobs:
             exit 1
           fi
           echo "  static-grep: OK"
+
+      - name: Hermetic pytest suite
+        env:
+          PAB_ENV_FILE: ${{ runner.temp }}/pab-ci/absent.env
+          PAB_CONFIG_DIR: ${{ runner.temp }}/pab-ci/config
+          PAB_RUNTIME_DIR: ${{ runner.temp }}/pab-ci/runtime
+          PAB_STATE_DIR: ${{ runner.temp }}/pab-ci/state
+          PAB_LOG_DIR: ${{ runner.temp }}/pab-ci/logs
+          TELEGRAM_BOT_TOKEN: ci-dummy-token
+          TELEGRAM_CHAT_ID: '424242'
+          TELEGRAM_OWNER_USER_ID: '424242'
+          CONVERSATION_ID: ci-dummy
+          OPENROUTER_API_KEY: ci-dummy
+        run: python3 -m pytest
+
+      - name: Verify tests did not modify the checkout
+        run: |
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            git status --short --untracked-files=all
+            echo "Tests modified the checkout"
+            exit 1
+          fi
