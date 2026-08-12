@@ -1,45 +1,55 @@
+"""Authorization checks for Telegram's external handler boundary."""
+from __future__ import annotations
+
 import logging
 from functools import wraps
-from telegram import Update
-from telegram.ext import ContextTypes
-import sys
-import os
 
-# Ensure config is available
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import SANEL_CHAT_ID
+from telegram import Update
+from telegram.constants import ChatType
+from telegram.ext import ContextTypes
+
+import config
 
 logger = logging.getLogger(__name__)
 
+def _authorized(update: Update | None) -> tuple[bool, int | None, int | None]:
+    """Return the policy decision plus non-secret IDs for diagnostics."""
+    if update is None:
+        return False, None, None
+    chat = update.effective_chat
+    user = update.effective_user
+    chat_id = getattr(chat, "id", None)
+    user_id = getattr(user, "id", None)
+    chat_type = getattr(chat, "type", None)
+    allowed = (
+        chat_id is not None
+        and user_id is not None
+        and chat_type == ChatType.PRIVATE
+        and int(chat_id) == int(config.TELEGRAM_CHAT_ID)
+        and int(user_id) == int(config.TELEGRAM_OWNER_USER_ID)
+    )
+    return allowed, chat_id, user_id
+
+
 def require_auth(func):
-    """
-    Decorator to ensure that only the authorized user (SANEL_CHAT_ID)
-    can execute the decorated command handler.
-    """
+    """Allow only the configured owner in the configured private chat."""
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        # A command without a Telegram update has no identity to authorize.
-        # Never treat this as an internal/trusted call: handlers are an external
-        # boundary and must fail closed when Telegram context is unavailable.
-        if not update:
-            logger.warning("Unauthorized handler invocation without an update")
+        allowed, chat_id, user_id = _authorized(update)
+        if not allowed:
+            logger.warning(
+                "Denied Telegram handler invocation (chat_id=%s, user_id=%s)",
+                chat_id,
+                user_id,
+            )
+            message = getattr(update, "message", None) if update else None
+            query = getattr(update, "callback_query", None) if update else None
+            if message:
+                await message.reply_text("⛔ This bot is private.")
+            elif query:
+                await query.answer("⛔ This bot is private.", show_alert=True)
             return None
 
-        # Get chat ID safely
-        chat_id = None
-        if update.effective_chat:
-            chat_id = update.effective_chat.id
-        elif update.callback_query and update.callback_query.message:
-            chat_id = update.callback_query.message.chat_id
-            
-        if chat_id is None or str(chat_id) != str(SANEL_CHAT_ID):
-            logger.warning(f"Unauthorized access attempt from chat_id: {chat_id}")
-            if update.message:
-                await update.message.reply_text("⛔ Unauthorized. You do not have permission to use this bot.")
-            elif update.callback_query:
-                await update.callback_query.answer("⛔ Unauthorized", show_alert=True)
-            return None
-            
         return await func(update, context, *args, **kwargs)
-        
+
     return wrapper
