@@ -46,3 +46,8 @@ output/
 mega_index.md
 curated_brain.md
 correlation_graph.json
+
+# --- Runtime state / generated data (must not be tracked) ---
+activity_log.jsonl
+embedding_data/
+*.npz
