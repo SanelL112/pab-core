@@ -3,6 +3,7 @@ import sys
 import json
 import asyncio
 import threading
+from pathlib import Path
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock, mock_open
 
@@ -10,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import config
 import ai_processor
+from llm_router import InferenceResult
 from bot.state import load_state, update_state
 from scrapers.nightly_processor import run_nightly_job
 from scrapers.embedding_indexer import collect_sources
@@ -79,18 +81,18 @@ async def test_nightly_queue_processor(tmp_path):
     queue_file = tmp_path / "nightly_queue.json"
     config.NIGHTLY_QUEUE_FILE = queue_file
     queue_file.write_text(json.dumps([
-        {"title": "File1", "file_id": "id1"},
-        {"title": "File2", "file_id": "id2"}
+        {"title": "File1", "file_id": "id1", "filename": "file1.txt"},
+        {"title": "File2", "file_id": "id2", "filename": "file2.txt"}
     ]))
 
     def mock_download(file_id, path):
-        return file_id == "id2"
+        if file_id != "id2":
+            return False
+        Path(path).write_text("dummy text " * 10, encoding="utf-8")
+        return True
 
     with patch("scrapers.nightly_processor.download_drive_file", side_effect=mock_download), \
-         patch("scrapers.nightly_processor.PyPDF2.PdfReader") as mock_reader:
-        mock_page = MagicMock()
-        mock_page.extract_text.return_value = "dummy text " * 10
-        mock_reader.return_value.pages = [mock_page]
+         patch("scrapers.nightly_processor.asyncio.to_thread", new=_inline_to_thread):
         bot_mock = MagicMock()
         await run_nightly_job(bot_mock, 123)
 
@@ -103,7 +105,7 @@ async def test_nightly_queue_processor(tmp_path):
 def test_ai_processor_cache_consumer():
     # Behavioral test for DATA-01 cache directory usage
     data = "test content"
-    with patch("ai_processor.call_agy", return_value="summary") as mock_agy, \
+    with patch("llm_router.call_local_rpc_result", return_value=InferenceResult.success("summary", provider="local-rpc", model="test")) as mock_local, \
          patch("ai_processor.pi_classify_sync", return_value=None):
         ai_processor.process_source("test_src", data)
 
@@ -116,29 +118,28 @@ def test_has_changed_suffix_detection():
     data1 = "a" * 1500 + "suffix1"
     data2 = "a" * 1500 + "suffix2"
 
-    with patch("ai_processor.call_agy", return_value="summary1") as mock_agy, \
+    with patch("llm_router.call_local_rpc_result", return_value=InferenceResult.success("summary1", provider="local-rpc", model="test")) as mock_local, \
          patch("ai_processor.pi_classify_sync", return_value=None):
         ai_processor.process_source("test_src2", data1)
-        assert mock_agy.call_count == 1
+        assert mock_local.call_count == 1
 
         # Second call with suffix2 should trigger re-processing since suffix changed
-        mock_agy.return_value = "summary2"
+        mock_local.return_value = InferenceResult.success("summary2", provider="local-rpc", model="test")
         ai_processor.process_source("test_src2", data2)
-        assert mock_agy.call_count == 2
+        assert mock_local.call_count == 2
 
         cache_path = config.CACHE_DIR / "test_src2_summary.txt"
         assert cache_path.read_text() == "summary2"
 
 def test_nightly_import_side_effects():
     # Behavioral test for DATA-04: import nightly_processor without side effects
-    import sys
-    if "scrapers.nightly_processor" in sys.modules:
-        del sys.modules["scrapers.nightly_processor"]
+    import importlib
+    import scrapers.nightly_processor as nightly_processor
 
     with patch("logging.getLogger"):
-        import scrapers.nightly_processor
+        reloaded = importlib.reload(nightly_processor)
         # No side effects like os.system or exit should happen during import
-        assert hasattr(scrapers.nightly_processor, "run_nightly_job")
+        assert hasattr(reloaded, "run_nightly_job")
 
 @pytest.mark.asyncio
 async def test_notion_failure_behavior():

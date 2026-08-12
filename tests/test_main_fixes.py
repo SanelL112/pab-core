@@ -7,11 +7,14 @@ from unittest.mock import patch, MagicMock, AsyncMock
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import main
 import config
+from telegram.constants import ChatType
 
 @pytest.mark.asyncio
 async def test_require_auth_start():
     update = MagicMock()
     update.effective_chat.id = 999
+    update.effective_chat.type = ChatType.PRIVATE
+    update.effective_user.id = 999
     update.message.reply_text = AsyncMock()
     context = MagicMock()
     await main.start(update, context)
@@ -20,6 +23,7 @@ async def test_require_auth_start():
     context.job_queue.run_repeating.assert_not_called()
 
     update.effective_chat.id = config.SANEL_CHAT_ID
+    update.effective_user.id = config.TELEGRAM_OWNER_USER_ID
     update.message.reply_text.reset_mock()
     await main.start(update, context)
     context.job_queue.run_repeating.assert_called_with(

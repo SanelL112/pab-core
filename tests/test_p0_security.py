@@ -11,6 +11,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 # Test Scope 1: utils.py Python execution policy
 # ---------------------------------------------------------
 from utils import _is_command_allowed, run_bash_safely
+from llm_router import InferenceResult, Sensitivity
+from scrapers.extract_notes import transcribe_handwritten_pdf
+import overnight_researcher
 
 def test_python_execution_policy():
     allowed, _ = _is_command_allowed("python3 -c 'print(1)'")
@@ -35,11 +38,32 @@ def test_python_bash_tag_execution_behavior():
         mock_run.assert_not_called()
         assert "not in allowlist" in out.lower() or "blocked" in out.lower() or "error" in out.lower() or "not allowed" in out.lower()
 
+
+def test_private_pdf_transcription_requires_explicit_cloud_opt_in(monkeypatch):
+    monkeypatch.delenv("PAB_ALLOW_CLOUD_DOCUMENT_TRANSCRIPTION", raising=False)
+    with patch("scrapers.extract_notes.subprocess.run") as mock_run:
+        result = transcribe_handwritten_pdf("/tmp/private-notes.pdf")
+
+    assert "disabled" in result.lower()
+    mock_run.assert_not_called()
+
+
+def test_overnight_researcher_never_enables_cloud_fallback():
+    with patch(
+        "llm_router.call_local_rpc_result",
+        return_value=InferenceResult.success("local output", provider="local-rpc", model="test-local"),
+    ) as mock_local:
+        assert overnight_researcher._local_inference("private notes", max_tokens=100, timeout=10) == "local output"
+
+    assert mock_local.call_args.kwargs["allow_cloud"] is False
+    assert mock_local.call_args.kwargs["sensitivity"] is Sensitivity.PERSONAL
+
 # ---------------------------------------------------------
 # Test Scope 2: Telegram Authentication Security
 # ---------------------------------------------------------
 from bot.security import require_auth
-from config import SANEL_CHAT_ID
+from config import SANEL_CHAT_ID, TELEGRAM_OWNER_USER_ID
+from telegram.constants import ChatType
 
 @pytest.mark.asyncio
 async def test_require_auth_fails_closed_without_update():
@@ -72,6 +96,8 @@ async def test_main_start_schedules_owner_chat():
     from main import start
     update = MagicMock()
     update.effective_chat.id = SANEL_CHAT_ID
+    update.effective_chat.type = ChatType.PRIVATE
+    update.effective_user.id = TELEGRAM_OWNER_USER_ID
     update.message.reply_text = AsyncMock()
 
     context = MagicMock()
@@ -165,7 +191,7 @@ def test_api_security_download_valid_accepts(monkeypatch):
         "url": "https://huggingface.co/model/resolve/main/model.gguf",
         "filename": "model.gguf"
     })
-    with patch("subprocess.Popen") as mock_popen:
+    with patch("surface.cluster_manager.threading.Thread") as mock_thread:
         handler.do_POST()
         handler.send_response.assert_called_with(200)
-        mock_popen.assert_called_once()
+        mock_thread.return_value.start.assert_called_once()

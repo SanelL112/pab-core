@@ -1,9 +1,8 @@
-import asyncio
 import sys
 from pathlib import Path
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -11,48 +10,48 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import bot.ai_bridge
 from bot.ai_bridge import send_to_antigravity_and_wait
-from llm_router import call_local_rpc
+from llm_router import (
+    InferenceResult,
+    InferenceStatus,
+    Sensitivity,
+    call_local_rpc,
+    call_local_rpc_result,
+)
 
 
-def _inline_run_in_executor(loop, executor, func, *args):
-    """Resolve mocked executor work synchronously in unit tests.
+@pytest.fixture(autouse=True)
+def disable_activity_logging(monkeypatch):
+    """Routing tests must never append to the operator's activity feed."""
+    monkeypatch.setattr(bot.ai_bridge, "log_llm_call", MagicMock())
 
-    These tests replace every blocking dependency with a mock.  Running those
-    mocks in a real executor adds no coverage and is unreliable in the local
-    Python 3.13 runner after more than one submission.
-    """
-    future = loop.create_future()
-    try:
-        future.set_result(func(*args))
-    except Exception as exc:
-        future.set_exception(exc)
-    return future
+
+async def _inline_to_thread(func, /, *args, **kwargs):
+    """Run a mocked blocking dependency without creating an executor thread."""
+    return func(*args, **kwargs)
 
 
 @pytest.mark.asyncio
-async def test_ai_bridge_kwargs():
-    # We want to mock out _do_call, call_opencode, call_hackclub, etc.
+async def test_ai_bridge_uses_typed_local_route():
+    """Personal chat must use the typed local-only route by default."""
     with patch("bot.ai_bridge.load_state", return_value={"user_models": {}}), \
          patch("bot.ai_bridge.detect_topic", return_value="test_topic"), \
-         patch("bot.ai_bridge.subprocess.run") as mock_run, \
-         patch("llm_router.call_openrouter", side_effect=Exception("OpenRouter failed")), \
-         patch("llm_router.call_opencode") as mock_opencode, \
-         patch("llm_router.call_hackclub") as mock_hackclub, \
-         patch("asyncio.BaseEventLoop.run_in_executor", new=_inline_run_in_executor):
-
-        # Simulate OpenRouter failure to trigger fallbacks
-        mock_opencode.return_value = "opencode_response"
-
-        # Test the normal flow OpenRouter failure -> Opencode
+         patch(
+             "bot.ai_bridge.call_local_rpc_result",
+             return_value=InferenceResult.success(
+                 "local response", provider="local-rpc", model="test-local"
+             ),
+         ) as mock_local, \
+         patch("bot.ai_bridge.asyncio.to_thread", new=_inline_to_thread):
         out = await send_to_antigravity_and_wait("hello", 0, None, None)
-        assert out.startswith("opencode_response")
-        mock_opencode.assert_called_once()
-        kwargs = mock_opencode.call_args.kwargs
+        assert out.startswith("local response")
+        kwargs = mock_local.call_args.kwargs
         assert "prompt" in kwargs
-        assert "model" in kwargs
+        assert kwargs["allow_cloud"] is False
+        assert kwargs["sensitivity"] is Sensitivity.PERSONAL
 
-def test_call_local_rpc_no_cloud():
-    # Test that allow_cloud=False never invokes call_openrouter
+
+def test_call_local_rpc_result_no_cloud():
+    """An exhausted local chain yields a typed unavailable result, never cloud."""
     with patch("llm_router.call_llamacpp_rpc", return_value=""), \
          patch("llm_router.httpx.Client") as mock_client, \
          patch("llm_router.call_openrouter") as mock_openrouter:
@@ -62,8 +61,9 @@ def test_call_local_rpc_no_cloud():
          mock_response.status_code = 500
          mock_client_instance.post.return_value = mock_response
 
-         res = call_local_rpc("test", allow_cloud=False)
-         assert "local inference unavailable" in res.lower() or "local inference" in res.lower() or "local" in res.lower()
+         result = call_local_rpc_result(prompt="test", allow_cloud=False)
+         assert result.status is InferenceStatus.UNAVAILABLE
+         assert result.text == ""
          mock_openrouter.assert_not_called()
 
 def test_call_local_rpc_dell_fallback():
@@ -93,16 +93,23 @@ def test_call_local_rpc_dell_fallback():
 
 @pytest.mark.asyncio
 async def test_pii_fail_closed():
-    # Test that when PII is present and local models fail, we fail closed (no cloud)
-    with patch("utils.check_pii", return_value=(False, "scrubbed", ["phone"])), \
+    """Even explicit cloud consent cannot override PII's local-only policy."""
+    with patch("bot.ai_bridge.check_pii", return_value=(False, "scrubbed", ["phone"])), \
          patch("bot.ai_bridge.load_state", return_value={"user_models": {}}), \
-         patch("llm_router.call_ollama", side_effect=Exception("Local Pi down")), \
-         patch("llm_router.call_openrouter") as mock_openrouter, \
-         patch("asyncio.BaseEventLoop.run_in_executor", new=_inline_run_in_executor):
+         patch("bot.ai_bridge.detect_topic", return_value="test_topic"), \
+         patch(
+             "bot.ai_bridge.call_local_rpc_result",
+             return_value=InferenceResult(InferenceStatus.UNAVAILABLE, provider="local-rpc"),
+         ) as mock_local, \
+         patch("bot.ai_bridge.call_openrouter_result") as mock_openrouter, \
+         patch("bot.ai_bridge.asyncio.to_thread", new=_inline_to_thread):
 
-         out = await send_to_antigravity_and_wait("my phone is 555-1234", 0, None, None)
+         out = await send_to_antigravity_and_wait(
+             "my phone is 555-1234", 0, None, None, cloud_consent=True
+         )
          assert "unavailable" in out.lower()
-         assert "cloud fallback is disabled" in out.lower()
+         assert "not sent to a cloud provider" in out.lower()
+         assert mock_local.call_args.kwargs["allow_cloud"] is False
          mock_openrouter.assert_not_called()
 
 def test_prompt_no_arbitrary_bash():
