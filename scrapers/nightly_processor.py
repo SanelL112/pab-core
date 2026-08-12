@@ -177,9 +177,9 @@ def _append_export(title: str, text: str) -> None:
 
 def _extract_text(path: Path, suffix: str, title: str) -> str:
     if suffix == ".pdf":
-        import PyPDF2
+        from pypdf import PdfReader
 
-        reader = PyPDF2.PdfReader(path)
+        reader = PdfReader(path)
         pages = reader.pages[:MAX_PDF_PAGES]
         text = "\n".join((page.extract_text() or "") for page in pages)
         if len(text.strip()) <= 50:
