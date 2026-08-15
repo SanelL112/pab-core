@@ -1174,47 +1174,97 @@ def _get_calendar_assignments(
                 "official": True,
             })
 
-        # AI Extraction for recently updated course pages
+        # AI Extraction for course front page, module pages, and announcements
         try:
-            pages_to_check = []
-            try:
-                pages_list = canvas.get_paginated(
-                    f"/api/v1/courses/{course_id}/pages?sort=updated_at&order=desc&per_page=1",
-                    max_pages=1,
-                )
-                pages_to_check.extend(pages_list)
-            except Exception:
-                pass  # Pages index might be hidden by teacher
+            pages_to_extract = []
+            seen_urls = set()
 
+            # 1. Always include Course Front Page
             try:
                 front_page, _ = canvas._request_json(f"/api/v1/courses/{course_id}/front_page")
                 if isinstance(front_page, dict) and front_page.get("url"):
-                    pages_to_check.append(front_page)
+                    purl = front_page.get("url")
+                    seen_urls.add(purl)
+                    pages_to_extract.append({
+                        "url": purl,
+                        "title": front_page.get("title", "Course Home Page"),
+                    })
             except Exception:
                 pass
 
-            seen = set()
-            recent_pages = []
-            for page in pages_to_check:
-                url = page.get("url")
-                if url and url not in seen and _is_recent_canvas_update(page, "updated_at", "created_at"):
-                    seen.add(url)
-                    recent_pages.append(page)
+            # 2. Module pages and external tools
+            try:
+                modules = canvas.get_paginated(
+                    f"/api/v1/courses/{course_id}/modules?include[]=items&per_page=30",
+                    max_pages=2,
+                )
+                for mod in modules:
+                    mname = mod.get("name", "Module")
+                    for item in mod.get("items", []):
+                        itype = item.get("type")
+                        ititle = item.get("title", "")
+                        purl = item.get("page_url")
+                        ext_url = item.get("external_url") or item.get("url")
 
-            for page in recent_pages:
-                page_url = page.get("url")
-                page_title = page.get("title", "Untitled")
-                if page_url:
-                    page_detail = canvas.get_json(f"/api/v1/courses/{course_id}/pages/{page_url}")
-                    if isinstance(page_detail, dict) and page_detail.get("body"):
-                        try:
-                            from scrapers.canvas_page_extractor import extract_assignments_from_html
-                            extracted = extract_assignments_from_html(
-                                str(course_id), course_name, page_title, page_url, page_detail["body"]
-                            )
-                            result.extend(extracted)
-                        except Exception as e:
-                            logger.error("Error extracting from page %s: %s", page_url, e)
+                        if itype == "Page" and purl and purl not in seen_urls:
+                            seen_urls.add(purl)
+                            pages_to_extract.append({
+                                "url": purl,
+                                "title": f"[{mname}] {ititle}",
+                            })
+                        elif itype in ["ExternalTool", "ExternalUrl"] and ext_url and ext_url not in seen_urls:
+                            seen_urls.add(ext_url)
+                            pages_to_extract.append({
+                                "url": ext_url,
+                                "title": f"[{mname}] {ititle}",
+                                "body": f"<p>External Resource: <a href=\"{ext_url}\">{ititle}</a></p>",
+                            })
+            except Exception:
+                pass
+
+            # 3. Course Announcements
+            try:
+                announcements = canvas.get_paginated(
+                    f"/api/v1/courses/{course_id}/discussion_topics?only_announcements=true&per_page=5",
+                    max_pages=1,
+                )
+                for ann in announcements:
+                    ann_id = str(ann.get("id") or "")
+                    if ann_id and ann_id not in seen_urls:
+                        seen_urls.add(ann_id)
+                        ann_body = ann.get("message") or ""
+                        ann_title = ann.get("title") or "Announcement"
+                        if ann_body:
+                            pages_to_extract.append({
+                                "url": f"announcement-{ann_id}",
+                                "title": f"[Announcement] {ann_title}",
+                                "body": ann_body,
+                            })
+            except Exception:
+                pass
+
+            # Extract assignments via AI RPC
+            from scrapers.canvas_page_extractor import extract_assignments_from_html
+            for p in pages_to_extract:
+                p_url = p.get("url")
+                p_title = p.get("title", "Untitled")
+                p_body = p.get("body")
+                if not p_body and p_url:
+                    try:
+                        pdetail = canvas.get_json(f"/api/v1/courses/{course_id}/pages/{quote(p_url, safe='')}")
+                        if isinstance(pdetail, dict):
+                            p_body = pdetail.get("body")
+                    except Exception:
+                        pass
+
+                if p_body:
+                    try:
+                        extracted = extract_assignments_from_html(
+                            str(course_id), course_name, p_title, p_url, p_body
+                        )
+                        result.extend(extracted)
+                    except Exception as e:
+                        logger.error("Error extracting from page %s: %s", p_url, e)
         except Exception as exc:
             logger.info("Could not fetch Canvas pages for AI extraction %s: %s", course_name, exc)
 
