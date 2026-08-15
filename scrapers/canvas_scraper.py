@@ -1189,8 +1189,8 @@ def _get_calendar_assignments(
                         "url": purl,
                         "title": front_page.get("title", "Course Home Page"),
                     })
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not fetch front page for %s: %s", course_name, exc)
 
             # 2. Module pages and external tools
             try:
@@ -1219,8 +1219,8 @@ def _get_calendar_assignments(
                                 "title": f"[{mname}] {ititle}",
                                 "body": f"<p>External Resource: <a href=\"{ext_url}\">{ititle}</a></p>",
                             })
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not fetch modules for %s: %s", course_name, exc)
 
             # 3. Course Announcements
             try:
@@ -1240,8 +1240,8 @@ def _get_calendar_assignments(
                                 "title": f"[Announcement] {ann_title}",
                                 "body": ann_body,
                             })
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not fetch announcements for %s: %s", course_name, exc)
 
             # Extract assignments via AI RPC
             from scrapers.canvas_page_extractor import extract_assignments_from_html
@@ -1254,8 +1254,8 @@ def _get_calendar_assignments(
                         pdetail = canvas.get_json(f"/api/v1/courses/{course_id}/pages/{quote(p_url, safe='')}")
                         if isinstance(pdetail, dict):
                             p_body = pdetail.get("body")
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("Could not fetch page detail %s: %s", p_url, exc)
 
                 if p_body:
                     try:

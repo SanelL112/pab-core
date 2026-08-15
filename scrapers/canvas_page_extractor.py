@@ -105,7 +105,14 @@ def _fetch_external_link_text(url: str, timeout: float = 6.0) -> str:
             )
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw_html = resp.read().decode("utf-8", errors="ignore")
-                decoded = raw_html.encode("utf-8").decode("unicode_escape", errors="ignore")
+                # Unescape JS string literals (\n, \t, \uXXXX) without
+                # corrupting non-ASCII characters that are already valid UTF-8.
+                decoded = raw_html.replace("\\n", "\n").replace("\\t", "\t")
+                decoded = re.sub(
+                    r"\\u([0-9a-fA-F]{4})",
+                    lambda m: chr(int(m.group(1), 16)),
+                    decoded,
+                )
                 decoded = html.unescape(decoded)
                 matches = re.findall(r'\"Plans[^\"]+\"', decoded)
                 if matches:
