@@ -1501,5 +1501,282 @@ def get_all_canvas_data() -> str:
         return f"Canvas unavailable: {exc}"
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Playwright-style deep link navigator
+# -----------------------------------------------------------------------------
+# The production path reads Canvas through the authenticated Firefox/ClassLink
+# daemon (CanvasBrowserClient, above). This section adds a browser-driven deep
+# crawler for pages whose assignment data only exists in rendered DOM / clicked
+# sub-pages (module trees, embedded viewers) rather than the JSON API.
+#
+# It is written against a minimal duck-typed "page" protocol so it can drive a
+# real Playwright page OR a stub page in tests without importing Playwright (an
+# optional dependency). The only place Playwright is imported is the lazy
+# ``make_playwright_navigator`` factory. Every network/browser action funnels
+# through the injected page object, so the unit suite stays fully offline.
+# ═════════════════════════════════════════════════════════════════════════════
+
+# Link text / heading keywords that mark a high-value academic page. Ordered by
+# rough signal strength; scoring sums matched weights.
+_RELEVANCE_KEYWORDS: dict[str, int] = {
+    "syllabus": 5,
+    "schedule": 5,
+    "agenda": 4,
+    "calendar": 4,
+    "unit": 3,
+    "homework": 3,
+    "assignment": 3,
+    "assessment": 3,
+    "rubric": 3,
+    "quiz": 3,
+    "test": 3,
+    "exam": 3,
+    "project": 3,
+    "reading": 2,
+    "module": 2,
+    "lesson": 2,
+    "due": 2,
+}
+
+# Administrative / help anchors that should never be traversed.
+_LOW_VALUE_MARKERS: tuple[str, ...] = (
+    "help", "support", "logout", "log out", "sign out", "privacy", "terms",
+    "accessibility", "profile", "settings", "notification", "inbox", "calendar/ical",
+    "account", "commons", "conferences", "collaborations", "cookie", "feedback",
+)
+
+# External resource hosts we still consider relevant to click/resolve.
+_RELEVANT_EXTERNAL_HOSTS: tuple[str, ...] = (
+    "docs.google.com", "drive.google.com", "forms.gle", "canva.com",
+    "gateway.cengage.com", "onenote", "sharepoint.com", "1drv.ms",
+)
+
+
+def _link_relevance_score(link_text: str, heading_context: str = "", href: str = "") -> int:
+    """Score a link's academic relevance from its text, nearby heading, and href.
+
+    Returns an integer score. ``0`` (or negative) means "skip" — the link is a
+    generic administrative/help anchor. Higher means more likely to hold
+    schedules, syllabi, or assignment data. This is the pre-filter that keeps the
+    deep crawl focused and bounded.
+    """
+    haystack = f"{link_text} {heading_context}".lower().strip()
+    href_low = (href or "").lower()
+
+    # Hard skip obvious admin/help chrome (unless it also names a high-value term).
+    if any(marker in haystack or marker in href_low for marker in _LOW_VALUE_MARKERS):
+        if not any(kw in haystack for kw in ("syllabus", "schedule", "agenda", "unit")):
+            return 0
+
+    score = 0
+    for keyword, weight in _RELEVANCE_KEYWORDS.items():
+        if keyword in haystack:
+            score += weight
+    # A relevant external resource (Google Doc agenda, etc.) is worth a look even
+    # when its anchor text is terse.
+    if any(host in href_low for host in _RELEVANT_EXTERNAL_HOSTS):
+        score += 2
+    return score
+
+
+def _normalize_url(url: str) -> str:
+    """Canonicalize a URL for the visited-set: drop fragment, trailing slash."""
+    if not url:
+        return ""
+    split = urlsplit(url)
+    path = split.path.rstrip("/") or "/"
+    return urlunsplit((split.scheme, split.netloc, path, split.query, ""))
+
+
+class BrowserNavigator:
+    """Recursive, relevance-filtered deep crawler over a duck-typed browser page.
+
+    The ``page`` object must provide (sync) methods compatible with a Playwright
+    page: ``goto(url)``, ``content() -> str`` (rendered HTML), and
+    ``query_selector_all(selector) -> list`` where each element exposes
+    ``get_attribute(name)`` and ``inner_text()``. ``screenshot()`` is optional and
+    only used by the hybrid vision path.
+
+    Loop safety: a normalized visited-URL set plus a hard ``max_depth`` (default
+    2) and ``max_pages`` cap guarantee termination even with cyclic navigation.
+    """
+
+    def __init__(
+        self,
+        page: Any,
+        *,
+        base_url: str | None = None,
+        max_depth: int = 2,
+        max_pages: int = 40,
+        min_relevance: int = 1,
+    ) -> None:
+        self.page = page
+        self.base_url = (base_url or CANVAS_API_URL).rstrip("/")
+        self.max_depth = max(0, int(max_depth))
+        self.max_pages = max(1, int(max_pages))
+        self.min_relevance = int(min_relevance)
+        self.visited: set[str] = set()
+        self.results: list[dict[str, Any]] = []
+
+    # ── DOM link discovery ────────────────────────────────────────────────────
+    def _discover_links(self) -> list[dict[str, Any]]:
+        """Return relevance-scored candidate links on the current page.
+
+        Uses the page's anchor elements; each candidate carries its resolved
+        absolute href, anchor text, and a relevance score computed with nearby
+        heading context when the page exposes it.
+        """
+        candidates: list[dict[str, Any]] = []
+        try:
+            anchors = self.page.query_selector_all("a")
+        except Exception as exc:
+            logger.debug("BrowserNavigator: link discovery failed: %s", type(exc).__name__)
+            return []
+
+        for anchor in anchors or []:
+            try:
+                href = anchor.get_attribute("href") or ""
+                text = (anchor.inner_text() or "").strip()
+            except Exception:
+                continue
+            if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+                continue
+            heading = ""
+            # Optional: some fake/real pages expose a data-heading attribute for
+            # the section a link sits under; use it when present.
+            try:
+                heading = anchor.get_attribute("data-heading") or ""
+            except Exception:
+                heading = ""
+            absolute = urljoin(self.base_url + "/", href)
+            score = _link_relevance_score(text, heading, absolute)
+            candidates.append(
+                {"url": absolute, "text": text, "score": score}
+            )
+        # Highest-value links first so the page/scale cap keeps the best pages.
+        candidates.sort(key=lambda c: c["score"], reverse=True)
+        return candidates
+
+    def _capture_current(self, url: str, depth: int) -> dict[str, Any]:
+        """Snapshot the current page's rendered HTML (and title if available)."""
+        html_body = ""
+        title = ""
+        try:
+            html_body = self.page.content() or ""
+        except Exception as exc:
+            logger.debug("BrowserNavigator: content() failed for %s: %s", url, type(exc).__name__)
+        # Title is best-effort; a Playwright page exposes .title(), stubs may not.
+        title_getter = getattr(self.page, "title", None)
+        if callable(title_getter):
+            try:
+                title = title_getter() or ""
+            except Exception:
+                title = ""
+        return {"url": url, "title": title, "html": html_body, "depth": depth}
+
+    # ── Recursive crawl ────────────────────────────────────────────────────────
+    def crawl(self, start_url: str, depth: int = 0) -> list[dict[str, Any]]:
+        """Depth-first traverse from ``start_url`` collecting relevant pages.
+
+        Returns the accumulated ``results`` list; each entry is
+        ``{"url", "title", "html", "depth"}``. Safe against cycles and bounded by
+        ``max_depth`` / ``max_pages``.
+        """
+        canonical = _normalize_url(start_url)
+        if not canonical or canonical in self.visited:
+            return self.results
+        if len(self.results) >= self.max_pages:
+            return self.results
+
+        self.visited.add(canonical)
+        try:
+            self.page.goto(start_url)
+        except Exception as exc:
+            logger.debug("BrowserNavigator: goto(%s) failed: %s", start_url, type(exc).__name__)
+            return self.results
+
+        captured = self._capture_current(start_url, depth)
+        self.results.append(captured)
+
+        if depth >= self.max_depth or len(self.results) >= self.max_pages:
+            return self.results
+
+        for candidate in self._discover_links():
+            if len(self.results) >= self.max_pages:
+                break
+            if candidate["score"] < self.min_relevance:
+                continue  # relevance pre-filter: skip generic/admin links
+            child = _normalize_url(candidate["url"])
+            if not child or child in self.visited:
+                continue  # loop detection
+            self.crawl(candidate["url"], depth + 1)
+        return self.results
+
+
+def crawl_course_pages(
+    page: Any,
+    start_urls: list[str] | str,
+    *,
+    base_url: str | None = None,
+    max_depth: int = 2,
+    max_pages: int = 40,
+    min_relevance: int = 1,
+) -> list[dict[str, Any]]:
+    """Deep-crawl one or more Canvas entry points with a browser page.
+
+    Thin orchestration wrapper around :class:`BrowserNavigator` that shares a
+    single visited-set across all ``start_urls`` (so the same page reached from
+    the dashboard and the syllabus is fetched once). Returns collected page
+    records; pass each ``html`` to the hybrid extractor.
+    """
+    if isinstance(start_urls, str):
+        start_urls = [start_urls]
+    navigator = BrowserNavigator(
+        page,
+        base_url=base_url,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        min_relevance=min_relevance,
+    )
+    for start_url in start_urls:
+        navigator.crawl(start_url, depth=0)
+    return navigator.results
+
+
+def make_playwright_navigator(
+    *,
+    headless: bool = True,
+    storage_state: str | None = None,
+    **navigator_kwargs: Any,
+):
+    """Create a :class:`BrowserNavigator` backed by a real Playwright page.
+
+    Lazily imports Playwright (an optional dependency; the production daemon uses
+    Selenium/ClassLink). Returns ``(navigator, browser, playwright)`` so the
+    caller can close the browser and stop Playwright when finished. Cookie
+    persistence is provided via ``storage_state`` (a Playwright storage-state
+    JSON path) so the authenticated ClassLink session is reused.
+
+    Raises ``RuntimeError`` with an actionable message if Playwright is missing.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError(
+            "Playwright is not installed. Install with "
+            "`pip install playwright && playwright install firefox`, "
+            "or use the Selenium-based CanvasBrowserClient daemon instead."
+        ) from exc
+
+    playwright = sync_playwright().start()
+    browser = playwright.firefox.launch(headless=headless)
+    context = browser.new_context(
+        storage_state=storage_state if storage_state and os.path.exists(storage_state) else None
+    )
+    page = context.new_page()
+    navigator = BrowserNavigator(page, **navigator_kwargs)
+    return navigator, browser, playwright
+
+
 if __name__ == "__main__":
     print(get_all_canvas_data())

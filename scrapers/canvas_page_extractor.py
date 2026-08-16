@@ -42,6 +42,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime
+from typing import Callable
 
 from bs4 import BeautifulSoup
 
@@ -685,3 +686,193 @@ def extract_assignments_from_html(
         _save_cache(cache)
 
     return _decorate(clean_rows, course_id, course_name, page_url)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Hybrid DOM + Vision extraction
+# -----------------------------------------------------------------------------
+# Some Canvas pages carry their schedule only in non-textual embeds: a daily
+# agenda image, a flattened syllabus graphic, a Google Slides canvas viewer, or
+# an image-only PDF. DOM text extraction returns little or nothing for those. The
+# hybrid path detects such embeds and, when the DOM yields too little text, routes
+# a rendered screenshot to the local multimodal model (LFM2.5-VL) for OCR-grounded
+# extraction, then feeds the transcription through the same LLM/heuristic parser.
+#
+# The screenshot is supplied by the caller (the BrowserNavigator page), so this
+# module stays free of any browser dependency and fully mockable in tests.
+# ═════════════════════════════════════════════════════════════════════════════
+
+import base64  # noqa: E402  (kept local to the hybrid section)
+
+_VISION_URL = os.getenv("CANVAS_VISION_URL", "http://127.0.0.1:11434/api/generate")
+_VISION_MODEL = os.getenv("CANVAS_VISION_MODEL", "LFM2.5-VL")
+_VISION_TIMEOUT = float(os.getenv("CANVAS_VISION_TIMEOUT_SECONDS", "45"))
+
+# A page whose compacted DOM text is shorter than this is treated as
+# "effectively textless" and becomes a candidate for the vision fallback.
+_MIN_DOM_TEXT_CHARS = int(os.getenv("CANVAS_MIN_DOM_TEXT_CHARS", "40"))
+
+# Embed sources that typically render assignment data as pixels, not DOM text.
+_VISUAL_EMBED_HOST_MARKERS = (
+    "docs.google.com/presentation", "drive.google.com", "canva.com",
+    "slides.com", "prezi.com", "/preview", "/pubembed", "docs.google.com/viewer",
+)
+
+
+def _detect_visual_embeds(html_body: str) -> list[dict[str, str]]:
+    """Find non-textual embeds whose content may need vision OCR.
+
+    Returns a list of ``{"kind", "src", "title"}`` for iframes/canvases/images
+    that plausibly hold a rendered agenda/syllabus/slide the DOM parser cannot
+    read. Pure parsing — no network, no browser.
+    """
+    if not html_body or not isinstance(html_body, str):
+        return []
+    soup = BeautifulSoup(html_body, "html.parser")
+    embeds: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for ifr in soup.find_all("iframe"):
+        src = str(ifr.get("src", "") or "")
+        if not src or src in seen:
+            continue
+        seen.add(src)
+        low = src.lower()
+        if any(marker in low for marker in _VISUAL_EMBED_HOST_MARKERS):
+            embeds.append(
+                {"kind": "iframe", "src": src, "title": str(ifr.get("title", "") or "")}
+            )
+
+    # A <canvas> element or a lone large image with no surrounding text is a
+    # classic flattened-agenda signal.
+    for canvas_el in soup.find_all("canvas"):
+        embeds.append({"kind": "canvas", "src": "", "title": str(canvas_el.get("aria-label", "") or "")})
+
+    for img in soup.find_all("img"):
+        src = str(img.get("src", "") or "")
+        if src.startswith("data:") or src in seen:
+            continue
+        alt = str(img.get("alt", "") or "")
+        # Heuristic: agenda/syllabus/schedule graphics are the interesting ones.
+        if any(k in f"{src} {alt}".lower() for k in ("agenda", "syllabus", "schedule", "calendar", "slide")):
+            seen.add(src)
+            embeds.append({"kind": "image", "src": src, "title": alt})
+
+    return embeds
+
+
+def _call_vision_llm(image_bytes: bytes, prompt: str, timeout: float) -> str:
+    """Send a rendered page/element screenshot to the local multimodal endpoint.
+
+    Network seam — monkeypatched in tests. Returns an empty string on any failure
+    so the caller degrades gracefully. Uses temperature 0.0 for determinism.
+    """
+    if not image_bytes:
+        return ""
+    import requests
+
+    payload = {
+        "model": _VISION_MODEL,
+        "prompt": prompt,
+        "images": [base64.b64encode(image_bytes).decode("ascii")],
+        "stream": False,
+        "options": {"temperature": 0.0},
+    }
+    try:
+        resp = requests.post(_VISION_URL, json=payload, timeout=timeout)
+        if resp.status_code != 200:
+            logger.debug("Canvas vision endpoint returned HTTP %s", resp.status_code)
+            return ""
+        data = resp.json()
+        text = data.get("response", "") if isinstance(data, dict) else ""
+        return text.strip() if isinstance(text, str) else ""
+    except Exception as exc:
+        logger.debug("Canvas vision endpoint failed: %s", type(exc).__name__)
+        return ""
+
+
+_VISION_PROMPT = (
+    "This is a screenshot of a Canvas course page, a daily-agenda slide, or a "
+    "syllabus graphic. Read ALL visible text, including tables and slides, and "
+    "extract any tests, quizzes, readings, homework, or projects with their due "
+    "dates. Assume the current year is {year}. Respond ONLY with a valid JSON "
+    'array of objects with keys "title", "due_date" (YYYY-MM-DD), and '
+    '"task_type" (one of Test, Project, Reading, Assignment). If none, output [].'
+)
+
+
+def _rows_from_raw(raw: str) -> list[dict]:
+    """Parse + normalize an LLM/vision JSON response into clean task rows."""
+    parsed = _extract_json_array(raw)
+    if not parsed:
+        return []
+    rows: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for row in parsed:
+        if not isinstance(row, dict):
+            continue
+        title = str(row.get("title") or "").strip()
+        iso = _normalize_date(row.get("due_date"))
+        if not title or not iso:
+            continue
+        key = (title.lower(), iso)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(
+            {"title": title, "due_date": iso, "task_type": _normalize_task_type(row.get("task_type"))}
+        )
+    return rows
+
+
+def extract_assignments_hybrid(
+    course_id: str,
+    course_name: str,
+    page_title: str,
+    page_url: str,
+    html_body: str,
+    *,
+    screenshot_provider: "Callable[[], bytes] | None" = None,
+) -> list[dict]:
+    """DOM-first extraction with a vision fallback for image-only pages.
+
+    1. Run the normal DOM/LLM/heuristic pipeline
+       (:func:`extract_assignments_from_html`).
+    2. If that returns rows, use them (DOM is cheaper and more precise).
+    3. Otherwise, if the page has visual embeds *or* effectively no DOM text and a
+       ``screenshot_provider`` is supplied, capture a screenshot, OCR it via the
+       local vision model, and parse the transcription.
+
+    ``screenshot_provider`` is a zero-arg callable returning PNG bytes (typically
+    ``lambda: navigator.page.screenshot()``). When omitted, the vision path is
+    skipped and DOM results (possibly empty) are returned.
+    """
+    dom_rows = extract_assignments_from_html(
+        course_id, course_name, page_title, page_url, html_body
+    )
+    if dom_rows:
+        return dom_rows
+
+    structured_text = _parse_html_with_structure_and_links(html_body)
+    embeds = _detect_visual_embeds(html_body)
+    needs_vision = bool(embeds) or len(structured_text) < _MIN_DOM_TEXT_CHARS
+
+    if not (needs_vision and screenshot_provider is not None):
+        return dom_rows  # nothing more we can do; return DOM result ([] here)
+
+    if _budget_remaining() <= 3.0:
+        return dom_rows
+
+    try:
+        image_bytes = screenshot_provider()
+    except Exception as exc:
+        logger.debug("Screenshot provider failed for %s: %s", page_url, type(exc).__name__)
+        return dom_rows
+
+    raw = _call_vision_llm(
+        image_bytes,
+        _VISION_PROMPT.format(year=_ASSUMED_YEAR),
+        _VISION_TIMEOUT,
+    )
+    vision_rows = _rows_from_raw(raw)
+    return _decorate(vision_rows, course_id, course_name, page_url)

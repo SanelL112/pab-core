@@ -349,3 +349,290 @@ def test_extractor_empty_html_returns_empty_list(monkeypatch):
     assert page_extractor.extract_assignments_from_html("1", "Bio", "P", "p", "") == []
     assert page_extractor.extract_assignments_from_html("1", "Bio", "P", "p", "<div></div>") == []
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Playwright-style deep link navigator (scrapers/canvas_scraper.py)
+# ─────────────────────────────────────────────────────────────────────────────
+from scrapers.canvas_scraper import (  # noqa: E402
+    BrowserNavigator,
+    crawl_course_pages,
+    _link_relevance_score,
+    _normalize_url,
+)
+
+
+class FakeAnchor:
+    """Minimal Playwright-anchor stand-in: get_attribute + inner_text."""
+
+    def __init__(self, href, text="", heading=""):
+        self._attrs = {"href": href, "data-heading": heading}
+        self._text = text
+
+    def get_attribute(self, name):
+        return self._attrs.get(name)
+
+    def inner_text(self):
+        return self._text
+
+
+class FakePage:
+    """Duck-typed Playwright page driven by a URL->(html, anchors) map.
+
+    Records navigation order so tests can assert traversal + loop behavior.
+    ``content()`` returns the current page HTML; ``query_selector_all('a')``
+    returns that page's anchors.
+    """
+
+    def __init__(self, pages: dict):
+        self.pages = pages
+        self.current = None
+        self.goto_calls = []
+        self.screenshot_calls = 0
+
+    def goto(self, url):
+        self.goto_calls.append(url)
+        self.current = url
+
+    def content(self):
+        return self.pages.get(self.current, {}).get("html", "")
+
+    def title(self):
+        return self.pages.get(self.current, {}).get("title", "")
+
+    def query_selector_all(self, selector):
+        assert selector == "a"
+        return list(self.pages.get(self.current, {}).get("anchors", []))
+
+    def screenshot(self):
+        self.screenshot_calls += 1
+        return b"PNG_SNAPSHOT"
+
+
+def test_navigator_relevance_prefilter_scores_links():
+    assert _link_relevance_score("Course Syllabus", "", "/courses/1/pages/syllabus") >= 5
+    assert _link_relevance_score("Unit 3 Schedule", "", "/courses/1/pages/u3") >= 5
+    # Admin/help anchors score zero (skipped by the crawler).
+    assert _link_relevance_score("Help Center", "", "/help") == 0
+    assert _link_relevance_score("Log Out", "", "/logout") == 0
+    assert _link_relevance_score("My Account Settings", "", "/profile/settings") == 0
+    # A generic course-home anchor with no academic keyword is skipped.
+    assert _link_relevance_score("Home", "", "/courses/1") == 0
+    # External Google Doc agenda still scores as worth clicking.
+    assert _link_relevance_score("agenda", "", "https://docs.google.com/document/d/x") >= 4
+
+
+def test_navigator_recurses_into_relevant_subpages_only():
+    base = "https://canvas.test"
+    pages = {
+        f"{base}/courses/1": {
+            "title": "Course Home",
+            "html": "<html>home</html>",
+            "anchors": [
+                FakeAnchor("/courses/1/assignments/syllabus", "Syllabus"),
+                FakeAnchor("/help", "Help Center"),          # skipped (admin)
+                FakeAnchor("/logout", "Log Out"),            # skipped (admin)
+            ],
+        },
+        f"{base}/courses/1/assignments/syllabus": {
+            "title": "Syllabus",
+            "html": "<html>syllabus body</html>",
+            "anchors": [FakeAnchor("/courses/1/pages/unit-1-schedule", "Unit 1 Schedule")],
+        },
+        f"{base}/courses/1/pages/unit-1-schedule": {
+            "title": "Unit 1 Schedule",
+            "html": "<html>schedule body</html>",
+            "anchors": [],
+        },
+    }
+    page = FakePage(pages)
+    results = crawl_course_pages(page, f"{base}/courses/1", base_url=base, max_depth=2)
+
+    visited_titles = [r["title"] for r in results]
+    assert "Course Home" in visited_titles
+    assert "Syllabus" in visited_titles
+    assert "Unit 1 Schedule" in visited_titles
+    # The admin/help links were never navigated.
+    assert not any("help" in u.lower() or "logout" in u.lower() for u in page.goto_calls)
+
+
+def test_navigator_respects_max_depth():
+    base = "https://canvas.test"
+    pages = {
+        f"{base}/a": {"title": "A", "html": "a", "anchors": [FakeAnchor("/b", "Syllabus schedule")]},
+        f"{base}/b": {"title": "B", "html": "b", "anchors": [FakeAnchor("/c", "Unit homework")]},
+        f"{base}/c": {"title": "C", "html": "c", "anchors": [FakeAnchor("/d", "Unit assignment")]},
+        f"{base}/d": {"title": "D", "html": "d", "anchors": []},
+    }
+    page = FakePage(pages)
+    # max_depth=2 means: depth0=A, depth1=B, depth2=C. D (depth3) is never reached.
+    results = crawl_course_pages(page, f"{base}/a", base_url=base, max_depth=2)
+    titles = {r["title"] for r in results}
+    assert titles == {"A", "B", "C"}
+    assert f"{base}/d" not in page.goto_calls
+
+
+def test_navigator_detects_and_breaks_cycles():
+    base = "https://canvas.test"
+    pages = {
+        f"{base}/x": {"title": "X", "html": "x", "anchors": [FakeAnchor("/y", "Unit schedule")]},
+        # Y links back to X (cycle) and forward to itself (self-loop).
+        f"{base}/y": {
+            "title": "Y",
+            "html": "y",
+            "anchors": [FakeAnchor("/x", "Unit schedule"), FakeAnchor("/y#frag", "Unit schedule")],
+        },
+    }
+    page = FakePage(pages)
+    results = crawl_course_pages(page, f"{base}/x", base_url=base, max_depth=5)
+    # Despite the cycle and self-loop, each page is visited exactly once.
+    assert [r["title"] for r in results] == ["X", "Y"]
+    assert page.goto_calls.count(f"{base}/x") == 1
+    assert page.goto_calls.count(f"{base}/y") == 1
+
+
+def test_navigator_shares_visited_set_across_start_urls():
+    base = "https://canvas.test"
+    shared = f"{base}/courses/1/pages/shared-schedule"
+    pages = {
+        f"{base}/courses/1": {"title": "Home", "html": "h", "anchors": [FakeAnchor(shared, "Unit schedule")]},
+        f"{base}/courses/1/syllabus": {"title": "Syll", "html": "s", "anchors": [FakeAnchor(shared, "Unit schedule")]},
+        shared: {"title": "Shared", "html": "shared", "anchors": []},
+    }
+    page = FakePage(pages)
+    results = crawl_course_pages(
+        page, [f"{base}/courses/1", f"{base}/courses/1/syllabus"], base_url=base, max_depth=2
+    )
+    # The shared page is reachable from both entry points but fetched once.
+    assert page.goto_calls.count(shared) == 1
+    assert sum(1 for r in results if r["title"] == "Shared") == 1
+
+
+def test_navigator_survives_goto_failure():
+    base = "https://canvas.test"
+
+    class ExplodingPage(FakePage):
+        def goto(self, url):
+            super().goto(url)
+            if url.endswith("/broken"):
+                raise RuntimeError("navigation timeout")
+
+    pages = {
+        f"{base}/courses/1": {"title": "Home", "html": "h", "anchors": [FakeAnchor("/broken", "Unit schedule")]},
+        f"{base}/broken": {"title": "Broken", "html": "", "anchors": []},
+    }
+    page = ExplodingPage(pages)
+    # Must not raise; the broken child is skipped, home is still captured.
+    results = crawl_course_pages(page, f"{base}/courses/1", base_url=base, max_depth=2)
+    assert [r["title"] for r in results] == ["Home"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hybrid DOM + Vision extraction (scrapers/canvas_page_extractor.py)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_hybrid_detects_visual_embeds():
+    html = (
+        '<iframe src="https://docs.google.com/presentation/d/e/2PACX/pubembed"></iframe>'
+        '<iframe src="/courses/1/pages/plain"></iframe>'  # not a visual host -> ignored
+        '<canvas aria-label="agenda canvas"></canvas>'
+        '<img src="weekly-agenda.png" alt="agenda"/>'
+        '<img src="logo.png" alt="school logo"/>'  # not agenda-like -> ignored
+    )
+    embeds = page_extractor._detect_visual_embeds(html)
+    kinds = sorted(e["kind"] for e in embeds)
+    assert kinds == ["canvas", "iframe", "image"]
+    assert any("presentation" in e["src"] for e in embeds)
+
+
+def test_hybrid_uses_dom_first_and_skips_vision(monkeypatch):
+    monkeypatch.setattr(
+        page_extractor,
+        "_call_local_llm",
+        lambda *a, **k: '[{"title":"DOM Quiz","due_date":"2026-10-01","task_type":"Test"}]',
+    )
+    vision_called = {"n": 0}
+
+    def fake_vision(*a, **k):
+        vision_called["n"] += 1
+        return "[]"
+
+    monkeypatch.setattr(page_extractor, "_call_vision_llm", fake_vision)
+    rows = page_extractor.extract_assignments_hybrid(
+        "1", "Bio", "P", "p", "<p>Quiz due 2026-10-01</p>", screenshot_provider=lambda: b"PNG"
+    )
+    assert [r["title"] for r in rows] == ["DOM Quiz"]
+    assert vision_called["n"] == 0  # DOM had data -> vision never runs
+
+
+def test_hybrid_falls_back_to_vision_on_empty_dom(monkeypatch):
+    # DOM text extraction yields nothing (image-only page); vision OCR provides tasks.
+    monkeypatch.setattr(page_extractor, "_call_local_llm", lambda *a, **k: "")
+    monkeypatch.setattr(
+        page_extractor,
+        "_call_vision_llm",
+        lambda img, prompt, timeout: '[{"title":"Slide Exam","due_date":"9/12","task_type":"exam"}]',
+    )
+    shots = {"n": 0}
+
+    def provider():
+        shots["n"] += 1
+        return b"PNG_BYTES"
+
+    html = '<iframe src="https://docs.google.com/presentation/d/e/2PACX/pubembed"></iframe>'
+    rows = page_extractor.extract_assignments_hybrid(
+        "42", "Bio", "Agenda", "agenda", html, screenshot_provider=provider
+    )
+    assert shots["n"] == 1  # screenshot captured
+    assert len(rows) == 1
+    assert rows[0]["title"] == "Slide Exam"
+    assert rows[0]["due_date"] == "2026-09-12"  # normalized w/ assumed year
+    assert rows[0]["task_type"] == "Test"  # "exam" -> Test
+
+
+def test_hybrid_without_screenshot_provider_returns_dom_result(monkeypatch):
+    monkeypatch.setattr(page_extractor, "_call_local_llm", lambda *a, **k: "")
+    monkeypatch.setattr(
+        page_extractor,
+        "_call_vision_llm",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("vision must not run without a provider")),
+    )
+    html = '<iframe src="https://docs.google.com/presentation/d/e/2PACX/pubembed"></iframe>'
+    rows = page_extractor.extract_assignments_hybrid("42", "Bio", "A", "a", html)
+    assert rows == []
+
+
+def test_hybrid_vision_llm_base64_encodes_and_uses_temp_zero(monkeypatch):
+    sent = {}
+
+    def fake_post(url, json=None, timeout=None):
+        sent["payload"] = json
+        sent["url"] = url
+
+        class R:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"response": "[]"}
+
+        return R()
+
+    import requests
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    out = page_extractor._call_vision_llm(b"\x89PNGDATA", "prompt", 10.0)
+    assert out == "[]"
+    payload = sent["payload"]
+    assert payload is not None
+    import base64 as _b64
+
+    assert payload["images"] == [_b64.b64encode(b"\x89PNGDATA").decode("ascii")]
+    assert payload["model"] == page_extractor._VISION_MODEL
+    assert payload["options"]["temperature"] == 0.0
+
+
+def test_hybrid_normalize_url_dedup_key():
+    assert _normalize_url("https://x.com/a/b/") == _normalize_url("https://x.com/a/b")
+    assert _normalize_url("https://x.com/a#section") == "https://x.com/a"
+    assert _normalize_url("") == ""
+
+
