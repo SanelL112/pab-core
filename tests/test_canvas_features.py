@@ -197,3 +197,155 @@ def test_canvas_link_crawler_recurses_without_cycles_and_keeps_contextual_public
     assert any("Lab report" in description for _depth, description in crawled)
     assert sum("Public source" in description for _depth, description in crawled) == 2
     assert canvas.paths.count("/api/v1/courses/42/pages/first") == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Canvas page extractor (scrapers/canvas_page_extractor.py)
+# ─────────────────────────────────────────────────────────────────────────────
+import pytest
+
+import scrapers.canvas_page_extractor as page_extractor
+
+
+@pytest.fixture(autouse=True)
+def _isolate_extractor(monkeypatch):
+    """Every extractor test runs offline with no disk cache and a fresh budget."""
+    monkeypatch.setattr(page_extractor, "_CACHE_PATH", None, raising=False)
+    # Disable embedded-doc network fetches unless a test opts back in.
+    monkeypatch.setattr(page_extractor, "_fetch_external_link_text", lambda *a, **k: "")
+    # Ample budget so chunk loop is never starved.
+    page_extractor.reset_extraction_budget()
+    yield
+
+
+def _disable_llm(monkeypatch):
+    """Force the deterministic heuristic path (no LLM, no network)."""
+    monkeypatch.setattr(page_extractor, "_call_local_llm", lambda *a, **k: "")
+
+
+def test_extractor_preserves_multi_column_table_as_markdown_rows(monkeypatch):
+    _disable_llm(monkeypatch)
+    html = """
+    <div class="ic-app-header">Global Nav Home Dashboard Courses</div>
+    <h2>Unit 1</h2>
+    <table>
+      <tr><th>Date</th><th>Topic</th><th>Assignment / Assessment</th></tr>
+      <tr><td>8/17</td><td>Cells</td><td>U1Q1 quiz</td></tr>
+      <tr><td>9/4</td><td>Energy</td><td>U1 Test</td></tr>
+    </table>
+    """
+    compacted = page_extractor._parse_html_with_structure_and_links(html)
+    assert "[TABLE DATA]" in compacted
+    assert "Date | Topic | Assignment / Assessment" in compacted
+    assert "Global Nav" not in compacted  # navigation chrome stripped
+
+    rows = page_extractor.extract_assignments_from_html("42", "Biology", "Unit 1", "unit-1", html)
+    titles = {r["title"] for r in rows}
+    dates = {r["due_date"] for r in rows}
+    assert "2026-08-17" in dates and "2026-09-04" in dates
+    assert any("U1Q1" in t for t in titles)
+    assert all(r["task_type"] in {"Test", "Project", "Reading", "Assignment"} for r in rows)
+    assert all(r["official"] is False for r in rows)
+
+
+def test_extractor_resolves_nested_iframe_embeds(monkeypatch):
+    _disable_llm(monkeypatch)
+    # Re-enable a *mocked* embed fetch that returns a daily-agenda snippet.
+    monkeypatch.setattr(
+        page_extractor,
+        "_fetch_external_link_text",
+        lambda url, **k: "Plans: Monday 8/25 - U2 Quiz on cell division" if "presentation" in url else "",
+    )
+    html = """
+    <p>Daily agenda below:</p>
+    <iframe title="Agenda" src="https://docs.google.com/presentation/d/e/2PACX-abc/pubembed?start=false"></iframe>
+    """
+    compacted = page_extractor._parse_html_with_structure_and_links(html)
+    assert "Embedded Doc (Agenda)" in compacted
+    assert "U2 Quiz" in compacted
+
+    rows = page_extractor.extract_assignments_from_html("7", "Bio", "Agenda", "agenda", html)
+    assert any(r["due_date"] == "2026-08-25" for r in rows)
+
+
+def test_extractor_uses_llm_when_available_and_normalizes_output(monkeypatch):
+    # LLM returns valid JSON with a messy date + lowercase type -> must normalize.
+    monkeypatch.setattr(
+        page_extractor,
+        "_call_local_llm",
+        lambda *a, **k: '[{"title": "Midterm", "due_date": "October 3, 2026", "task_type": "exam"}]',
+    )
+    html = "<p>See you at the midterm.</p>"
+    rows = page_extractor.extract_assignments_from_html("1", "Physics", "Home", "home", html)
+    assert len(rows) == 1
+    assert rows[0]["due_date"] == "2026-10-03"
+    assert rows[0]["task_type"] == "Test"  # "exam" -> Test
+    assert rows[0]["id"].startswith("page-")
+
+
+def test_extractor_falls_back_to_heuristic_on_malformed_llm_json(monkeypatch):
+    # Model emits garbage; extractor must silently fall back to regex rules.
+    monkeypatch.setattr(page_extractor, "_call_local_llm", lambda *a, **k: "Sure! Here you go: not json at all")
+    html = "<p>Monday, 8/17 - U1Q1 quiz is due</p>"
+    rows = page_extractor.extract_assignments_from_html("1", "Bio", "P", "p", html)
+    assert rows, "heuristic fallback should still find the dated quiz"
+    assert rows[0]["due_date"] == "2026-08-17"
+
+
+def test_extractor_drops_malformed_dates(monkeypatch):
+    monkeypatch.setattr(
+        page_extractor,
+        "_call_local_llm",
+        lambda *a, **k: (
+            '[{"title": "Bad month", "due_date": "2026-13-40", "task_type": "Test"},'
+            ' {"title": "Not a date", "due_date": "TBD", "task_type": "Reading"},'
+            ' {"title": "Good one", "due_date": "2026-09-15", "task_type": "Assignment"}]'
+        ),
+    )
+    rows = page_extractor.extract_assignments_from_html("1", "Bio", "P", "p", "<p>text</p>")
+    assert len(rows) == 1
+    assert rows[0]["title"] == "Good one"
+    assert rows[0]["due_date"] == "2026-09-15"
+
+
+def test_extractor_chunks_long_pages_without_truncation(monkeypatch):
+    # Two well-separated dated items far enough apart to land in different chunks.
+    monkeypatch.setattr(page_extractor, "_CHUNK_CHARS", 400, raising=False)
+    monkeypatch.setattr(page_extractor, "_CHUNK_OVERLAP", 20, raising=False)
+
+    seen_chunks = []
+
+    def fake_llm(prompt, system, timeout):
+        seen_chunks.append(prompt)
+        if "ALPHA" in prompt:
+            return '[{"title": "Alpha quiz", "due_date": "2026-08-10", "task_type": "Test"}]'
+        if "OMEGA" in prompt:
+            return '[{"title": "Omega project", "due_date": "2026-11-20", "task_type": "Project"}]'
+        return "[]"
+
+    monkeypatch.setattr(page_extractor, "_call_local_llm", fake_llm)
+    body = "ALPHA due soon. " + ("filler words here " * 40) + " OMEGA due later."
+    html = f"<p>{body}</p>"
+    rows = page_extractor.extract_assignments_from_html("1", "Bio", "Long", "long", html)
+    dates = {r["due_date"] for r in rows}
+    assert len(seen_chunks) >= 2, "long page must be processed in multiple chunks"
+    assert "2026-08-10" in dates and "2026-11-20" in dates  # tail not truncated
+
+
+def test_extractor_normalize_date_variants():
+    n = page_extractor._normalize_date
+    assert n("2026-08-17") == "2026-08-17"
+    assert n("8/17") == "2026-08-17"
+    assert n("8/17/26") == "2026-08-17"
+    assert n("Aug 17") == "2026-08-17"
+    assert n("August 17, 2025") == "2025-08-17"
+    assert n("2026-13-40") is None
+    assert n("garbage") is None
+    assert n("") is None
+
+
+def test_extractor_empty_html_returns_empty_list(monkeypatch):
+    _disable_llm(monkeypatch)
+    assert page_extractor.extract_assignments_from_html("1", "Bio", "P", "p", "") == []
+    assert page_extractor.extract_assignments_from_html("1", "Bio", "P", "p", "<div></div>") == []
+
