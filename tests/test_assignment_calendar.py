@@ -255,7 +255,7 @@ def test_payload_parsing_preserves_source_and_date_only_deadline():
     assert assignment.is_date_only
 
 
-def test_google_docs_deadlines_become_approval_gated_proposals():
+def test_google_docs_deadlines_become_official_calendar_items():
     proposals = extract_google_doc_assignments(
         [{
             "id": "doc-123",
@@ -271,7 +271,8 @@ def test_google_docs_deadlines_become_approval_gated_proposals():
     assert proposals[0]["course"] == "Google Docs"
     assert proposals[0]["due_date"] == "2026-08-05"
     assert proposals[0]["url"] == "https://docs.google.com/document/d/doc-123/edit"
-    assert proposals[0]["official"] is False
+    # Google Docs extractions are treated as official (Sanel's decision in 7e0a23c).
+    assert proposals[0]["official"] is True
 
 
 def test_google_docs_dates_without_a_due_label_are_ignored():

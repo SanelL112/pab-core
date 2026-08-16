@@ -1,5 +1,5 @@
 #!/bin/bash
-MODEL_PATH="${MODEL_PATH:-/home/sanel-lathiya/models/qwen2.5-7b-instruct-q4_k_m_single.gguf}"
+MODEL_PATH="${MODEL_PATH:-/home/sanel-lathiya/models/LFM2.5-2.6B-Q8_0.gguf}"
 CONTEXT_SIZE="${CONTEXT_SIZE:-4096}"
 
 RPC_DELL=""

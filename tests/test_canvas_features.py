@@ -248,7 +248,9 @@ def test_extractor_preserves_multi_column_table_as_markdown_rows(monkeypatch):
     assert "2026-08-17" in dates and "2026-09-04" in dates
     assert any("U1Q1" in t for t in titles)
     assert all(r["task_type"] in {"Test", "Project", "Reading", "Assignment"} for r in rows)
-    assert all(r["official"] is False for r in rows)
+    # Extracted Canvas items are treated as official (Sanel's decision in 63f2722:
+    # AI-extracted calendar items are no longer approval-gated proposals).
+    assert all(r["official"] is True for r in rows)
 
 
 def test_extractor_resolves_nested_iframe_embeds(monkeypatch):
