@@ -70,6 +70,14 @@ _cache_lock = threading.Lock()
 _RUN_BUDGET_SECONDS = float(os.getenv("CANVAS_EXTRACT_RUN_BUDGET_SECONDS", "300"))
 _PER_PAGE_TIMEOUT = float(os.getenv("CANVAS_EXTRACT_PAGE_TIMEOUT_SECONDS", "30"))
 _PER_CALL_TIMEOUT = float(os.getenv("CANVAS_EXTRACT_CALL_TIMEOUT_SECONDS", "12"))
+# The RPC cluster router (Surface llama-server over the RPC fabric) needs its
+# OWN, much larger budget than the fast local Ollama path — it runs a bigger
+# model and is ~1 tok/s at term start. Capping it at the 12s Ollama timeout (the
+# old bug) guaranteed every RPC attempt timed out, so RPC never actually served
+# a page. Default 0 = RPC fallback DISABLED for the bulk per-page crawl (it would
+# blow the per-page budget); set >0 to enable RPC as a real fallback, and use a
+# single-page/offline reprocess when you want the cluster to do the work.
+_RPC_CALL_TIMEOUT = float(os.getenv("CANVAS_EXTRACT_RPC_TIMEOUT_SECONDS", "0"))
 # The first local call must load the model into memory (~6s for LFM2.5-1.2B on
 # this box). Give the cold call a bigger budget so it isn't guaranteed to time
 # out and silently demote every page to the regex fallback.
@@ -579,14 +587,20 @@ def warm_up_model(timeout: float | None = None) -> bool:
 
 
 def _call_local_llm(prompt: str, system_prompt: str, timeout: float) -> str:
-    """Primary local inference: direct Ollama endpoint, then RPC router.
+    """Primary local inference: direct Ollama endpoint, then optional RPC router.
 
-    Both are local (private-data safe). Returns an empty string when neither
-    path yields text, which routes the caller to the heuristic fallback.
+    Both are local (private-data safe). The fast Ollama path uses the passed
+    ``timeout``; the RPC cluster router uses its OWN budget (_RPC_CALL_TIMEOUT)
+    because it runs a larger model at ~1 tok/s and would otherwise be killed by
+    the short per-page Ollama timeout. RPC is skipped entirely when its budget is
+    0 (the default for the bulk crawl). Returns "" when neither path yields text,
+    routing the caller to the heuristic fallback.
     """
     text = _ollama_generate(prompt, system_prompt, timeout)
     if text:
         return text
+    if _RPC_CALL_TIMEOUT <= 0:
+        return ""  # RPC fallback disabled for this (bulk) path
     try:
         from llm_router import call_local_rpc
 
@@ -595,7 +609,7 @@ def _call_local_llm(prompt: str, system_prompt: str, timeout: float) -> str:
             system_prompt=system_prompt,
             max_tokens=512,
             temperature=0.0,
-            timeout=timeout,
+            timeout=_RPC_CALL_TIMEOUT,
         )
     except Exception as exc:
         logger.debug("Local RPC router unavailable: %s", type(exc).__name__)
