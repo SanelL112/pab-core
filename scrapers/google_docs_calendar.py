@@ -153,7 +153,7 @@ def extract_google_doc_assignments(documents: Iterable[dict[str, Any]], today: d
                     "url": url,
                     "task_type": _task_type(title),
                     "status": "Not started",
-                    "official": False,
+                    "official": True,
                 })
                 # A sentence may contain both "deadline" and "submit";
                 # they describe the same date, not two assignments.
