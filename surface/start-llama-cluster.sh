@@ -1,6 +1,9 @@
 #!/bin/bash
 MODEL_PATH="${MODEL_PATH:-/home/sanel-lathiya/models/LFM2.5-2.6B-Q8_0.gguf}"
-CONTEXT_SIZE="${CONTEXT_SIZE:-4096}"
+# 64K context: LFM2.5-2.6B supports up to 128K, but KV cache is distributed
+# across the RPC backends (Surface+Pi+Dell) and the Dell node is RAM-tight, so
+# 64K + flash-attn + q8_0 KV quant is the measured safe ceiling. Override via env.
+CONTEXT_SIZE="${CONTEXT_SIZE:-65536}"
 
 RPC_DELL=""
 if ping -c 1 -W 1 10.10.10.1 &> /dev/null; then
@@ -24,4 +27,4 @@ elif [ -n "$RPC_PI" ]; then
 fi
 
 echo "Initiating llama.cpp across full RPC Cluster to maximize compute offloading!"
-exec /home/sanel-lathiya/llama.cpp/build/bin/llama-server -m "$MODEL_PATH" $RPC_ARGS -c "$CONTEXT_SIZE" --host 0.0.0.0 --port 8080
+exec /home/sanel-lathiya/llama.cpp/build/bin/llama-server -m "$MODEL_PATH" $RPC_ARGS -c "$CONTEXT_SIZE" --host 0.0.0.0 --port 8080 --flash-attn on --cache-type-k q8_0 --cache-type-v q8_0
