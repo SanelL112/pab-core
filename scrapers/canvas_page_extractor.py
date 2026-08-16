@@ -63,15 +63,40 @@ except Exception:  # pragma: no cover - config always importable in practice
 _cache_lock = threading.Lock()
 
 # ── Budgets and endpoints (all overridable via environment) ──────────────────
-_RUN_BUDGET_SECONDS = float(os.getenv("CANVAS_EXTRACT_RUN_BUDGET_SECONDS", "180"))
+# Total wall-clock budget for one calendar pass's LLM extraction, shared across
+# ALL courses. Sized for a multi-course crawl: ~7 courses x up to 6 pages x ~3s
+# warm (1.2B) plus a one-time cold load leaves headroom. Raise it if you add the
+# slower 2.6B model or more favorite courses.
+_RUN_BUDGET_SECONDS = float(os.getenv("CANVAS_EXTRACT_RUN_BUDGET_SECONDS", "300"))
 _PER_PAGE_TIMEOUT = float(os.getenv("CANVAS_EXTRACT_PAGE_TIMEOUT_SECONDS", "30"))
 _PER_CALL_TIMEOUT = float(os.getenv("CANVAS_EXTRACT_CALL_TIMEOUT_SECONDS", "12"))
+# The first local call must load the model into memory (~6s for LFM2.5-1.2B on
+# this box). Give the cold call a bigger budget so it isn't guaranteed to time
+# out and silently demote every page to the regex fallback.
+_COLD_CALL_TIMEOUT = float(os.getenv("CANVAS_EXTRACT_COLD_TIMEOUT_SECONDS", "40"))
+# Keep the model resident between pages so calls 2..N stay warm (~3s each).
+_OLLAMA_KEEP_ALIVE = os.getenv("CANVAS_EXTRACT_OLLAMA_KEEP_ALIVE", "30m")
+_OLLAMA_NUM_PREDICT = int(os.getenv("CANVAS_EXTRACT_OLLAMA_NUM_PREDICT", "512"))
 
 # Direct local LLM endpoint (Ollama-native /api/generate).
 _OLLAMA_GENERATE_URL = os.getenv(
     "CANVAS_EXTRACT_OLLAMA_URL", "http://127.0.0.1:11434/api/generate"
 )
-_OLLAMA_MODEL = os.getenv("CANVAS_EXTRACT_OLLAMA_MODEL", "LFM2.5-1.2B-Instruct")
+# NOTE: this must be the exact Ollama tag (`ollama list`), not a friendly alias.
+# A wrong name returns HTTP 404 and silently demotes every page to the regex
+# fallback. Default is LFM2.5-1.2B: measured ~3s/page warm on this box, which is
+# what lets an all-courses crawl finish in budget. The 2.6B is available by
+# setting CANVAS_EXTRACT_OLLAMA_MODEL=hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M, but
+# it benchmarks at ~3 tok/s + reasoning-mode here (~100s/page) and will starve a
+# multi-course pass — prefer it only for single-page/offline re-processing.
+_OLLAMA_MODEL = os.getenv(
+    "CANVAS_EXTRACT_OLLAMA_MODEL",
+    "hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:latest",
+)
+
+# One-shot warm-up latch: the first _ollama_generate of a run gets the cold
+# budget; subsequent calls use the normal (shorter) per-call timeout.
+_model_warmed = threading.Event()
 
 # Chunking: process the full page in windows rather than truncating it.  A page
 # rarely exceeds a couple of windows, but a syllabus with an inlined agenda can,
@@ -446,12 +471,24 @@ def _heuristic_rule_extraction(text: str) -> list[dict]:
                 )
                 continue
 
-        # 2. Section date heading: "Monday, 8/17 -" or "8/17"
+        # 2. Section date heading. Two accepted forms, deliberately strict about
+        #    the dot separator so lesson/section numbers ("lesson 1.2", "p. 32",
+        #    "pgs. 6-7") are NOT mistaken for dates:
+        #      a) slash/dash date, optional weekday: "Monday, 8/17", "8-17"
+        #      b) dotted date ONLY with a weekday anchor: "Monday 8.17"
+        #    A bare "1.2" with no weekday is rejected.
         date_match = re.search(
-            r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday)?\s*,?\s*(\d{1,2})[/.-](\d{1,2})\b",
+            r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday)?\s*,?\s*(\d{1,2})[/-](\d{1,2})\b",
             line,
             re.IGNORECASE,
         )
+        if not date_match:
+            # Dotted form requires an explicit weekday immediately before it.
+            date_match = re.search(
+                r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday)\s*,?\s*(\d{1,2})\.(\d{1,2})\b",
+                line,
+                re.IGNORECASE,
+            )
         if date_match:
             iso = _normalize_date(
                 f"{date_match.group(1)}/{date_match.group(2)}", year
@@ -488,27 +525,57 @@ def _ollama_generate(prompt: str, system_prompt: str, timeout: float) -> str:
 
     Isolated so unit tests can monkeypatch the single HTTP boundary. Returns an
     empty string on any failure; the caller decides how to fall back.
+
+    Sends ``keep_alive`` so the model stays resident between pages (the first
+    call pays a one-time cold-load cost; the rest are warm). The first call of a
+    run also gets an enlarged timeout so cold-load can't guarantee a fallback.
     """
     import requests  # lazy: keeps module import cheap and test-friendly
+
+    # First call of the run gets the cold-load budget; later calls the normal one.
+    if not _model_warmed.is_set():
+        timeout = max(timeout, _COLD_CALL_TIMEOUT)
 
     payload = {
         "model": _OLLAMA_MODEL,
         "prompt": prompt,
         "system": system_prompt,
         "stream": False,
-        "options": {"temperature": 0.0},
+        "keep_alive": _OLLAMA_KEEP_ALIVE,
+        "options": {"temperature": 0.0, "num_predict": _OLLAMA_NUM_PREDICT},
     }
     try:
         resp = requests.post(_OLLAMA_GENERATE_URL, json=payload, timeout=timeout)
         if resp.status_code != 200:
-            logger.debug("Ollama /api/generate returned HTTP %s", resp.status_code)
+            # A wrong model tag returns 404 here; surface it loudly once so a
+            # misconfiguration doesn't masquerade as "LLM unavailable".
+            logger.warning(
+                "Ollama /api/generate returned HTTP %s for model %r",
+                resp.status_code, _OLLAMA_MODEL,
+            )
             return ""
         data = resp.json()
         text = data.get("response", "") if isinstance(data, dict) else ""
+        _model_warmed.set()  # model is loaded; subsequent calls are warm
         return text.strip() if isinstance(text, str) else ""
     except Exception as exc:  # network, decode, timeout
         logger.debug("Ollama /api/generate failed: %s", type(exc).__name__)
         return ""
+
+
+def warm_up_model(timeout: float | None = None) -> bool:
+    """Pre-load the local model once before a crawl so per-page calls are warm.
+
+    Returns True if the model responded (now resident). Call this at the start of
+    a calendar pass so the cold load is paid once, not risked on the first real
+    page. Safe to call repeatedly; a no-op once warmed.
+    """
+    if _model_warmed.is_set():
+        return True
+    out = _ollama_generate("ping", "Reply with OK.", timeout or _COLD_CALL_TIMEOUT)
+    if out:
+        _model_warmed.set()  # latch even if the inner call's own set() was mocked out
+    return _model_warmed.is_set()
 
 
 def _call_local_llm(prompt: str, system_prompt: str, timeout: float) -> str:

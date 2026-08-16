@@ -1134,10 +1134,22 @@ def _get_calendar_assignments(
     # Start a fresh per-pass budget for AI page extraction so a slow/cold
     # inference pass cannot stall the whole calendar collection.
     try:
-        from scrapers.canvas_page_extractor import reset_extraction_budget
+        from scrapers.canvas_page_extractor import reset_extraction_budget, warm_up_model
         reset_extraction_budget()
+        # Pay the model cold-load once up front so it isn't risked (and charged
+        # against the shared budget) on the first real page of course #1.
+        warm_up_model()
     except Exception:
         pass
+
+    # Fair-share cap: bound how many pages each course may send to the LLM so a
+    # page-heavy course (e.g. AP Bio's weekly agendas) can't consume the whole
+    # extraction budget and starve courses processed later in the loop. Official
+    # API assignments below are NOT capped — every course always contributes those.
+    try:
+        max_pages_per_course = max(1, int(get_setting("CANVAS_EXTRACT_PAGES_PER_COURSE", "6")))
+    except Exception:
+        max_pages_per_course = 6
 
     for course in courses:
         course_id = course.get("id")
@@ -1245,7 +1257,7 @@ def _get_calendar_assignments(
 
             # Extract assignments via AI RPC
             from scrapers.canvas_page_extractor import extract_assignments_from_html
-            for p in pages_to_extract:
+            for p in pages_to_extract[:max_pages_per_course]:
                 p_url = p.get("url")
                 p_title = p.get("title", "Untitled")
                 p_body = p.get("body")

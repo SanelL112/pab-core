@@ -215,7 +215,10 @@ def _isolate_extractor(monkeypatch):
     monkeypatch.setattr(page_extractor, "_fetch_external_link_text", lambda *a, **k: "")
     # Ample budget so chunk loop is never starved.
     page_extractor.reset_extraction_budget()
+    # Reset the warm-up latch so no test inherits another's model-loaded state.
+    page_extractor._model_warmed.clear()
     yield
+    page_extractor._model_warmed.clear()
 
 
 def _disable_llm(monkeypatch):
@@ -348,6 +351,41 @@ def test_extractor_empty_html_returns_empty_list(monkeypatch):
     _disable_llm(monkeypatch)
     assert page_extractor.extract_assignments_from_html("1", "Bio", "P", "p", "") == []
     assert page_extractor.extract_assignments_from_html("1", "Bio", "P", "p", "<div></div>") == []
+
+
+def test_heuristic_does_not_mistake_lesson_numbers_for_dates():
+    # Regression: the live run turned "lessons 1.2 - 1.5) Monday 8/17" into
+    # 2026-01-02 (read "1.2" as Jan 2). The dot separator must require a weekday
+    # anchor; the real 8/17 slash-date is what should win.
+    rows = page_extractor._heuristic_rule_extraction(
+        "Midpoint formative quiz ( covers OneNote lessons 1.2 - 1.5) Monday 8/17"
+    )
+    dates = {r["due_date"] for r in rows}
+    assert "2026-01-02" not in dates
+    assert "2026-08-17" in dates
+    # A genuinely dotted date WITH a weekday anchor is still accepted.
+    rows2 = page_extractor._heuristic_rule_extraction("Monday 8.17 - U1Q1 quiz")
+    assert any(r["due_date"] == "2026-08-17" for r in rows2)
+    # Bare "p. 32" / "pg. 6-7" style references produce no date.
+    rows3 = page_extractor._heuristic_rule_extraction("Record data on p. 32 of unit packet")
+    assert rows3 == [] or all(r["due_date"] != "2026-03-32" for r in rows3)
+
+
+def test_warm_up_model_latches(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_gen(prompt, system, timeout):
+        calls["n"] += 1
+        return "OK"
+
+    monkeypatch.setattr(page_extractor, "_ollama_generate", fake_gen)
+    page_extractor._model_warmed.clear()
+    assert page_extractor.warm_up_model() is True
+    assert calls["n"] == 1
+    # Second call is a no-op once warmed.
+    assert page_extractor.warm_up_model() is True
+    assert calls["n"] == 1
+    page_extractor._model_warmed.clear()  # reset for other tests
 
 
 # ─────────────────────────────────────────────────────────────────────────────
