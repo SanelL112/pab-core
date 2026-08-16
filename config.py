@@ -188,9 +188,14 @@ if RPC_SURFACE_TIMEOUT > RPC_INFERENCE_TIMEOUT - _RPC_FALLBACK_RESERVE_SECONDS:
 # (371s of a 438s run), and an 8-task/13-topic digest used only ~900 tokens, so
 # the old 6000 was headroom nobody consumed.
 DIGEST_MAX_TOKENS = _integer("DIGEST_MAX_TOKENS", 2000)
-RPC_FALLBACK_OLLAMA_MODEL = _value(
-    "RPC_FALLBACK_OLLAMA_MODEL", "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:latest"
+RPC_SMALL_OLLAMA_MODEL = _value(
+    "RPC_SMALL_OLLAMA_MODEL", "hf.co/LiquidAI/LFM2.5-350M-GGUF:BF16"
 )
+RPC_FALLBACK_OLLAMA_MODEL = _value(
+    "RPC_FALLBACK_OLLAMA_MODEL", "hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:latest"
+)
+OLLAMA_PI_MODEL = _value("OLLAMA_PI_MODEL", "hf.co/LiquidAI/LFM2.5-350M-GGUF:BF16")
+OLLAMA_DELL_MODEL = _value("OLLAMA_DELL_MODEL", "hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:latest")
 RPC_FALLBACK_CLOUD_MODEL = _value("RPC_FALLBACK_CLOUD_MODEL", OR_DEFAULT_MODEL)
 
 BACKUP_RETENTION_DAYS = 30

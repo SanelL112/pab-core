@@ -639,7 +639,7 @@ def _streaming_call(client, model, messages, task, max_tokens, timeout, stream_t
 
 
 # ── Local LLM Wrappers (PII-safe, never leaves server) ──────────────────────
-def call_ollama(prompt: str, model: str = "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:latest",
+def call_ollama(prompt: str, model: str = "hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:latest",
                 timeout: int | float = 30, url: str | None = None) -> str:
     """Call local Ollama model. Safe for PII — runs entirely on your server.
 
@@ -659,7 +659,7 @@ def call_ollama(prompt: str, model: str = "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:l
     """
     # Auto-select Orange Pi 5 for qwen2.5:3b and qwen2:0.5b models
     if url is None:
-        if model.startswith("qwen2.5:3b") or model.startswith("qwen2:0.5b"):
+        if model.startswith("qwen2.5:3b") or model.startswith("qwen2:0.5b") or "350M" in model or "350m" in model:
             url = OLLAMA_ORANGEPI_URL
         else:
             url = OLLAMA_URL
@@ -706,7 +706,7 @@ def call_ollama(prompt: str, model: str = "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:l
 
 def call_ollama_result(
     prompt: str,
-    model: str = "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:latest",
+    model: str = "hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:latest",
     timeout: int | float = 30,
     url: str | None = None,
 ) -> InferenceResult:
@@ -874,7 +874,7 @@ def call_local_rpc(
     # starve the Pi/Dell fallbacks below (see config.RPC_SURFACE_TIMEOUT).
     from config import RPC_SURFACE_TIMEOUT
 
-    surface_timeout = min(remaining(), float(RPC_SURFACE_TIMEOUT))
+    surface_timeout = min(remaining(), 10.0)
 
     logger.info("call_local_rpc: trying Surface orchestrator API (10.0.0.47:8080)")
     result = ""
@@ -891,7 +891,7 @@ def call_local_rpc(
         logger.info(f"call_local_rpc: Surface API returned {len(result)} chars")
         return result
 
-    from config import OLLAMA_LOCAL_URL, OLLAMA_ORANGEPI_URL, RPC_FALLBACK_OLLAMA_MODEL
+    from config import OLLAMA_LOCAL_URL, OLLAMA_ORANGEPI_URL, RPC_FALLBACK_OLLAMA_MODEL, RPC_SMALL_OLLAMA_MODEL
 
     def _try_ollama(target_url: str, model: str, label: str) -> str:
         attempt_budget = remaining()
@@ -926,7 +926,7 @@ def call_local_rpc(
 
     result = _try_ollama(
         OLLAMA_ORANGEPI_URL,
-        "hf.co/Qwen/Qwen2-0.5B-Instruct-GGUF:latest",
+        RPC_SMALL_OLLAMA_MODEL,
         "Pi Ollama",
     )
     if result:
