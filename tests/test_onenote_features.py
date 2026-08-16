@@ -103,6 +103,71 @@ def test_token_endpoint_error_raises(client, monkeypatch):
         client._refresh_access_token()
 
 
+def test_device_code_login_succeeds_and_persists(client, token_store, monkeypatch):
+    monkeypatch.setattr("scrapers.onenote_scraper.time.sleep", lambda *_: None)
+    calls = {"n": 0}
+
+    def fake_post(url, data=None, timeout=None):
+        # First POST -> device-code endpoint; subsequent -> token endpoint.
+        if url.endswith("/devicecode"):
+            return FakeResponse(
+                json_data={
+                    "device_code": "DEV",
+                    "user_code": "ABCD-EFGH",
+                    "verification_uri": "https://microsoft.com/devicelogin",
+                    "message": "Go enter ABCD-EFGH",
+                    "interval": 1,
+                    "expires_in": 900,
+                },
+                content=b"{}",
+            )
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # Still waiting for the user.
+            return FakeResponse(status_code=400, json_data={"error": "authorization_pending"}, content=b"{}")
+        return FakeResponse(
+            json_data={"access_token": "at-dev", "refresh_token": "rt-dev", "expires_in": 3600},
+            content=b"{}",
+        )
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    prompts = []
+    client.device_code_login(on_prompt=lambda uri, code, msg: prompts.append((uri, code)), poll_interval=0.01)
+
+    assert prompts == [("https://microsoft.com/devicelogin", "ABCD-EFGH")]
+    assert client._refresh_token == "rt-dev"
+    stored = json.loads(token_store.read_text())
+    assert stored["refresh_token"] == "rt-dev"
+    assert stored["access_token"] == "at-dev"
+
+
+def test_device_code_login_requires_client_id(token_store):
+    c = OneNoteClient(client_id="", token_path=token_store)
+    with pytest.raises(OneNoteAuthError, match="ONENOTE_CLIENT_ID"):
+        c.device_code_login(on_prompt=lambda *a: None)
+
+
+def test_device_code_login_propagates_hard_error(client, monkeypatch):
+    monkeypatch.setattr("scrapers.onenote_scraper.time.sleep", lambda *_: None)
+
+    def fake_post(url, data=None, timeout=None):
+        if url.endswith("/devicecode"):
+            return FakeResponse(
+                json_data={"device_code": "DEV", "user_code": "X", "interval": 1, "expires_in": 900},
+                content=b"{}",
+            )
+        # Hard failure (e.g. user declined) -> must raise, not loop forever.
+        return FakeResponse(
+            status_code=400,
+            json_data={"error": "authorization_declined", "error_description": "user said no"},
+            content=b"{}",
+        )
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    with pytest.raises(OneNoteAuthError, match="authorization_declined"):
+        client.device_code_login(on_prompt=lambda *a: None, poll_interval=0.01)
+
+
 def test_cached_token_avoids_extra_refresh(client, monkeypatch):
     posts = {"n": 0}
 

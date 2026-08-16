@@ -41,6 +41,12 @@ TOKEN_ENDPOINT = os.getenv(
     "ONENOTE_TOKEN_ENDPOINT",
     "https://login.microsoftonline.com/common/oauth2/v2.0/token",
 )
+# Device-code endpoint for the one-time interactive bootstrap (public client,
+# no client secret required — works for personal/student Microsoft accounts).
+DEVICE_CODE_ENDPOINT = os.getenv(
+    "ONENOTE_DEVICE_CODE_ENDPOINT",
+    "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode",
+)
 DEFAULT_SCOPE = os.getenv(
     "ONENOTE_SCOPE", "offline_access Notes.Read Notes.Read.All"
 )
@@ -162,6 +168,103 @@ class OneNoteClient:
         if not self._access_token or time.time() >= self._access_expiry:
             self._refresh_access_token()
         return self._access_token
+
+    # ── One-time interactive bootstrap ────────────────────────────────────────
+    def device_code_login(self, *, on_prompt=None, poll_interval: float = 5.0) -> None:
+        """Acquire the first refresh token via the OAuth2 device-code flow.
+
+        This is the one-time interactive step. It requests a device code, shows
+        the user a URL + short code to enter on any browser, polls the token
+        endpoint until the user completes sign-in, then persists the resulting
+        access + refresh tokens to ``token_path``.
+
+        Uses the public-client flow (no client secret), so it works with a
+        personal/student Microsoft account that cannot create a confidential app.
+
+        Args:
+            on_prompt: optional callable ``(verification_uri, user_code, message)``
+                for custom display. Defaults to printing the instructions.
+            poll_interval: seconds between token polls (Graph dictates a minimum;
+                the server-provided interval is honored when larger).
+        """
+        if not self.client_id:
+            raise OneNoteAuthError(
+                "ONENOTE_CLIENT_ID is required for device-code login. Register a "
+                "public client app in Azure and set its Application (client) ID."
+            )
+        import requests
+
+        # 1. Request a device code.
+        try:
+            resp = requests.post(
+                DEVICE_CODE_ENDPOINT,
+                data={"client_id": self.client_id, "scope": DEFAULT_SCOPE},
+                timeout=self.request_timeout,
+            )
+        except Exception as exc:
+            raise OneNoteAuthError(f"Device-code endpoint unreachable: {type(exc).__name__}") from exc
+        if resp.status_code != 200:
+            raise OneNoteAuthError(
+                f"Device-code request failed HTTP {resp.status_code}: {resp.text[:200]}"
+            )
+        flow = resp.json()
+        device_code = flow.get("device_code")
+        user_code = flow.get("user_code", "")
+        verification_uri = flow.get("verification_uri", "https://microsoft.com/devicelogin")
+        message = flow.get("message", "")
+        interval = max(poll_interval, float(flow.get("interval", poll_interval) or poll_interval))
+        expires_in = float(flow.get("expires_in", 900) or 900)
+        if not device_code:
+            raise OneNoteAuthError("Device-code response missing device_code")
+
+        if on_prompt is not None:
+            on_prompt(verification_uri, user_code, message)
+        else:  # pragma: no cover - interactive path
+            print("\n=== OneNote sign-in required ===")
+            print(message or f"Open {verification_uri} and enter code: {user_code}")
+            print("Waiting for you to complete sign-in in your browser...\n")
+
+        # 2. Poll for completion.
+        deadline = time.time() + expires_in
+        while time.time() < deadline:
+            time.sleep(interval)
+            try:
+                token_resp = requests.post(
+                    TOKEN_ENDPOINT,
+                    data={
+                        "client_id": self.client_id,
+                        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                        "device_code": device_code,
+                    },
+                    timeout=self.request_timeout,
+                )
+            except Exception as exc:
+                logger.debug("Device-code poll transient error: %s", type(exc).__name__)
+                continue
+
+            payload = token_resp.json() if token_resp.content else {}
+            if token_resp.status_code == 200 and payload.get("access_token"):
+                self._access_token = payload["access_token"]
+                if payload.get("refresh_token"):
+                    self._refresh_token = payload["refresh_token"]
+                expires = float(payload.get("expires_in", 3600) or 3600)
+                self._access_expiry = time.time() + max(0.0, expires - 60.0)
+                self._save_token_store()
+                logger.info("OneNote device-code login complete; tokens persisted")
+                return
+
+            # authorization_pending / slow_down are expected while waiting.
+            error = payload.get("error", "")
+            if error == "authorization_pending":
+                continue
+            if error == "slow_down":
+                interval += 5
+                continue
+            raise OneNoteAuthError(
+                f"Device-code login failed: {error or token_resp.status_code}: "
+                f"{payload.get('error_description', '')[:200]}"
+            )
+        raise OneNoteAuthError("Device-code login timed out before user completed sign-in")
 
     # ── HTTP seam ─────────────────────────────────────────────────────────────
     def _request(
