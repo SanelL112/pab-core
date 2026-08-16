@@ -479,7 +479,29 @@ def _heuristic_rule_extraction(text: str) -> list[dict]:
                 )
                 continue
 
-        # 2. Section date heading. Two accepted forms, deliberately strict about
+        # 2. Named month with day: "Unit 1 Quiz 1 - Friday, Aug. 14th", "Unit 1 Derivita Assignment - Tuesday, Sept. 1st"
+        named_date_match = re.search(
+            r"([A-Za-z0-9\s/_-]+?)\s*[-:—]\s*(?:(?:Mon|Tue|Wed|Thu|Fri|Monday|Tuesday|Wednesday|Thursday|Friday)\s*,?\s*)?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b",
+            line,
+            re.IGNORECASE,
+        )
+        if named_date_match:
+            item_name = named_date_match.group(1).strip()
+            mon_str = named_date_match.group(2).lower()
+            months = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+            m = months.get(mon_str[:3], 8)
+            d = int(named_date_match.group(3))
+            if 1 <= m <= 12 and 1 <= d <= 31 and len(item_name) >= 3:
+                results.append(
+                    {
+                        "title": item_name,
+                        "due_date": f"{year}-{m:02d}-{d:02d}",
+                        "task_type": _normalize_task_type(item_name),
+                    }
+                )
+                continue
+
+        # 3. Section date heading. Two accepted forms, deliberately strict about
         #    the dot separator so lesson/section numbers ("lesson 1.2", "p. 32",
         #    "pgs. 6-7") are NOT mistaken for dates:
         #      a) slash/dash date, optional weekday: "Monday, 8/17", "8-17"
@@ -706,7 +728,7 @@ def _decorate(items: list, course_id: str, course_name: str, page_url: str) -> l
             item["url"] = page_url
         else:
             item["url"] = f"https://forsyth.instructure.com/courses/{course_id}/pages/{page_url}"
-        item["official"] = False
+        item["official"] = True
         out.append(item)
     return out
 

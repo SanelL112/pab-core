@@ -526,7 +526,7 @@ def _assignment_from_payload(payload: dict[str, Any], source: str) -> Assignment
         url=str(payload.get("url") or payload.get("html_url") or "") or None,
         task_type=task_type if task_type in {"Assignment", "Test", "Project", "Reading", "Other"} else "Assignment",
         status=str(payload.get("status") or "Not started"),
-        official=bool(payload.get("official", source in {"canvas", "google_classroom"})),
+        official=bool(payload.get("official", False)) or source in {"canvas", "google_classroom"},
     )
 
 

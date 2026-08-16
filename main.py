@@ -147,9 +147,10 @@ async def _watchdog_impl(context: ContextTypes.DEFAULT_TYPE):
     # ── Scrape each source independently so one failure doesn't kill the watchdog ──
     async def _safe_scrape(name, func, *args):
         try:
+            scrape_timeout = 180 if name == "canvas" else 60
             return await asyncio.wait_for(
                 asyncio.to_thread(func, *args),
-                timeout=60
+                timeout=scrape_timeout
             )
         except Exception as e:
             err_msg = str(e)[:120]
@@ -333,9 +334,10 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
     # ── Per-source error recovery: each scraper runs independently ─────────
     async def _safe_scrape(name, func, *args):
         try:
+            scrape_timeout = 180 if name == "canvas" else 60
             return await asyncio.wait_for(
                 asyncio.to_thread(func, *args),
-                timeout=60
+                timeout=scrape_timeout
             )
         except Exception as e:
             logger.error(f"Scraper {name} failed: {e}")
@@ -937,6 +939,15 @@ if __name__ == "__main__":
         asyncio.run(compile_bot_context())
     except Exception as e:
         logger.error(f"Failed to pre-compile bot context: {e}")
+
+    try:
+        from scrapers.assignment_calendar import AssignmentCalendarService
+        calendar_service = AssignmentCalendarService()
+        if calendar_service.store.is_enabled():
+            calendar_service.sync_official()
+            logger.info("Initial assignment calendar sync completed.")
+    except Exception as e:
+        logger.warning(f"Initial calendar sync failed: {e}")
 
     import time as _time
     try:
