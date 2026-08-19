@@ -287,6 +287,91 @@ class BrowserDaemon:
             filename = str(metadata.get("display_name") or metadata.get("filename") or f"canvas-{file_id}")
             return content, str(result.get("contentType") or "application/octet-stream"), filename
 
+    def _open_m365_app_if_visible(self) -> bool:
+        assert self.client.driver is not None
+        driver = self.client.driver
+        try:
+            from selenium.webdriver.common.action_chains import ActionChains
+            from selenium.webdriver.support.ui import WebDriverWait
+
+            handles_before = set(driver.window_handles)
+            app = WebDriverWait(driver, 20).until(
+                lambda _d: driver.execute_script(
+                    """
+                    function findM365(root) {
+                        for (const element of root.querySelectorAll('a, button, [role="button"], img, [aria-label], [title], .app-icon, .app-tile')) {
+                            const label = [
+                                element.innerText, element.getAttribute('aria-label'),
+                                element.getAttribute('title'), element.getAttribute('alt')
+                            ].filter(Boolean).join(' ').toLowerCase();
+                            if (label.includes('outlook 365') || label.includes('onedrive') || label.includes('office 365')) {
+                                return element.closest('a, button, [role="button"], .app-icon, .app-tile') || element;
+                            }
+                        }
+                        for (const element of root.querySelectorAll('*')) {
+                            if (element.shadowRoot) {
+                                const nested = findM365(element.shadowRoot);
+                                if (nested) return nested;
+                            }
+                        }
+                        return null;
+                    }
+                    return findM365(document);
+                    """
+                )
+            )
+            if not app:
+                return False
+
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", app)
+            ActionChains(driver).move_to_element(app).pause(0.2).click().perform()
+            WebDriverWait(driver, 30).until(lambda d: len(d.window_handles) > len(handles_before))
+            new_handles = [h for h in driver.window_handles if h not in handles_before]
+            if new_handles:
+                driver.switch_to.window(new_handles[-1])
+            return True
+        except Exception:
+            logger.debug("M365 ClassLink app tile click failed", exc_info=True)
+            return False
+
+    def crawl_onenote_web(self) -> dict[str, Any]:
+        """Navigate to Microsoft 365 via ClassLink SSO, then crawl OneNote notebooks."""
+        with self.lock:
+            assert self.client.driver is not None
+            driver = self.client.driver
+
+            # 1. Switch to ClassLink LaunchPad
+            if not self._select_classlink_tab():
+                return {"status": "error", "message": "ClassLink tab not found"}
+
+            time.sleep(1)
+            # 2. Click M365 tile using pointer actions
+            opened = self._open_m365_app_if_visible()
+            time.sleep(6)
+
+            # 3. Navigate directly to OneNote Notebooks portal with active session
+            driver.get("https://www.onenote.com/notebooks")
+            time.sleep(8)
+
+            curr_url = driver.current_url
+            curr_title = driver.title
+
+            discovered = driver.execute_script(
+                """
+                return Array.from(document.querySelectorAll('a, button, [role="link"], .notebook-item, .ms-List-cell, [data-automationid="DetailsRowCell"]')).map(el => ({
+                    title: (el.innerText || el.getAttribute('aria-label') || el.title || '').trim(),
+                    url: el.href || ''
+                })).filter(n => n.title.length > 2 && (n.url.includes('onenote') || n.url.includes('sharepoint') || n.url.includes('office') || n.url.includes('microsoft')));
+                """
+            )
+            return {
+                "status": "authenticated_and_navigated",
+                "m365_tile_opened": opened,
+                "location": curr_url,
+                "title": curr_title,
+                "discovered": discovered[:25],
+            }
+
     def close(self) -> None:
         self.client.close()
 
@@ -298,6 +383,14 @@ class DaemonHandler(BaseHTTPRequestHandler):
         route = urlsplit(self.path)
         if route.path == "/health":
             self._send(200, self.server.daemon.health())
+            return
+        if route.path == "/onenote/crawl":
+            try:
+                res = self.server.daemon.crawl_onenote_web()
+                self._send(200, res)
+            except Exception as exc:
+                logger.exception("OneNote web crawl failed")
+                self._send(500, {"error": str(exc)})
             return
         if route.path == "/apps":
             try:

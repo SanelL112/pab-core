@@ -321,3 +321,104 @@ def test_collection_includes_google_doc_deadlines_as_non_official_tasks():
     assert len(assignments) == 1
     assert assignments[0].source == "google_docs"
     assert not assignments[0].official
+
+
+def test_collection_deduplicates_cross_course_identical_assignments():
+    canvas_items = [
+        {"id": "c1:a1", "title": "0.1 The Power of Originality", "course": "AP Biology", "due_at": "2026-08-14T20:00:00Z", "official": True},
+        {"id": "c2:a1", "title": "0.1 The Power of Originality", "course": "AP Calculus", "due_at": "2026-08-14T20:00:00Z", "official": True},
+        {"id": "c3:a1", "title": "0.1 The Power of Originality", "course": "AP English", "due_at": "2026-08-14T20:00:00Z", "official": True},
+    ]
+    with patch("scrapers.canvas_scraper.get_calendar_assignments", return_value=canvas_items), patch(
+        "scrapers.composio_fetcher.get_calendar_assignments", return_value=[]
+    ), patch(
+        "scrapers.google_docs_calendar.get_calendar_assignments", return_value=[]
+    ), patch("scrapers.notion_client.get_calendar_tasks", return_value=[]):
+        assignments = collect_assignments(use_composio=True)
+
+    assert len(assignments) == 1
+    assert assignments[0].title == "0.1 The Power of Originality"
+    assert "AP Biology" in assignments[0].course
+
+
+def test_collection_deduplicates_notion_task_against_official_canvas_assignment():
+    canvas_item = {
+        "id": "c1:a100",
+        "title": "Unit 1 Midpoint Quiz",
+        "course": "AP Biology - Bleier",
+        "due_at": "2026-08-18T03:59:59Z",
+        "official": True,
+    }
+    notion_task = {
+        "id": "notion-page-123",
+        "title": "[AP Biology] Unit 1 Midpoint Quiz",
+        "course": "AP Biology",
+        "due_date": "2026-08-18",
+        "official": False,
+    }
+    with patch("scrapers.canvas_scraper.get_calendar_assignments", return_value=[canvas_item]), patch(
+        "scrapers.composio_fetcher.get_calendar_assignments", return_value=[]
+    ), patch(
+        "scrapers.google_docs_calendar.get_calendar_assignments", return_value=[]
+    ), patch("scrapers.notion_client.get_calendar_tasks", return_value=[notion_task]):
+        assignments = collect_assignments(use_composio=True)
+
+    # Only the official Canvas assignment should be retained; Notion copy dropped
+    assert len(assignments) == 1
+    assert assignments[0].source == "canvas"
+    assert assignments[0].official is True
+
+
+def test_prune_stale_and_duplicate_events(tmp_path: Path):
+    service, caldav, google = _service(tmp_path)
+    service.store.set_enabled(True)
+
+    valid_assignment = _official(external_id="valid:1", title="Valid Quiz")
+    stale_assignment = _official(external_id="stale:2", title="Stale Extracted Note")
+
+    # Seed events into store
+    caldav_uid1 = caldav.upsert(valid_assignment)
+    caldav_uid2 = caldav.upsert(stale_assignment)
+    service.store.save_event(valid_assignment, caldav_uid1, "g1")
+    service.store.save_event(stale_assignment, caldav_uid2, "g2")
+
+    assert len(service.store.active_events()) == 2
+
+    # Prune with only valid_assignment
+    pruned = service.prune_stale_and_duplicate_events([valid_assignment])
+    assert pruned == 1
+    assert len(service.store.active_events()) == 1
+    assert service.store.event(stale_assignment.key) is None
+    assert caldav_uid2 in caldav.deleted
+
+
+def test_learning_system_suppresses_rejected_patterns(tmp_path: Path):
+    service, _, _ = _service(tmp_path)
+    store = service.store
+
+    junk_item1 = Assignment("canvas", "p1", "Safety Data Sheet Reagent Quiz", "Biotech", None, "2026-08-20", official=False)
+    junk_item2 = Assignment("canvas", "p2", "Safety Data Sheet Questions", "Biotech", None, "2026-08-21", official=False)
+
+    batch_id = store.save_proposal([junk_item1, junk_item2])
+    store.resolve_proposal(batch_id, approved=False)
+
+    # Now test a new candidate with the same rejected tokens
+    candidate = Assignment("canvas", "p3", "Review Safety Data Sheet and agreement", "Biotech", None, "2026-08-22", official=False)
+    assert store.is_suppressed(candidate) is True
+
+    # Check plan() filters out suppressed items
+    actions, proposals = service.plan([candidate])
+    assert len(proposals) == 0
+
+
+def test_learning_system_recommends_approved_patterns(tmp_path: Path):
+    service, _, _ = _service(tmp_path)
+    store = service.store
+
+    approved_item = Assignment("canvas", "p10", "Derivita Calculus Problem Set", "Calculus", None, "2026-08-20", official=False)
+    batch_id = store.save_proposal([approved_item])
+    store.resolve_proposal(batch_id, approved=True)
+
+    # Future candidate with similar approved pattern should be recommended
+    candidate = Assignment("canvas", "p11", "Derivita Problem Set 2", "Calculus", None, "2026-08-27", official=False)
+    assert store.recommendation(candidate) is True

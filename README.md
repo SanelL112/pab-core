@@ -1,153 +1,187 @@
 # pab-core — Personal Assistant Bot
 
-A self-hosted Telegram assistant that helps a high-school student stay on top of
-school. It scrapes coursework from Canvas, Google Classroom and GroupMe, turns it
-into a periodic digest and study material, answers questions in chat, and keeps a
-private calendar of assignments — all while running mostly on local hardware and
-keeping personal data off the cloud wherever possible.
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://img.shields.io/badge/tests-160%2B%20passing-brightgreen.svg)]()
+[![Privacy](https://img.shields.io/badge/privacy-local--first-success.svg)]()
 
-This is the **application** repo. Two sibling repos hold the rest of the system:
-
-- **[pab-ops](https://github.com/SanelL112/pab-ops)** — systemd units, health checks, RPC/cluster tooling (infra).
-- **pab-study-content** *(private)* — the generated study guides and knowledge base.
+A self-hosted, privacy-preserving Telegram assistant designed for a student to stay on top of schoolwork, exams, and daily tasks. It automatically scrapes coursework and announcements from Canvas (via persistent ClassLink SSO session), Google Classroom/Docs, and GroupMe, turns them into periodic actionable digests, builds structured study guides, indexes notes for vector retrieval, and maintains an assignment calendar synced to CalDAV and Google Calendar.
 
 ---
 
-## What it actually does
+## 1. System Ecosystem & Repositories
 
-- **Runs a Telegram bot** you chat with. It answers questions, summarizes your day,
-  and takes quick actions via inline-keyboard buttons.
-- **Scrapes your school data** — Canvas (through a real logged-in Firefox/ClassLink
-  session, not an API token), Google Classroom/Docs, and a GroupMe class group.
-- **Sends a recurring "digest"** (every 4 hours by default) of new assignments,
-  announcements and deadlines.
-- **Builds study guides** from your coursework and indexes them for semantic search.
-- **Keeps a private assignment calendar** you can subscribe to from any CalDAV app.
-- **Routes AI work intelligently** — private data goes to local models (Ollama /
-  llama.cpp RPC cluster); only non-sensitive work is allowed to touch cloud models.
+The Personal Assistant Bot ecosystem is architected into three decoupled repositories:
 
-## The live system (what's running on the server)
+- **[`pab-core`](https://github.com/SanelL112/pab-core)** *(This Repository)*: The core application layer, scrapers, Telegram bot interface, CalDAV sync, and local/cloud LLM routing.
+- **[`pab-ops`](https://github.com/SanelL112/pab-ops)**: Host infrastructure, systemd service units, timers, health probes, and multi-node `llama.cpp` RPC cluster operations across local hardware.
+- **[`pab-study-content`](https://github.com/SanelL112/pab-study-content)** *(Private)*: Generated Markdown/Word study guides, knowledge base notes, and SAT/ACT prep material produced by the bot pipeline.
 
-The host runs **five systemd services**. This repo provides the code for four of them
-(the fifth, `llama-rpc`, is infra defined in `pab-ops`):
+---
 
-| Service | Entry point (in this repo) | Port | Purpose |
-|---|---|---|---|
-| `bot.service` | `main.py` | — | The Telegram bot (main process) |
-| `canvas-browser.service` | `scripts/canvas_browser_daemon.py` | 127.0.0.1:8976 | Persistent logged-in Canvas/ClassLink Firefox session |
-| `pab-dashboard-agent.service` | `scripts/dashboard_agent.py` | 0.0.0.0:8765 | Status dashboard agent |
-| `assignment-caldav.service` | `radicale` (venv) + external config | 0.0.0.0:5232 | Private CalDAV server for assignments |
+## 2. Core Capabilities
 
-> The systemd unit files themselves live in **pab-ops**. This repo holds the Python
-> those units execute.
+- **Autonomous Coursework Ingestion**:
+  - **Canvas LMS**: Scraped via an authenticated, persistent headless Firefox session (`canvas-browser.service` on port `8976`) maintaining active ClassLink SSO without requiring fragile API tokens.
+  - **Google Classroom & Drive**: Pulls documents, assignments, and announcements (`supportsAllDrives=True`).
+  - **GroupMe**: Scrapes school group chats for student discussions and homework updates.
+  - **Notion**: Syncs tasks and project deadlines to/from Notion workspace.
+- **Periodic Smart Digests**: Dispatches a structured summary every 4 hours with new deadlines, unread announcements, and interactive Telegram inline buttons.
+- **AI Routing & Privacy Protection**:
+  - PII scrubbing (`utils.scrub_pii`) on all outgoing content.
+  - Local-first routing hierarchy: Local x86 Ollama → Orange Pi 5 (RK3588) → Distributed `llama.cpp` RPC cluster → Fallback Cloud (OpenRouter / Hack Club AI).
+- **Study Guide & Textbook Generation**: Nightly automated document processing (`nightly_processor.py`) that uses OCR, delta appends, and semantic vector indexing (`nomic-embed-text`) for instant retrieval.
+- **Calendar & CalDAV Synchronization**: Normalizes assignments into a local Radicale CalDAV server (`0.0.0.0:5232`) and submits approval-gated proposals to Google Calendar.
 
-## Quick start (fresh clone)
+---
 
+## 3. Host Architecture & Service Topology
+
+The system runs on a host running Debian Linux with the following daemons managed by systemd:
+
+| Service | Entry Point in `pab-core` | Local Port | Role |
+| :--- | :--- | :--- | :--- |
+| `bot.service` | `main.py` | — | Telegram Bot long-polling daemon & scheduled jobs |
+| `canvas-browser.service` | `scripts/canvas_browser_daemon.py` | `127.0.0.1:8976` | Persistent ClassLink/Canvas authenticated Firefox session |
+| `pab-dashboard-agent.service` | `scripts/dashboard_agent.py` | `0.0.0.0:8765` | Web status dashboard endpoint |
+| `assignment-caldav.service` | `radicale` (venv) | `0.0.0.0:5232` | Private CalDAV server for calendar subscriptions |
+| `llama-rpc.service` | *(Defined in `pab-ops`)* | `0.0.0.0:8080` | Distributed `llama.cpp` local inference cluster |
+
+---
+
+## 4. Quickstart & Installation
+
+### Prerequisites
+- Python 3.11+
+- Git & Virtualenv
+- Firefox & geckodriver (for Canvas scraping daemon)
+- Local Ollama daemon or OpenRouter API key
+
+### Setup Steps
 ```bash
+# Clone the repository
 git clone https://github.com/SanelL112/pab-core.git
 cd pab-core
-python3 -m venv venv && source venv/bin/activate
+
+# Create and activate virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 
-# Configure secrets — copy the example and fill it in
+# Configure environment variables
 cp .env.example .env
-$EDITOR .env        # Telegram token, chat id, Notion key, model settings, etc.
+$EDITOR .env   # Fill in TELEGRAM_BOT_TOKEN, TELEGRAM_OWNER_USER_ID, etc.
 
-# Run the bot
+# Run unit and integration tests
+pytest -q
+
+# Launch the bot
 python main.py
 ```
 
-You need, at minimum, a `TELEGRAM_BOT_TOKEN` and your `TELEGRAM_CHAT_ID` /
-`TELEGRAM_OWNER_USER_ID` in `.env`. Canvas scraping additionally needs a working
-Firefox profile logged into ClassLink (managed by the canvas-browser daemon).
+---
 
-## Configuration
+## 5. Environment Variables & Configuration
 
-Everything is driven by environment variables loaded from `.env` via `config.py`.
-`config.py` is the single source of truth — it defines every path, model, timeout,
-and credential the system uses, with sensible defaults. Notable knobs:
+Configuration is managed centrally in `config.py` using `.env`:
 
-- **Telegram:** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_OWNER_USER_ID`
-- **AI routing:** `OR_DEFAULT_MODEL`, `OR_FALLBACK_MODEL`, `OR_THIRD_MODEL`
-  (OpenRouter tiers), `OLLAMA_LOCAL_URL`, `OLLAMA_ORANGEPI_URL`, `PI_CLASSIFIER_URL`,
-  `OPENROUTER_API_KEY`, `HACKCLUB_AI_API_KEY`
-- **Local RPC cluster:** `RPC_SURFACE_TIMEOUT`, `RPC_INFERENCE_TIMEOUT`,
-  `RPC_FALLBACK_CLOUD_MODEL`, `RPC_FALLBACK_OLLAMA_MODEL`
-- **Cadence:** `DIGEST_INTERVAL_SECONDS` (default 14400 = 4h),
-  `WATCHDOG_INTERVAL_SECONDS` (default 1800 = 30m)
-- **Sources:** `NOTION_API_KEY`, `NOTION_DATABASE_ID`, `GROUPME_TOKEN`,
-  `GROUPME_GROUP_ID`, `USE_COMPOSIO`
+| Variable | Description | Default / Example |
+| :--- | :--- | :--- |
+| `TELEGRAM_BOT_TOKEN` | Bot API token from `@BotFather` | `123456789:ABC...` |
+| `TELEGRAM_OWNER_USER_ID` | Telegram User ID of authorized owner | `123456789` |
+| `TELEGRAM_CHAT_ID` | Default chat ID for notifications & digests | `123456789` |
+| `OLLAMA_LOCAL_URL` | Local Ollama inference URL | `http://127.0.0.1:11434` |
+| `OLLAMA_ORANGEPI_URL` | Orange Pi 5 Ollama endpoint | `http://10.10.10.2:11434` |
+| `PI_CLASSIFIER_URL` | Orange Pi concurrent classifier endpoint | `http://10.10.10.2:8080` |
+| `OPENROUTER_API_KEY` | OpenRouter API Key for cloud fallback | `sk-or-v1-...` |
+| `OR_DEFAULT_MODEL` | Primary OpenRouter model | `nvidia/nemotron-3-ultra-550b-a55b:free` |
+| `DIGEST_INTERVAL_SECONDS` | Interval between scheduled digest checks | `14400` (4 hours) |
+| `NOTION_API_KEY` | Notion Integration Token | `secret_...` |
+| `NOTION_DATABASE_ID` | Target Notion Task Database ID | `32-char hex string` |
+| `GROUPME_TOKEN` | GroupMe API access token | `...` |
 
-Secrets are **never committed** — `.env`, `credentials.json`, `token.json`, and
-`state.json` are gitignored.
+---
 
-## Telegram commands
+## 6. Telegram Commands
 
-`/start` `/help` `/summary` `/model` `/stats` `/ping` `/server` `/errors`
-`/canvas` `/calendar` `/classroom` `/correlations` `/priority` `/backup`
-`/restore` `/bash`
+| Command | Action |
+| :--- | :--- |
+| `/start` | Welcome message, health status check, and interactive keyboard |
+| `/summary` | Trigger on-demand generation and delivery of school digest |
+| `/canvas` | Check status of Canvas scraper and recent assignments |
+| `/classroom` | Fetch recent Google Classroom coursework and updates |
+| `/calendar` | Display upcoming deadlines and sync status with CalDAV |
+| `/model` | Query or toggle active LLM routing tier |
+| `/stats` | View inference token counts, cache stats, and cost breakdown |
+| `/errors` | Display recent error log excerpts and dead-letter queue count |
+| `/backup` | Create snapshot backup of `state.json` and local indices |
+| `/bash` | *(Owner-only)* Execute sandboxed diagnostics on host |
 
-## Layout
+---
+
+## 7. Repository Layout
 
 ```
-main.py                 Telegram bot entry point (bot.service)
-config.py               Central configuration (all env-driven settings)
-llm_router.py           Unified LLM dispatch: local-first routing + cost tracking
-utils.py                Shared helpers: PII scrubbing, backups, correlation, rotation
-activity_log.py         Structured, privacy-preserving activity log
-ai_processor.py         Per-source local inference passes
-nightly_processor.py    Lossless overnight processing of queued study docs
-practice_grader.py      Automated practice-test grading
-voice_handler.py        Local-only voice transcription
-inline_keyboards.py     Quick-action inline keyboards
-
-bot/                    Telegram-facing layer
-  commands.py             Command handlers
-  ai_bridge.py            Privacy-preserving chat → inference bridge
-  ui.py                   Presentation primitives (progress, rendering, escaping)
-  state.py                Transactional state management
-  storage.py              Durable atomic JSON storage
-  security.py             Authorization boundary (owner-only)
-  runtime.py              Background task tracking
-  dashboard_state.py      Routing state for the status dashboard
-
-scrapers/               Data ingestion + processing ("ingest" layer)
-  canvas_scraper.py       Canvas via authenticated Firefox/ClassLink session
-  canvas_page_extractor.py Canvas HTML → assignments
-  google_scraper.py / composio_fetcher.py  Google sources
-  groupme_scraper.py      GroupMe class group
-  notion_client.py        Notion task hub
-  assignment_calendar.py  Sync assignments → CalDAV + Google Calendar
-  google_docs_calendar.py Google Docs deadlines → approval-gated proposals
-  morning_digest.py       Digest generation
-  mega_study_builder.py   Study-guide builder
-  embedding_indexer.py    Semantic vector index from the knowledge corpus
-  semantic_retrieval.py   Relevant-chunk retrieval over the index
-  batch_results.py        Typed outcomes/validation for unattended batch jobs
-  ...
-
-scripts/                Service entry points + helpers run by this repo's daemons
-tests/                  pytest suite (163 tests)
-docs/archive/           Historical audit/security reports (kept for provenance)
+pab-core/
+├── main.py                     # Main bot process and Telegram event loop
+├── config.py                   # Central settings, environment loader & defaults
+├── llm_router.py               # Local-first LLM router with cost/token tracking
+├── ai_processor.py             # Local model extraction and summarization
+├── utils.py                    # PII scrubbing, atomic backups, rotation utilities
+├── activity_log.py             # Privacy-preserving audit logging
+├── nightly_processor.py        # Overnight document processing & index updates
+├── practice_grader.py          # SAT/ACT exam scoring and evaluation
+│
+├── bot/                        # Bot Telegram Presentation Layer
+│   ├── commands.py             # Slash command dispatchers
+│   ├── ai_bridge.py            # Chat-to-model bridge with context enrichment
+│   ├── ui.py                   # Telegram HTML escaping & formatting
+│   ├── state.py                # Transactional state manager
+│   ├── storage.py              # Atomic JSON read/write with locking
+│   ├── security.py             # Strict owner authorization perimeter
+│   └── runtime.py              # Background job lifecycle management
+│
+├── scrapers/                   # Data Ingest & Scraper Tier
+│   ├── canvas_scraper.py       # Canvas scraper via browser daemon
+│   ├── canvas_page_extractor.py# HTML extractor for assignments
+│   ├── google_scraper.py       # Google Classroom / Drive API client
+│   ├── groupme_scraper.py      # GroupMe class chat reader
+│   ├── notion_client.py        # Notion workspace integration
+│   ├── assignment_calendar.py  # Radicale CalDAV + Google Calendar syncer
+│   ├── google_docs_calendar.py # Approval-gated Google Docs deadline extractor
+│   ├── morning_digest.py       # 4-hour digest compiler
+│   ├── mega_study_builder.py   # Multi-stage textbook compiler
+│   ├── embedding_indexer.py    # Incremental vector index builder
+│   └── semantic_retrieval.py   # Vector similarity chunk retrieval
+│
+├── scripts/                    # Daemons & CLI Utilities
+│   ├── canvas_browser_daemon.py# Headless Firefox ClassLink SSO session daemon
+│   └── dashboard_agent.py      # Web status dashboard service
+│
+└── tests/                      # Automated test suite (pytest)
 ```
 
-## Tests
+---
 
+## 8. Testing & Validation
+
+Run the full automated test suite:
 ```bash
 source venv/bin/activate
-pytest -q          # 163 tests
+pytest -v
 ```
 
-## Design principles
+To run a specific test category:
+```bash
+pytest tests/test_assignment_calendar.py
+pytest tests/test_main_fixes.py
+```
 
-- **Privacy-first / local-first.** Private data is routed to local models; cloud
-  models are only used for work explicitly classified as non-sensitive. All logging
-  scrubs PII (`utils.scrub_pii`).
-- **Owner-only.** Every Telegram handler passes through an authorization boundary
-  (`bot/security.py`); only the configured owner can drive the bot.
-- **Durability.** State writes are transactional/atomic (`bot/storage.py`,
-  `bot/state.py`) so a crash mid-write can't corrupt state.
-- **Graceful degradation.** The LLM router has a local→local→cloud fallback chain so
-  one dead provider doesn't take the assistant down.
+---
 
-See `ARCHITECTURE.md` for the deep design reasoning and data-flow model.
+## 9. Security & Invariants
+
+- **Secrets Handling**: `.env`, `credentials.json`, `token.json`, and `state.json` are excluded via `.gitignore`. Never commit credentials.
+- **Privacy Protection**: Cloud LLM requests must never include raw personal names, addresses, student IDs, or school credentials. All text sent externally is scrubbed by `utils.scrub_pii()`.
+- **Atomic State Operations**: Writes to `state.json` or `.nightly_queue.json` use file locks and temp-write-then-rename semantics to prevent corruption during unexpected shutdowns.

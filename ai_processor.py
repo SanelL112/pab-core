@@ -80,7 +80,7 @@ DIGEST_ASSEMBLY_PROMPT = (
     "Rules:\n"
     "- Never apologize, refuse, say you cannot help, or offer a hypothetical summary.\n"
     "- Start with ⚡ **Needs attention** only when there is an actionable deadline, test, or request.\n"
-    "- Then use short emoji section headers only for sources with useful new information: 📚 Canvas, 🏫 Google Classroom, 📢 Announcements, 📧 Gmail, 💬 GroupMe.\n"
+    "- Then use short emoji section headers only for sources with useful new information: 📚 Canvas, 🏫 Google Classroom, 📢 Announcements, 📧 Gmail, 💬 GroupMe, 📋 Notion Tasks.\n"
     "- Include EVERY item that has a date, time, deadline, test, room change, or explicit request — never omit one to stay short.\n"
     "- Preserve every date, time, day of week and room number exactly as written in the source.\n"
     "- Keep each bullet to one line, but do not drop items: many short bullets are better than few long ones.\n"
@@ -553,6 +553,7 @@ _SOURCE_LABELS = {
     "gmail": "📧 **Gmail**",
     "groupme": "💬 **GroupMe**",
     "gdocs": "📄 **Google Docs**",
+    "notion": "📋 **Notion Tasks**",
 }
 
 
@@ -779,10 +780,18 @@ def assemble_digest(summaries: dict) -> dict:
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def process_all_sources(canvas_data: str, classroom_data: str, gmail_data: str, groupme_data: str, classroom_ann_data: str = "No recent announcements.", gdocs_data: str = "No recent docs.") -> dict:
+def process_all_sources(
+    canvas_data: str,
+    classroom_data: str,
+    gmail_data: str,
+    groupme_data: str,
+    classroom_ann_data: str = "No recent announcements.",
+    gdocs_data: str = "No recent docs.",
+    notion_data: str = "No pending Notion tasks.",
+) -> dict:
     """Passes all raw data through the AI pipeline. Runs sources in parallel."""
 
-    # 1. Summarize all 6 sources in parallel (independent I/O-bound work)
+    # 1. Summarize all 7 sources in parallel (independent I/O-bound work)
     import concurrent.futures
     sources = [
         ("canvas", canvas_data, True, False),
@@ -791,6 +800,7 @@ def process_all_sources(canvas_data: str, classroom_data: str, gmail_data: str, 
         ("gmail", gmail_data, False, False),
         ("groupme", groupme_data, False, False),
         ("gdocs", gdocs_data, True, False),
+        ("notion", notion_data, True, False),
     ]
 
     def _process_one(args):
@@ -799,7 +809,7 @@ def process_all_sources(canvas_data: str, classroom_data: str, gmail_data: str, 
         return name, process_source(name, data, skip_llm_filter=skip, force_reprocess=force)
 
     results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=7) as pool:
         for name, summary in pool.map(_process_one, sources):
             results[name] = summary
 
@@ -811,6 +821,7 @@ def process_all_sources(canvas_data: str, classroom_data: str, gmail_data: str, 
         "gmail": results["gmail"],
         "groupme": results["groupme"],
         "gdocs": results["gdocs"],
+        "notion": results["notion"],
     }
 
     return assemble_digest(summaries)

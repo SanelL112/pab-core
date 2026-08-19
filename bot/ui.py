@@ -38,6 +38,159 @@ def _format_inline(value: str) -> str:
     return escaped
 
 
+def format_latex_math(text: str) -> str:
+    """Convert common LaTeX math notation into clean, readable Unicode math."""
+    if not text or not any(c in text for c in ("\\", "$", "_", "^")):
+        return text
+
+    out = text
+
+    # Strip display math delimiters $$...$$ and \[...\]
+    out = re.sub(r"\$\$\s*(.+?)\s*\$\$", r"\1", out, flags=re.DOTALL)
+    out = re.sub(r"\\\[\s*(.+?)\s*\\\]", r"\1", out, flags=re.DOTALL)
+    # Strip inline math delimiters $...$ and \(...\)
+    out = re.sub(r"\$([^\$\n]+?)\$", r"\1", out)
+    out = re.sub(r"\\\((.+?)\\\)", r"\1", out)
+
+    # Fractions: common fractions first
+    frac_map = {
+        r"\frac{1}{2}": "½",
+        r"\frac{1}{3}": "⅓",
+        r"\frac{2}{3}": "⅔",
+        r"\frac{1}{4}": "¼",
+        r"\frac{3}{4}": "¾",
+        r"\frac{1}{5}": "⅕",
+        r"\frac{1}{8}": "⅛",
+    }
+    for f_tex, f_uni in frac_map.items():
+        out = out.replace(f_tex, f_uni)
+
+    # Fractions: general \frac{a}{b} -> (a)/(\2)
+    out = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1)/(\2)", out)
+    # Square roots: \sqrt{x} -> √(x), \sqrt[n]{x} -> ⁿ√(x)
+    out = re.sub(r"\\sqrt\{([^{}]+)\}", r"√(\1)", out)
+    out = re.sub(r"\\sqrt\[(\d+)\]\{([^{}]+)\}", r"\1√(\2)", out)
+
+    # Text blocks in math: \text{...} -> ...
+    out = re.sub(r"\\(?:text|mathrm|mathbf|mathit|textbf|mathbf)\{([^{}]+)\}", r"\1", out)
+
+    # Common Math Symbols & Greek letters
+    replacements = {
+        r"\times": "×",
+        r"\cdot": "·",
+        r"\div": "÷",
+        r"\pm": "±",
+        r"\mp": "∓",
+        r"\le": "≤",
+        r"\leq": "≤",
+        r"\ge": "≥",
+        r"\geq": "≥",
+        r"\neq": "≠",
+        r"\approx": "≈",
+        r"\equiv": "≡",
+        r"\infty": "∞",
+        r"\int": "∫",
+        r"\iint": "∬",
+        r"\iiint": "∭",
+        r"\oint": "∮",
+        r"\sum": "∑",
+        r"\prod": "∏",
+        r"\partial": "∂",
+        r"\nabla": "∇",
+        r"\to": "→",
+        r"\rightarrow": "→",
+        r"\leftarrow": "←",
+        r"\leftrightarrow": "↔",
+        r"\Rightarrow": "⇒",
+        r"\Leftarrow": "⇐",
+        r"\Leftrightarrow": "⇔",
+        r"\in": "∈",
+        r"\notin": "∉",
+        r"\subset": "⊂",
+        r"\subseteq": "⊆",
+        r"\cup": "∪",
+        r"\cap": "∩",
+        r"\forall": "∀",
+        r"\exists": "∃",
+        r"\therefore": "∴",
+        r"\because": "∵",
+        r"\alpha": "α",
+        r"\beta": "β",
+        r"\gamma": "γ",
+        r"\delta": "δ",
+        r"\epsilon": "ε",
+        r"\zeta": "ζ",
+        r"\eta": "η",
+        r"\theta": "θ",
+        r"\iota": "ι",
+        r"\kappa": "κ",
+        r"\lambda": "λ",
+        r"\mu": "μ",
+        r"\nu": "ν",
+        r"\xi": "ξ",
+        r"\pi": "π",
+        r"\rho": "ρ",
+        r"\sigma": "σ",
+        r"\tau": "τ",
+        r"\upsilon": "υ",
+        r"\phi": "φ",
+        r"\chi": "χ",
+        r"\psi": "ψ",
+        r"\omega": "ω",
+        r"\Gamma": "Γ",
+        r"\Delta": "Δ",
+        r"\Theta": "Θ",
+        r"\Lambda": "Λ",
+        r"\Xi": "Ξ",
+        r"\Pi": "Π",
+        r"\Sigma": "Σ",
+        r"\Upsilon": "Υ",
+        r"\Phi": "Φ",
+        r"\Psi": "Ψ",
+        r"\Omega": "Ω",
+        r"\,": " ",
+        r"\;": " ",
+        r"\:": " ",
+        r"\!": "",
+    }
+
+    for pattern, rep in replacements.items():
+        out = re.sub(re.escape(pattern) + r"(?![a-zA-Z])", rep, out)
+
+    # Superscripts: ^0 to ^9, ^+, ^-, ^=, ^(, ^), ^n, ^x
+    sups = {
+        "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+        "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+        "+": "⁺", "-": "⁻", "=": "⁼", "(": "⁽", ")": "⁾",
+        "n": "ⁿ", "x": "ˣ", "i": "ⁱ", "t": "ᵗ",
+    }
+    def _sup_curly(match):
+        inner = match.group(1)
+        return "".join(sups.get(c, c) for c in inner)
+    out = re.sub(r"\^\{([0-9\+\-\=\(\)nxi]+)\}", _sup_curly, out)
+    for k, v in sups.items():
+        out = out.replace(f"^{k}", v)
+
+    # Subscripts: _0 to _9, _i, _j, _k, _n, _x
+    subs = {
+        "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
+        "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+        "+": "₊", "-": "₋", "=": "₌", "(": "₍", ")": "₎",
+        "a": "ₐ", "e": "ₑ", "h": "ₕ", "i": "ᵢ", "j": "ⱼ",
+        "k": "ₖ", "l": "ₗ", "m": "ₘ", "n": "ₙ", "o": "ₒ",
+        "p": "ₚ", "r": "ᵣ", "s": "ₛ", "t": "ₜ", "u": "ᵤ",
+        "v": "ᵥ", "x": "ₓ",
+    }
+    def _sub_curly(match):
+        inner = match.group(1)
+        return "".join(subs.get(c, c) for c in inner)
+    out = re.sub(r"_\{([0-9\+\-\=\(\)aehijklmnoprstuvx]+)\}", _sub_curly, out)
+    for k, v in subs.items():
+        out = out.replace(f"_{k}", v)
+
+    return out
+
+
 def render_assistant_text(value: str, *, title: str | None = None) -> str:
     """Render an assistant response as safe, lightly structured HTML."""
     lines: list[str] = []
@@ -59,10 +212,13 @@ def render_assistant_text(value: str, *, title: str | None = None) -> str:
             code_lines.append(raw_line)
             continue
 
-        heading = re.match(r"^#{1,6}\s+(.+)$", stripped)
-        bullet = re.match(r"^[-*]\s+(.+)$", stripped)
-        numbered = re.match(r"^(\d+[.)])\s+(.+)$", stripped)
-        quote = re.match(r"^>\s?(.+)$", stripped)
+        math_line = format_latex_math(raw_line)
+        math_stripped = math_line.strip()
+
+        heading = re.match(r"^#{1,6}\s+(.+)$", math_stripped)
+        bullet = re.match(r"^[-*]\s+(.+)$", math_stripped)
+        numbered = re.match(r"^(\d+[.)])\s+(.+)$", math_stripped)
+        quote = re.match(r"^>\s?(.+)$", math_stripped)
         if heading:
             lines.append(f"<b>{_format_inline(heading.group(1))}</b>")
         elif bullet:
@@ -72,7 +228,7 @@ def render_assistant_text(value: str, *, title: str | None = None) -> str:
         elif quote:
             lines.append(f"<blockquote>{_format_inline(quote.group(1))}</blockquote>")
         else:
-            lines.append(_format_inline(raw_line))
+            lines.append(_format_inline(math_line))
 
     if in_code:
         lines.append(f"<pre>{escape_html(chr(10).join(code_lines))}</pre>")
@@ -265,6 +421,7 @@ def section_keyboard(section: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📷 Send a photo", callback_data="ask:photo")],
         ],
         "study": [
+            [InlineKeyboardButton("📋 Notion tasks", callback_data="study:notion")],
             [InlineKeyboardButton("📊 Check assignments", callback_data="study:assignments")],
             [InlineKeyboardButton("📝 Grade practice photo", callback_data="study:grade")],
             [InlineKeyboardButton("📚 Build a guide", callback_data="study:guide")],
@@ -316,6 +473,61 @@ def help_keyboard() -> InlineKeyboardMarkup:
     ] + navigation_keyboard())
 
 
+def chat_action_keyboard(action_id: str = "") -> InlineKeyboardMarkup:
+    """Action chips sent under assistant chat responses."""
+    suffix = f":{action_id}" if action_id else ""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("💡 Explain Simpler", callback_data=f"chat_act:simpler{suffix}"),
+            InlineKeyboardButton("📝 Test Me", callback_data=f"chat_act:testme{suffix}"),
+        ],
+        [
+            InlineKeyboardButton("🔄 Regenerate", callback_data=f"chat_act:regen{suffix}"),
+        ],
+    ])
+
+
+def mode_keyboard(current_mode: str = "default") -> InlineKeyboardMarkup:
+    """Keyboard for selecting chat persona / study mode."""
+    def mark(mode_name: str, label: str) -> str:
+        return f"✓ {label}" if current_mode == mode_name else label
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(mark("tutor", "🎓 Socratic Tutor"), callback_data="mode:set:tutor"),
+            InlineKeyboardButton(mark("quick", "⚡ Quick / Concise"), callback_data="mode:set:quick"),
+        ],
+        [
+            InlineKeyboardButton(mark("drill", "🎯 Exam Drill"), callback_data="mode:set:drill"),
+            InlineKeyboardButton(mark("default", "🤖 Default Assistant"), callback_data="mode:set:default"),
+        ],
+        navigation_keyboard()[0],
+    ])
+
+
+def model_selection_keyboard(current_model: str = "auto") -> InlineKeyboardMarkup:
+    """Keyboard for selecting inference model in chat."""
+    def mark(model_name: str, label: str) -> str:
+        match = (current_model == model_name) or (model_name == "auto" and current_model in ("auto", ""))
+        return f"✓ {label}" if match else label
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(mark("auto", "⚡ Auto (Google + Local)"), callback_data="model:set:auto"),
+            InlineKeyboardButton(mark("local", "🏠 Local Cluster"), callback_data="model:set:local"),
+        ],
+        [
+            InlineKeyboardButton(mark("flash", "🔷 Gemini 3.7 Flash"), callback_data="model:set:flash"),
+            InlineKeyboardButton(mark("pro", "🔷 Gemini 3.1 Pro"), callback_data="model:set:pro"),
+        ],
+        [
+            InlineKeyboardButton(mark("llama3.3", "☁️ Llama 3.3 70B"), callback_data="model:set:llama3.3"),
+            InlineKeyboardButton(mark("qwen-coder", "💻 Qwen Coder"), callback_data="model:set:qwen-coder"),
+        ],
+        navigation_keyboard()[0],
+    ])
+
+
 def confirmation_keyboard(action: str, *, cancel: str = "nav:more") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("Confirm", callback_data=action)],
@@ -336,7 +548,7 @@ SECTION_TEXT = {
     ),
     "study": (
         "<b>Study tools</b>\n\n"
-        "Check current coursework, send a completed practice photo for feedback, or ask me to build a guide for a topic."
+        "Check current coursework, view active Notion tasks, send a completed practice photo for feedback, or ask me to build a guide for a topic."
     ),
     "calendar": (
         "<b>Assignment calendar</b>\n\n"
@@ -351,9 +563,9 @@ SECTION_TEXT = {
 
 HELP_TEXT = {
     "daily": "<b>Daily planning</b>\n\nUse <b>Today</b> to refresh your digest and take action on assignment cards. <code>/summary</code> remains available when you prefer commands.",
-    "study": "<b>Study tools</b>\n\nUse <b>Study</b> for coursework checks, practice-photo help, and guide creation. You can also send a photo with a question as its caption.",
+    "study": "<b>Study tools</b>\n\nUse <b>Study</b> for coursework checks, Notion tasks, practice-photo help, and guide creation. You can also send a photo with a question as its caption.",
     "calendar": "<b>Calendar</b>\n\nOpen <b>Calendar</b> to check status, preview assignments, or control sync. <code>/calendar preview</code> is the safe command fallback.",
-    "input": "<b>Assistant input</b>\n\nType naturally, reply to a response for context, send a voice note, or send a photo. Use <code>/model</code> to manage the selected model.",
+    "input": "<b>Assistant input</b>\n\nType naturally, use <code>/mode</code> to switch personalities (tutor, quick, drill), <code>/clear</code> to start fresh, or <code>/model</code> to change inference engines. Prefixes <code>!cloud</code>, <code>!local</code>, <code>!code</code> route individual messages.",
     "admin": "<b>System & admin</b>\n\nHealth, usage, backup, diagnostics, and server controls are under <b>More</b>. State-changing actions ask for confirmation. <code>/bash</code> remains command-only.",
-    "commands": "<b>Command reference</b>\n\nCore: <code>/summary</code>, <code>/canvas</code>, <code>/calendar</code>, <code>/model</code>\nSystem: <code>/ping</code>, <code>/stats</code>, <code>/backup</code>, <code>/errors</code>, <code>/server</code>\nAdvanced: <code>/restore</code>, <code>/correlations</code>, <code>/classroom</code>, <code>/bash</code>, <code>/p</code>",
+    "commands": "<b>Command reference</b>\n\nCore: <code>/summary</code>, <code>/mode</code>, <code>/clear</code>, <code>/tasks</code>, <code>/canvas</code>, <code>/calendar</code>, <code>/model</code>\nSystem: <code>/ping</code>, <code>/stats</code>, <code>/backup</code>, <code>/errors</code>, <code>/server</code>\nAdvanced: <code>/restore</code>, <code>/correlations</code>, <code>/classroom</code>, <code>/bash</code>, <code>/p</code>",
 }

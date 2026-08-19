@@ -159,6 +159,34 @@ def collect_sources() -> list[dict]:
         for f in sorted(glob.glob(os.path.join(classroom_dir, "*.txt"))):
             _add_file(f)
 
+    # Canvas extracted pages & module content
+    extracted_dir = os.path.join(BASE_DIR, "extracted_pages")
+    if os.path.isdir(extracted_dir):
+        for f in sorted(glob.glob(os.path.join(extracted_dir, "*.*"))):
+            if f.endswith((".txt", ".md", ".json")):
+                _add_file(f)
+
+    # OneNote extracted pages & notebook exports
+    for onenote_dir_name in ["onenote_pages", "onenote_cache"]:
+        onenote_dir = os.path.join(BASE_DIR, onenote_dir_name)
+        if os.path.isdir(onenote_dir):
+            for f in sorted(glob.glob(os.path.join(onenote_dir, "*.*"))):
+                if f.endswith((".txt", ".md", ".json")):
+                    _add_file(f)
+
+    # Dedicated Academic Notes directory (OneNote exports, PDFs, Markdown, Word docs)
+    academic_dir = os.path.join(BASE_DIR, "academic_notes")
+    if os.path.isdir(academic_dir):
+        for f in sorted(glob.glob(os.path.join(academic_dir, "**", "*.*"), recursive=True)):
+            if f.endswith((".txt", ".md", ".json", ".html", ".csv")):
+                _add_file(f)
+
+    # Obsidian Vault notes
+    obsidian_dir = os.path.join(BASE_DIR, "Obsidian Vault")
+    if os.path.isdir(obsidian_dir):
+        for f in sorted(glob.glob(os.path.join(obsidian_dir, "**", "*.md"), recursive=True)):
+            _add_file(f)
+
     # Source cache summaries
     from config import CACHE_DIR
     sc_dir = CACHE_DIR

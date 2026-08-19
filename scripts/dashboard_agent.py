@@ -21,9 +21,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+SOURCE_WORK_DIR = Path(__file__).resolve().parents[1]
+SCRIPTS_DIR = Path(__file__).resolve().parent
+for _p in (str(SOURCE_WORK_DIR), str(SCRIPTS_DIR)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 from node_telemetry import HostTelemetryCollector
 
-SOURCE_WORK_DIR = Path(__file__).resolve().parents[1]
 RUNTIME_DIR = Path(os.getenv("PAB_RUNTIME_DIR", str(SOURCE_WORK_DIR)))
 _configured_work_dir = Path(os.getenv("PAB_WORKDIR", str(SOURCE_WORK_DIR)))
 # A stale staging path can leave the dashboard agent querying a checkout with
@@ -31,9 +36,16 @@ _configured_work_dir = Path(os.getenv("PAB_WORKDIR", str(SOURCE_WORK_DIR)))
 # Prefer that live source directory unless the explicitly configured workdir
 # has its own private environment file.
 WORK_DIR = _configured_work_dir if (_configured_work_dir / ".env").is_file() else SOURCE_WORK_DIR
-HOST = os.getenv("PAB_DASHBOARD_AGENT_HOST", "127.0.0.1")
+HOST = os.getenv("PAB_DASHBOARD_AGENT_HOST", "0.0.0.0")
 PORT = int(os.getenv("PAB_DASHBOARD_AGENT_PORT", "8765"))
 TOKEN = os.getenv("PAB_DASHBOARD_AGENT_TOKEN", "")
+if not TOKEN:
+    env_file = Path("/etc/personal-assistant-dashboard-agent.env")
+    if env_file.is_file():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("PAB_DASHBOARD_AGENT_TOKEN="):
+                TOKEN = line.split("=", 1)[1].strip().strip('"\'')
+                break
 MAX_REQUEST_BYTES = 4 * 1024
 ACTION_RUNNER = os.getenv("PAB_DASHBOARD_ACTION_RUNNER", "/usr/local/libexec/pab-dashboard-action")
 ALLOWED_ACTIONS = {"bot-start", "bot-stop", "bot-restart", "health-check", "daily-digest", "caldav-restart"}
@@ -91,17 +103,60 @@ def read_route() -> dict:
 
 
 def read_tasks() -> list[dict]:
-    """Read active assignment tasks, retaining unfinished overdue work.
+    """Read active assignment tasks directly from local CalDAV store or live scraper."""
+    rows: list[dict] = []
+    
+    # 1. Primary: Fast local read from Radicale filesystem store
+    caldav_dir = Path.home() / ".local/share/personal-assistant-bot/assignment-calendar/radicale/collection-root/sanel/assignments"
+    if caldav_dir.is_dir():
+        import re
+        today_str = date.today().isoformat()
+        for f in caldav_dir.glob("*.ics"):
+            try:
+                text = f.read_text(encoding="utf-8", errors="ignore")
+                if "STATUS:COMPLETED" in text:
+                    continue
+                summary_m = re.search(r"SUMMARY:([^\r\n]+)", text)
+                cat_m = re.search(r"CATEGORIES:([^\r\n]+)", text)
+                dt_m = re.search(r"DTSTART(?:;VALUE=DATE)?:([0-9]{8})", text)
+                title = summary_m.group(1).strip() if summary_m else "Task"
+                course = cat_m.group(1).strip() if cat_m else "Academic"
+                due_str = ""
+                if dt_m:
+                    raw_d = dt_m.group(1)
+                    due_str = f"{raw_d[:4]}-{raw_d[4:6]}-{raw_d[6:8]}"
+                
+                overdue = False
+                if due_str:
+                    try:
+                        overdue = date.fromisoformat(due_str) < date.today()
+                    except ValueError:
+                        pass
+                due_label = f"{due_str} · overdue" if overdue and due_str else due_str
+                rows.append({
+                    "title": title[:140],
+                    "course": course[:80],
+                    "source": "canvas",
+                    "due": due_label,
+                    "sort_due": due_str,
+                    "overdue": overdue,
+                    "official": True,
+                })
+            except Exception:
+                continue
 
-    The dashboard is an action queue, not a calendar archive.  Hiding an
-    overdue item makes the most important unfinished work disappear entirely,
-    so leave it in the snapshot and flag it for the UI.
-    """
+    if rows:
+        today = date.today()
+        cutoff_iso = (today - timedelta(days=7)).isoformat()
+        upcoming = [r for r in rows if not r["overdue"] and r["sort_due"]]
+        recent_overdue = [r for r in rows if r["overdue"] and r["sort_due"] >= cutoff_iso]
+        other = [r for r in rows if r not in upcoming and r not in recent_overdue]
+        return sorted(upcoming, key=lambda r: r["sort_due"]) + sorted(recent_overdue, key=lambda r: r["sort_due"], reverse=True) + other
+
+    # 2. Fallback: live scraper collection
     try:
-        sys.path.insert(0, str(WORK_DIR))
         from scrapers.assignment_calendar import collect_assignments
         items = collect_assignments()
-        rows = []
         for item in items:
             if getattr(item, "completed", False):
                 continue
@@ -112,8 +167,21 @@ def read_tasks() -> list[dict]:
             except ValueError:
                 pass
             due_label = f"{due} · overdue" if overdue else due
-            rows.append({"title": str(getattr(item, "title", "Task"))[:140], "course": str(getattr(item, "course", ""))[:80], "source": str(getattr(item, "source", ""))[:40], "due": due_label, "sort_due": due, "overdue": overdue, "official": bool(getattr(item, "official", False))})
-        return sorted(rows, key=lambda row: (not row["overdue"], row["sort_due"] or "9999"))[:20]
+            rows.append({
+                "title": str(getattr(item, "title", "Task"))[:140],
+                "course": str(getattr(item, "course", ""))[:80],
+                "source": str(getattr(item, "source", ""))[:40],
+                "due": due_label,
+                "sort_due": due,
+                "overdue": overdue,
+                "official": bool(getattr(item, "official", False)),
+            })
+        today = date.today()
+        cutoff_iso = (today - timedelta(days=7)).isoformat()
+        upcoming = [r for r in rows if not r["overdue"] and r["sort_due"]]
+        recent_overdue = [r for r in rows if r["overdue"] and r["sort_due"] >= cutoff_iso]
+        other = [r for r in rows if r not in upcoming and r not in recent_overdue]
+        return sorted(upcoming, key=lambda r: r["sort_due"]) + sorted(recent_overdue, key=lambda r: r["sort_due"], reverse=True) + other
     except Exception:
         return []
 

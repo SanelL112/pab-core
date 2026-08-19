@@ -735,11 +735,15 @@ def call_ollama_result(
 # display-name model IDs (see `agy models`). Map our internal short names to
 # the current valid identifiers. Update this table if `agy models` changes.
 AGY_MODEL_ALIASES = {
-    "flash": "Gemini 3.5 Flash (Medium)",
-    "flash-high": "Gemini 3.5 Flash (High)",
-    "flash-low": "Gemini 3.5 Flash (Low)",
+    "flash": "Gemini 3.7 Flash (Low)",
+    "flash-low": "Gemini 3.7 Flash (Low)",
+    "flash-med": "Gemini 3.7 Flash (Medium)",
+    "flash-high": "Gemini 3.7 Flash (High)",
+    "flash-3.5": "Gemini 3.5 Flash (Low)",
     "pro": "Gemini 3.1 Pro (Low)",
     "pro-high": "Gemini 3.1 Pro (High)",
+    "claude": "Claude Sonnet 4.6 (Thinking)",
+    "gpt-oss": "GPT-OSS 120B (Medium)",
 }
 
 
@@ -803,6 +807,32 @@ def call_agy_local(
         return ""
     clean = re.sub(r'\x1b\[[0-9;]*[mGKHF]', '', result.stdout or "")
     return clean.replace('\r\n', '\n').replace('\r', '\n').strip()
+
+
+def call_agy_result(
+    prompt: str,
+    model: str = "flash",
+    timeout: int | float = 180,
+    *,
+    sensitivity: Sensitivity | str = Sensitivity.PUBLIC,
+    cloud_consent: bool = True,
+) -> InferenceResult:
+    """Execute inference via Google Gemini / agy harness and return InferenceResult."""
+    text = call_agy_local(
+        prompt=prompt,
+        model=model,
+        timeout=timeout,
+        sensitivity=sensitivity,
+        cloud_consent=cloud_consent,
+    )
+    if text and is_valid_response(text):
+        target_name = _resolve_agy_model(model)
+        return InferenceResult.success(text, provider="agy", model=target_name)
+    return InferenceResult(
+        InferenceStatus.UNAVAILABLE,
+        provider="agy",
+        detail="AGY CLI harness returned empty or failed",
+    )
 
 
 # ── RPC Cluster (Surface orchestrator + Dell + Pi workers) ────────────────

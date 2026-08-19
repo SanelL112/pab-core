@@ -191,6 +191,17 @@ async def _handle_ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return True
 
+    if data in {"study:notion", "nav:tasks", "nav:notion"}:
+        await _edit_ui(query, "<b>Loading Notion tasks…</b>\n\nRetrieving your active tasks from Notion.")
+        try:
+            from scrapers.notion_client import get_notion_tasks_summary
+            summary = await asyncio.to_thread(get_notion_tasks_summary, 20)
+            await _edit_ui(query, render_assistant_text(summary, title="Notion Tasks"), reply_markup=section_keyboard("study"))
+        except Exception:
+            logger.exception("Notion tasks fetch failed")
+            await _edit_ui(query, _error_screen("Notion is unavailable", "Check your Notion API connection and retry."), reply_markup=section_keyboard("study"))
+        return True
+
     if data == "study:assignments":
         await _edit_ui(query, "<b>Checking assignments…</b>\n\nI’m retrieving the current Canvas coursework.")
         try:
@@ -332,6 +343,49 @@ async def _handle_ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     return False
 
 @require_auth
+async def mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Switch or display the active assistant study persona."""
+    chat_id = update.effective_chat.id
+    args = context.args
+    state = load_state()
+    current_mode = state.get("user_modes", {}).get(str(chat_id), "default")
+
+    if not args:
+        from bot.ui import mode_keyboard
+        mode_names = {
+            "default": "🤖 Default Assistant",
+            "tutor": "🎓 Socratic Tutor",
+            "quick": "⚡ Quick / Concise",
+            "drill": "🎯 Exam Drill",
+        }
+        await update.message.reply_text(
+            f"Current chat mode: <b>{mode_names.get(current_mode, current_mode)}</b>\n\n"
+            "Select a study personality below:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=mode_keyboard(current_mode),
+        )
+        return
+
+    requested = args[0].lower()
+    valid_modes = {"default", "tutor", "quick", "drill"}
+    if requested not in valid_modes:
+        await update.message.reply_text("❌ Invalid mode. Choose from: <code>default</code>, <code>tutor</code>, <code>quick</code>, <code>drill</code>", parse_mode=ParseMode.HTML)
+        return
+
+    update_state(lambda s: s.setdefault("user_modes", {}).update({str(chat_id): requested}))
+    await update.message.reply_text(f"✅ Chat mode switched to <b>{requested.capitalize()}</b>.", parse_mode=ParseMode.HTML)
+
+
+@require_auth
+async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Clear the active multi-turn chat session memory."""
+    chat_id = update.effective_chat.id
+    from bot.ai_bridge import clear_session
+    clear_session(chat_id)
+    await update.message.reply_text("🧹 Conversation context cleared. Starting a fresh session!", parse_mode=ParseMode.HTML)
+
+
+@require_auth
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     args = context.args
@@ -364,20 +418,22 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "dolphin": "openrouter:cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
         "free": "openrouter:openrouter/free"
     }
-    valid_local = ["auto", "flash", "pro"]
+    valid_local = ["auto", "flash", "pro", "local", "gemini", "agy", "agy:flash", "agy:pro"]
     
     if not args:
         state = load_state()
-        current = state["user_models"].get(str(chat_id), "auto")
+        current = state.get("user_models", {}).get(str(chat_id), "auto")
         display_current = current.replace("openrouter:", "") if current.startswith("openrouter:") else current
-        alias_list = " | ".join([f"`/model {k}`" for k in FREE_ALIASES.keys()])
+        from bot.ui import model_selection_keyboard
         await update.message.reply_text(
-            f"Current model: *{display_current}*\n\n"
-            f"*Smart Routing:* `/model auto` (Auto-detects PII and routes to Free models or Private models)\n"
-            f"*Private (G1) Models:* `/model flash` | `/model pro`\n"
-            f"*Free OpenRouter Models:* {alias_list}\n\n"
-            f"_(Note: OpenRouter endpoints are strictly hardcoded to the free tier to guarantee zero charges)_",
-            parse_mode="Markdown"
+            f"Active inference engine: <b>{escape_html(display_current)}</b>\n\n"
+            "Select an engine below or specify with <code>/model &lt;name&gt;</code>:\n"
+            "• <b>Auto</b>: Google Gemini 3.7 Flash + Local Cluster\n"
+            "• <b>Gemini Flash / Pro</b>: State-of-the-art Google models via AGY\n"
+            "• <b>Local Cluster</b>: 100% On-Device private inference\n"
+            "• <b>Free Cloud</b>: Llama 3.3 70B, Qwen Coder",
+            parse_mode=ParseMode.HTML,
+            reply_markup=model_selection_keyboard(current),
         )
         return
         
@@ -427,11 +483,16 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         groupme = get_latest_messages(GROUPME_GROUP_ID) or "No GroupMe"
         announcements = get_classroom_announcements() or "No Announcements"
         docs = get_recent_google_docs() or "No Docs"
-        return canvas, classroom, gmail, groupme, announcements, docs
+        try:
+            from scrapers.notion_client import get_notion_tasks_summary
+            notion_summary = get_notion_tasks_summary() or "No pending Notion tasks."
+        except Exception:
+            notion_summary = "No pending Notion tasks."
+        return canvas, classroom, gmail, groupme, announcements, docs, notion_summary
     
     try:
-        canvas, classroom, gmail, groupme, announcements, docs = await asyncio.to_thread(gather_all_data)
-        ai_result = await asyncio.to_thread(process_all_sources, canvas, classroom, gmail, groupme, announcements, docs)
+        canvas, classroom, gmail, groupme, announcements, docs, notion_summary = await asyncio.to_thread(gather_all_data)
+        ai_result = await asyncio.to_thread(process_all_sources, canvas, classroom, gmail, groupme, announcements, docs, notion_summary)
     except Exception as e:
         logger.error(f"Error during AI digest generation: {e}")
         await edit_progress(
@@ -565,6 +626,87 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "today:refresh":
         context.args = []
         await summary_command(update, context)
+        return
+
+    # ── Mode switcher callbacks ──────────────────────────────────────────
+    if data.startswith("mode:set:"):
+        mode = data.split(":", 2)[2]
+        if mode in ("default", "tutor", "quick", "drill"):
+            update_state(lambda s: s.setdefault("user_modes", {}).update({str(chat_id): mode}))
+            from bot.ui import mode_keyboard
+            await _edit_ui(
+                query,
+                f"✅ Chat mode updated to <b>{mode.capitalize()}</b>.\n\nYour next messages will use this style.",
+                reply_markup=mode_keyboard(mode),
+            )
+        return
+
+    # ── Model switcher callbacks ─────────────────────────────────────────
+    if data.startswith("model:set:"):
+        requested = data.split(":", 2)[2]
+        mapping = {
+            "auto": "auto",
+            "local": "local",
+            "flash": "flash",
+            "pro": "pro",
+            "llama3.3": "openrouter:meta-llama/llama-3.3-70b-instruct:free",
+            "qwen-coder": "openrouter:qwen/qwen3-coder:free",
+        }
+        model_val = mapping.get(requested, requested)
+        update_state(lambda s: s.setdefault("user_models", {}).update({str(chat_id): model_val}))
+        from bot.ui import model_selection_keyboard
+        display_map = {
+            "auto": "Auto (Google + Local)",
+            "local": "Local Cluster",
+            "flash": "Gemini 3.7 Flash (AGY)",
+            "pro": "Gemini 3.1 Pro (AGY)",
+            "openrouter:meta-llama/llama-3.3-70b-instruct:free": "Llama 3.3 70B",
+            "openrouter:qwen/qwen3-coder:free": "Qwen Coder",
+        }
+        display_name = display_map.get(model_val, model_val.replace("openrouter:", ""))
+        await _edit_ui(
+            query,
+            f"✅ Active model updated to <b>{escape_html(display_name)}</b>.",
+            reply_markup=model_selection_keyboard(model_val),
+        )
+        return
+
+    # ── Chat response action chips ───────────────────────────────────────
+    if data.startswith("chat_act:"):
+        action = data.split(":")[1]
+        from bot.ai_bridge import get_session_turns, send_to_antigravity_and_wait
+        from bot.ui import begin_progress, edit_progress, chat_action_keyboard
+        turns = get_session_turns(chat_id, max_turns=2)
+        last_user = turns[-1]["user"] if turns else "previous question"
+        last_bot = turns[-1]["assistant"] if turns else ""
+
+        if action == "simpler":
+            prompt = f"Please explain this simpler with an intuitive analogy or ELI5 breakdown:\n\n{last_bot[:1500]}"
+            status_text = "💡 Simplifying explanation..."
+        elif action == "testme":
+            prompt = f"Based on this concept, give me 1 challenging practice question to test my understanding:\n\n{last_bot[:1500]}"
+            status_text = "📝 Generating practice problem..."
+        elif action == "regen":
+            prompt = f"Please provide an alternative explanation or solution for: {last_user}"
+            status_text = "🔄 Regenerating response..."
+        else:
+            prompt = last_user
+            status_text = "Thinking..."
+
+        status_msg = await begin_progress(context, chat_id, status_text)
+        try:
+            reply = await send_to_antigravity_and_wait(
+                prompt,
+                chat_id,
+                context,
+                status_msg,
+                cloud_consent=True,
+            )
+            await edit_progress(context, chat_id, status_msg.message_id, "Your response is ready below.")
+            await send_assistant_response(context, chat_id, reply, reply_markup=chat_action_keyboard())
+        except Exception as exc:
+            logger.error("Chat action failed: %s", exc)
+            await edit_progress(context, chat_id, status_msg.message_id, "❌ Could not complete that action. Please try again.")
         return
 
     # ── Quick action commands ────────────────────────────────────────────
@@ -1165,7 +1307,49 @@ from inline_keyboards import (
 )
 from voice_handler import transcribe_voice
 
-# Track bot start time for /ping
-BOT_START_TIME = time.time()
+@require_auth
+async def tasks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List pending Notion tasks with due dates, courses, and priorities."""
+    from scrapers.notion_client import get_pending_notion_tasks, priority_emoji
+    from bot.ui import begin_progress, edit_progress
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+    chat_id = update.effective_chat.id
+    msg = await begin_progress(context, chat_id, "Pulling current tasks from Notion...")
+
+    try:
+        tasks = await asyncio.to_thread(get_pending_notion_tasks, 25)
+        if not tasks:
+            await edit_progress(
+                context,
+                chat_id,
+                msg.message_id,
+                "📋 **Notion Tasks**\n\nYou have no pending tasks in Notion! Great job.",
+            )
+            return
+
+        lines = ["📋 **Your Pending Notion Tasks:**\n"]
+        for idx, t in enumerate(tasks, 1):
+            p_emoji = priority_emoji(t.get("priority", "medium"))
+            due_str = f" • Due: {t['due_date']}" if t.get("due_date") else ""
+            course_str = f" [{t['course']}]" if t.get("course") and t["course"] not in {"General", "Notion", ""} else ""
+            status_str = f" ({t['status']})" if t.get("status") and t["status"] != "Not started" else ""
+            lines.append(f"{idx}. {p_emoji} **{t['title']}**{course_str}{due_str}{status_str}")
+
+        lines.append("\n_Use the dashboard buttons or /summary to manage your tasks._")
+        await edit_progress(
+            context,
+            chat_id,
+            msg.message_id,
+            "\n".join(lines),
+        )
+    except Exception as e:
+        logger.exception("Failed to pull Notion tasks: %s", e)
+        await edit_progress(
+            context,
+            chat_id,
+            msg.message_id,
+            f"❌ Could not pull Notion tasks: {e}",
+        )
+
+
+notion_command = tasks_command

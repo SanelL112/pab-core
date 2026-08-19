@@ -455,10 +455,14 @@ class CanvasBrowserClient:
         self.close()
 
     def connect(self) -> None:
-        """Verify the persistent Firefox daemon has an authenticated Canvas session."""
+        """Verify the persistent Firefox daemon has an authenticated Canvas session or fall back to direct browser."""
         if self.use_daemon:
-            self._connect_to_daemon()
-            return
+            try:
+                self._connect_to_daemon()
+                return
+            except CanvasSignInRequired:
+                logger.info("Canvas browser daemon is offline; falling back to direct browser mode.")
+                self.use_daemon = False
 
         """Start Firefox and make sure its profile has an authenticated Canvas session."""
         if self.driver is None:
@@ -494,7 +498,23 @@ class CanvasBrowserClient:
         return data
 
     def get_favorite_courses(self) -> list[dict[str, Any]]:
-        return self.get_paginated("/api/v1/users/self/favorites/courses?per_page=100")
+        """Return all active and favorited academic courses without omitting non-starred subjects."""
+        favs = self.get_paginated("/api/v1/users/self/favorites/courses?per_page=100")
+        try:
+            all_enrolled = self.get_paginated(
+                "/api/v1/courses?enrollment_state=active&include[]=syllabus_body&include[]=term&per_page=100"
+            )
+        except Exception:
+            all_enrolled = []
+
+        seen_ids = set()
+        combined: list[dict[str, Any]] = []
+        for c in favs + all_enrolled:
+            cid = c.get("id")
+            if cid and cid not in seen_ids:
+                seen_ids.add(cid)
+                combined.append(c)
+        return combined if combined else favs
 
     def get_paginated(self, path_or_url: str, max_pages: int = 20) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
@@ -1186,12 +1206,12 @@ def _get_calendar_assignments(
                 "official": True,
             })
 
-        # AI Extraction for course front page, module pages, and announcements
+        # AI Extraction for course front page, syllabus, all pages, module pages, and announcements
         try:
             pages_to_extract = []
             seen_urls = set()
 
-            # 1. Always include Course Front Page
+            # 1. Course Front Page
             try:
                 front_page, _ = canvas._request_json(f"/api/v1/courses/{course_id}/front_page")
                 if isinstance(front_page, dict) and front_page.get("url"):
@@ -1204,11 +1224,46 @@ def _get_calendar_assignments(
             except Exception as exc:
                 logger.debug("Could not fetch front page for %s: %s", course_name, exc)
 
-            # 2. Module pages and external tools
+            # 2. Course Syllabus Body
+            try:
+                course_detail = canvas.get_json(f"/api/v1/courses/{course_id}?include[]=syllabus_body")
+                if isinstance(course_detail, dict) and course_detail.get("syllabus_body"):
+                    syl_body = course_detail.get("syllabus_body")
+                    if syl_body and len(syl_body) > 40:
+                        pages_to_extract.append({
+                            "url": f"syllabus-{course_id}",
+                            "title": f"[{course_name}] Syllabus & Course Schedule",
+                            "body": syl_body,
+                        })
+            except Exception as exc:
+                logger.debug("Could not fetch syllabus for %s: %s", course_name, exc)
+
+            # 3. All Course Pages (Weekly plans, agendas, unit schedules)
+            try:
+                all_course_pages = canvas.get_paginated(
+                    f"/api/v1/courses/{course_id}/pages?per_page=100",
+                    max_pages=3,
+                )
+                for cp in all_course_pages:
+                    cp_url = cp.get("url")
+                    cp_title = cp.get("title", "")
+                    if cp_url and cp_url not in seen_urls:
+                        # Prioritize pages with agenda / week / plan / unit / test / schedule in title
+                        low = cp_title.lower()
+                        if any(k in low for k in ["week", "plan", "agenda", "unit", "test", "quiz", "review", "schedule", "lab", "aug", "sep", "oct", "nov", "dec", "homework", "syllabus"]):
+                            seen_urls.add(cp_url)
+                            pages_to_extract.append({
+                                "url": cp_url,
+                                "title": cp_title,
+                            })
+            except Exception as exc:
+                logger.debug("Could not fetch pages list for %s: %s", course_name, exc)
+
+            # 4. Module pages and external tools
             try:
                 modules = canvas.get_paginated(
-                    f"/api/v1/courses/{course_id}/modules?include[]=items&per_page=30",
-                    max_pages=2,
+                    f"/api/v1/courses/{course_id}/modules?include[]=items&per_page=50",
+                    max_pages=5,
                 )
                 for mod in modules:
                     mname = mod.get("name", "Module")
@@ -1234,11 +1289,11 @@ def _get_calendar_assignments(
             except Exception as exc:
                 logger.debug("Could not fetch modules for %s: %s", course_name, exc)
 
-            # 3. Course Announcements
+            # 5. Course Announcements
             try:
                 announcements = canvas.get_paginated(
-                    f"/api/v1/courses/{course_id}/discussion_topics?only_announcements=true&per_page=5",
-                    max_pages=1,
+                    f"/api/v1/courses/{course_id}/discussion_topics?only_announcements=true&per_page=15",
+                    max_pages=2,
                 )
                 for ann in announcements:
                     ann_id = str(ann.get("id") or "")
@@ -1257,7 +1312,8 @@ def _get_calendar_assignments(
 
             # Extract assignments via AI RPC
             from scrapers.canvas_page_extractor import extract_assignments_from_html
-            for p in pages_to_extract[:max_pages_per_course]:
+            max_extract = max(15, int(get_setting("CANVAS_EXTRACT_PAGES_PER_COURSE", "25")))
+            for p in pages_to_extract[:max_extract]:
                 p_url = p.get("url")
                 p_title = p.get("title", "Untitled")
                 p_body = p.get("body")

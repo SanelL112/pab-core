@@ -517,11 +517,29 @@ def get_calendar_tasks() -> list[dict[str, Any]]:
         return []
     schema = get_task_tracker_schema()
     query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
-    # Include completed rows so an already-approved calendar item can be
-    # relabelled and have its reminders removed when Notion marks it Done.
-    payload: dict[str, Any] = {"page_size": 100}
+    
+    # Don't pull ancient tasks from months ago
+    now = datetime.now()
+    cutoff_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    
+    payload: dict[str, Any] = {
+        "page_size": 100,
+        "filter": {
+            "and": [
+                {"property": "Status", "status": {"does_not_equal": "Done"}},
+                {"property": "Due date", "date": {"on_or_after": cutoff_date}},
+            ]
+        },
+        "sorts": [{"property": "Due date", "direction": "ascending"}],
+    }
     cursor: str | None = None
     result: list[dict[str, Any]] = []
+    
+    junk_keywords = (
+        "join code", "success criteria", "safety data sheet", "overview of how",
+        "advisement", "table of contents", "example:", "examples:", "certify that",
+    )
+
     while True:
         request_payload = dict(payload)
         if cursor:
@@ -538,11 +556,16 @@ def get_calendar_tasks() -> list[dict[str, Any]]:
             due = (props.get("Due date", {}).get("date") or {}).get("start")
             title_parts = props.get("Task name", {}).get("title", [])
             title = title_parts[0].get("plain_text", "") if title_parts else ""
-            if not due or not title:
+            if not due or not title or len(title.strip()) < 3:
                 continue
+            
+            low_title = title.lower()
+            if any(k in low_title for k in junk_keywords):
+                continue
+
             source = "Notion"
             course = "Notion"
-            task_type = "Other"
+            task_type = "Assignment"
             url = None
             if schema:
                 source_parts = props.get("Source", {}).get("select") or {}
@@ -552,6 +575,12 @@ def get_calendar_tasks() -> list[dict[str, Any]]:
                 type_parts = props.get("Task type", {}).get("select") or {}
                 task_type = type_parts.get("name") or task_type
                 url = props.get("Link", {}).get("url")
+            
+            # If the task originally came from Canvas/Classroom, skip pulling it
+            # back as a duplicate calendar proposal since Canvas/Classroom already syncs it
+            if str(source).strip().lower() in {"canvas", "classroom", "google classroom", "google_classroom"}:
+                continue
+
             status = (props.get("Status", {}).get("status") or {}).get("name") or "Not started"
             item = {
                 "id": page.get("id"),
@@ -573,6 +602,92 @@ def get_calendar_tasks() -> list[dict[str, Any]]:
         if not cursor:
             break
     return result
+
+
+def get_pending_notion_tasks(
+    limit: int = 50,
+    on_or_after_date: str | None = None,
+    include_all: bool = False,
+) -> list[dict[str, Any]]:
+    """Fetch active (Status != Done) tasks from Notion Tracker database."""
+    if not NOTION_API_KEY or NOTION_API_KEY == "your_notion_api_key":
+        return []
+    schema = get_task_tracker_schema()
+    query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+
+    filters: list[dict[str, Any]] = [
+        {"property": "Status", "status": {"does_not_equal": "Done"}}
+    ]
+    if on_or_after_date and not include_all:
+        filters.append({"property": "Due date", "date": {"on_or_after": on_or_after_date}})
+
+    payload: dict[str, Any] = {
+        "page_size": min(100, limit),
+        "filter": {"and": filters} if len(filters) > 1 else filters[0],
+        "sorts": [{"property": "Due date", "direction": "ascending"}],
+    }
+
+    try:
+        response = _rate_limited_request("POST", query_url, headers=_notion_headers(), json=payload, timeout=15)
+        response.raise_for_status()
+        body = _json_object(response)
+    except Exception as exc:
+        logger.warning("Could not fetch pending Notion tasks: %s", exc)
+        return []
+
+    tasks: list[dict[str, Any]] = []
+    for page in body.get("results", []):
+        props = page.get("properties", {})
+        title_parts = props.get("Task name", {}).get("title", [])
+        title = title_parts[0].get("plain_text", "") if title_parts else ""
+        if not title:
+            continue
+        due = (props.get("Due date", {}).get("date") or {}).get("start")
+        priority = (props.get("Priority", {}).get("select") or {}).get("name") or "medium"
+        status = (props.get("Status", {}).get("status") or {}).get("name") or "Not started"
+        course_parts = props.get("Course", {}).get("rich_text", [])
+        course = course_parts[0].get("plain_text", "") if course_parts else ""
+        type_parts = props.get("Task type", {}).get("select") or {}
+        task_type = type_parts.get("name") or "Assignment"
+        url = props.get("Link", {}).get("url")
+        source = (props.get("Source", {}).get("select") or {}).get("name") or "Notion"
+
+        tasks.append({
+            "id": page.get("id"),
+            "title": title,
+            "course": course,
+            "due_date": str(due)[:10] if due else None,
+            "due_at": str(due) if due and "T" in str(due) else None,
+            "priority": priority.lower(),
+            "status": status,
+            "task_type": task_type,
+            "url": url,
+            "source": source,
+        })
+        if len(tasks) >= limit:
+            break
+
+    return tasks
+
+
+def get_notion_tasks_summary(max_tasks: int = 15) -> str:
+    """Format active Notion tasks as a clean text summary for briefings and digests."""
+    cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    tasks = get_pending_notion_tasks(limit=max_tasks, on_or_after_date=cutoff)
+    if not tasks:
+        tasks = get_pending_notion_tasks(limit=max_tasks, include_all=True)
+    if not tasks:
+        return "No pending Notion tasks."
+
+    lines: list[str] = ["📋 **Pending Notion Tasks:**"]
+    for t in tasks:
+        p_emoji = priority_emoji(t.get("priority", "medium"))
+        due_str = f" • Due: {t['due_date']}" if t.get("due_date") else ""
+        course_str = f" [{t['course']}]" if t.get("course") and t["course"] not in {"General", "Notion", ""} else ""
+        status_str = f" ({t['status']})" if t.get("status") and t["status"] != "Not started" else ""
+        lines.append(f"- {p_emoji} **{t['title']}**{course_str}{due_str}{status_str}")
+
+    return "\n".join(lines)
 
 
 def archive_stale_tasks(
