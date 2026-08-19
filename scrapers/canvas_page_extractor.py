@@ -237,21 +237,18 @@ def _fetch_external_link_text(url: str, timeout: float = 6.0) -> str:
             logger.debug("Failed to fetch published Google Slide %s: %s", pub_url, e)
             return ""
 
-    # 2. Standard Google Docs & Google Slides text export
+    # 2. Standard Google Docs, Sheets & Slides text/csv export
     export_url = None
     doc_match = re.search(r"docs\.google\.com/document/d/([a-zA-Z0-9_-]+)", url)
+    sheet_match = re.search(r"docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]+)", url)
+    slide_match = re.search(r"docs\.google\.com/presentation/d/([a-zA-Z0-9_-]+)", url)
+
     if doc_match:
-        export_url = (
-            f"https://docs.google.com/document/d/{doc_match.group(1)}/export?format=txt"
-        )
-    else:
-        slide_match = re.search(
-            r"docs\.google\.com/presentation/d/([a-zA-Z0-9_-]+)", url
-        )
-        if slide_match:
-            export_url = (
-                f"https://docs.google.com/presentation/d/{slide_match.group(1)}/export/txt"
-            )
+        export_url = f"https://docs.google.com/document/d/{doc_match.group(1)}/export?format=txt"
+    elif sheet_match:
+        export_url = f"https://docs.google.com/spreadsheets/d/{sheet_match.group(1)}/export?format=csv"
+    elif slide_match:
+        export_url = f"https://docs.google.com/presentation/d/{slide_match.group(1)}/export/txt"
 
     if not export_url:
         return ""
@@ -360,7 +357,7 @@ def _parse_html_with_structure_and_links(html_body: str) -> str:
             continue
         seen_urls.add(href)
         low = href.lower()
-        if any(k in low for k in ["docs.google.com/document", "docs.google.com/presentation"]):
+        if any(k in low for k in ["docs.google.com/document", "docs.google.com/presentation", "docs.google.com/spreadsheets"]):
             doc_text = _fetch_external_link_text(href)
             if doc_text:
                 embedded_snippets.append(
@@ -382,6 +379,41 @@ def _parse_html_with_structure_and_links(html_body: str) -> str:
 # ── Date and task-type normalization ─────────────────────────────────────────
 _MONTHS = {name.lower(): i for i, name in enumerate(calendar.month_name) if name}
 _MONTHS.update({name.lower(): i for i, name in enumerate(calendar.month_abbr) if name})
+
+
+def _clean_task_title(title: str, max_len: int = 55) -> str:
+    """Clean and summarize messy syllabus/agenda table rows into crisp calendar titles."""
+    if not title or not isinstance(title, str):
+        return "Assignment"
+    
+    t = title.strip()
+    # Strip leading day of week & date prefixes (e.g. 'Wednesday / Thursday, 8/26 & 27 -', 'Friday 8/21 -', 'Week of Aug 24 |')
+    t = re.sub(r"^(?:(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)[a-z/&, ]*\d{1,2}(?:[./-]\d{1,2})?\s*[-:—|]\s*)", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"^(?:Week\s+of\s+[A-Za-z0-9\s/-]+\s*[-:—|]\s*)", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"^(?:Day\s*\d+[A-Za-z0-9\s/-]*\s*[-:—|]\s*)", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"^(?:Success\s+Criteria\s*[-:—|]\s*)", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"^\d+\)\s*", "", t)  # Strip leading 1) or 2)
+    t = re.sub(r"^\d+\.\d+\s*", "", t) # Strip 0.1, 0.2
+    
+    # Strip pipe table separators and trailing details
+    if "|" in t:
+        parts = [p.strip() for p in t.split("|") if p.strip()]
+        # Pick the most descriptive part (containing assignment/lab/quiz/report/homework keywords)
+        best = parts[0]
+        for p in parts:
+            if any(k in p.lower() for k in ["quiz", "test", "exam", "lab", "report", "homework", "due", "summative", "formative", "activity"]):
+                best = p
+                break
+        t = best
+
+    t = re.sub(r"^\d+\)\s*", "", t).strip()
+    t = re.sub(r"\s+", " ", t).strip()
+    
+    # If title is still too long, truncate cleanly at word boundary
+    if len(t) > max_len:
+        t = t[:max_len].rsplit(" ", 1)[0].rstrip(" ,.-:")
+    
+    return t or "Class Assignment"
 
 
 def _valid_ymd(year: int, month: int, day: int) -> str | None:
@@ -437,16 +469,26 @@ def _normalize_date(value, assumed_year: int | None = None) -> str | None:
 def _normalize_task_type(value) -> str:
     """Map free-form type text onto the four allowed labels."""
     v = str(value or "").strip().lower()
-    if any(k in v for k in ("test", "quiz", "exam", "assessment", "formative", "summative")):
+    if re.search(r"\b(test|quiz|exam|assessment|summative|formative|u\d+q\d+)\b", v):
         return "Test"
-    if any(k in v for k in ("project", "presentation", "lab report", "essay")):
+    if re.search(r"\b(project|presentation|lab report|essay)\b", v):
         return "Project"
-    if any(k in v for k in ("read", "chapter", "textbook")):
+    if re.search(r"\b(reading|read\s+ch(apter)?|read\s+pages?|textbook\s+reading)\b", v):
         return "Reading"
     return "Assignment"
 
 
 # ── Deterministic heuristic fallback ─────────────────────────────────────────
+_JUNK_PAGE_PATTERNS = (
+    "success criteria", "agenda", "join code", "certify that", "example:",
+    "table of contents", "overview of", "introduction to", "class rules",
+    "supplies needed", "safety data sheet", "reflective question", "module outline",
+    "discussion topic", "finish group review", "finish water properties",
+    "macromolecule structure", "roly poly", "reflect on your notetaking",
+    "getting familiar with", "getting to know", "advisement", "lesson 1.", "lesson 2."
+)
+
+
 def _heuristic_rule_extraction(text: str) -> list[dict]:
     """Fallback rule-based extractor if the LLM path is offline or malformed."""
     results: list[dict] = []
@@ -457,6 +499,10 @@ def _heuristic_rule_extraction(text: str) -> list[dict]:
     for raw_line in lines:
         line = raw_line.strip()
         if not line:
+            continue
+
+        low_line = line.lower()
+        if any(junk in low_line for junk in _JUNK_PAGE_PATTERNS):
             continue
 
         # 1. Inline item with parenthesized date: "U1Q1 (8.17)", "U1 Test (9.4)"
@@ -526,13 +572,10 @@ def _heuristic_rule_extraction(text: str) -> list[dict]:
             if iso:
                 current_date = iso
 
-        # 3. Actionable keyword in line
-        if any(
-            k in line.lower()
-            for k in [
-                "quiz", "test", "exam", "homework", "due", "submit", "assignment",
-                "formative", "summative", "read", "lor activity", "u1q", "wa1", "project",
-            ]
+        # 4. Actionable keyword in line
+        if re.search(
+            r"\b(quiz|test|exam|homework|due|submit|assignment|formative|summative|project|u\d+q\d+|wa\d+[a-z]?)\b|\b(reading|read\s+ch|read\s+p)\b",
+            low_line,
         ):
             cleaned = re.sub(r"^[0-9]+[.)]\s*", "", line)
             cleaned = re.sub(
@@ -656,10 +699,16 @@ def _build_prompt(page_title: str, course_name: str, chunk: str) -> str:
 Below is text extracted from a Canvas course page or announcement titled '{page_title}' for the course '{course_name}'.
 Extract any upcoming tests, quizzes, readings, homework, or assignments along with their due dates.
 Assume the current year is {_ASSUMED_YEAR}.
+
+Title Rules:
+- Summarize each task title into a short, clean calendar title (under 35 characters).
+- Remove day-of-week headers (e.g. "Wednesday / Thursday, 8/26 -", "Week of August 24", "Day 1:", "Success Criteria").
+- Output the core subject/assignment name (e.g. "Enzyme Lab Report Draft", "Unit 1 Quiz 1", "Summer Reading One Pager", "Toothpickase Dry Lab").
+
 Respond ONLY with valid JSON in this exact format (no markdown, no extra text):
 [
   {{
-    "title": "Task Name",
+    "title": "Short Task Name",
     "due_date": "YYYY-MM-DD",
     "task_type": "Test"
   }}
@@ -675,7 +724,7 @@ Text:
 def _llm_extract(page_title: str, course_name: str, structured_text: str) -> list[dict]:
     """Run the LLM over every chunk of the page and merge unique rows."""
     system_prompt = (
-        "You extract calendar tasks and output ONLY a valid JSON array. No prose."
+        "You extract calendar tasks and output ONLY a valid JSON array. Keep task titles short and concise."
     )
     merged: list[dict] = []
     seen: set[tuple[str, str]] = set()
@@ -696,7 +745,8 @@ def _llm_extract(page_title: str, course_name: str, structured_text: str) -> lis
         for row in parsed:
             if not isinstance(row, dict):
                 continue
-            title = str(row.get("title") or "").strip()
+            raw_title = str(row.get("title") or "").strip()
+            title = _clean_task_title(raw_title)
             iso = _normalize_date(row.get("due_date"))
             if not title or not iso:
                 continue
@@ -721,6 +771,7 @@ def _decorate(items: list, course_id: str, course_name: str, page_url: str) -> l
         if not isinstance(item, dict) or not item.get("title") or not item.get("due_date"):
             continue
         item = dict(item)
+        item["title"] = _clean_task_title(item["title"])
         item["course"] = course_name
         id_str = f"{page_url}-{item.get('title')}-{item.get('due_date')}"
         item["id"] = f"page-{hashlib.md5(id_str.encode()).hexdigest()[:12]}"

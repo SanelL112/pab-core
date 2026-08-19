@@ -14,8 +14,15 @@ from telegram import BotCommand, Update
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 from bot.security import require_auth
-from bot.commands import model_command, summary_command, bash_command, priority_command, ping_command, stats_command, backup_command, restore_command, correlations_command, classroom_pdfs_command, canvas_command, calendar_command, help_command, server_command, errors_command, handle_callback, dashboard_message
-from bot.ui import begin_progress, edit_progress, escape_html, render_assistant_text, send_assistant_response
+from bot.commands import (
+    model_command, summary_command, bash_command, priority_command, ping_command,
+    stats_command, backup_command, restore_command, correlations_command,
+    classroom_pdfs_command, canvas_command, calendar_command, help_command,
+    server_command, errors_command, tasks_command, notion_command,
+    mode_command, clear_command,
+    handle_callback, dashboard_message
+)
+from bot.ui import begin_progress, chat_action_keyboard, edit_progress, escape_html, render_assistant_text, send_assistant_response
 
 import config
 import tempfile
@@ -327,7 +334,7 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
         from scrapers.google_scraper import get_unread_emails, get_classroom_assignments, get_classroom_announcements, get_recent_google_docs
     from scrapers.groupme_scraper import get_latest_messages
     from ai_processor import process_all_sources
-    from scrapers.notion_client import add_task_to_notion, determine_task_priority, priority_emoji
+    from scrapers.notion_client import add_task_to_notion, determine_task_priority, priority_emoji, get_notion_tasks_summary
 
     logger.info("Background job: Scraping sources...")
 
@@ -349,10 +356,11 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
     gm = await _safe_scrape("gmail", get_unread_emails)
     grp = await _safe_scrape("groupme", get_latest_messages, "102851186")
     gd = await _safe_scrape("gdocs", get_recent_google_docs)
+    notion_summary = await _safe_scrape("notion", get_notion_tasks_summary)
 
     logger.info("Background job: Processing with AI...")
     try:
-        ai_result = await asyncio.to_thread(process_all_sources, c, cl, gm, grp, cla, gd)
+        ai_result = await asyncio.to_thread(process_all_sources, c, cl, gm, grp, cla, gd, notion_summary)
     except Exception as e:
         logger.error(f"AI processing failed: {e}")
         await context.bot.send_message(
@@ -366,14 +374,16 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Calendar writes are disabled by default. Once explicitly enabled, only
-    # official Canvas/Classroom work is reconciled during this normal refresh.
+    # Calendar writes are disabled by default. Once explicitly enabled, official
+    # Canvas/Classroom work auto-syncs, and deep-crawler/on-device proposals are sent to Telegram for approval.
     try:
-        from scrapers.assignment_calendar import AssignmentCalendarService
+        from scrapers.assignment_calendar import AssignmentCalendarService, format_preview
+        from inline_keyboards import get_calendar_proposal_keyboard
+
         calendar_service = AssignmentCalendarService()
         if calendar_service.store.is_enabled():
-            calendar_changes = await asyncio.to_thread(calendar_service.sync_official)
-            logger.info("Assignment calendar reconciled %d official change(s)", calendar_changes)
+            calendar_changes = await asyncio.to_thread(calendar_service.sync_all)
+            logger.info("Assignment calendar auto-synced %d total change(s) across all courses", calendar_changes)
     except Exception as exc:
         logger.warning("Assignment calendar reconciliation failed: %s", exc)
 
@@ -616,14 +626,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await help_command(update, context)
         return
 
-    if user_text.strip().lower() == "models":
+    if user_text.strip().lower() in ("models", "/models"):
         context.args = []
         await model_command(update, context)
         return
 
+    if user_text.strip().lower() in ("mode", "/mode", "modes", "/modes"):
+        context.args = []
+        await mode_command(update, context)
+        return
+
+    if user_text.strip().lower() in ("/clear", "/new", "clear context", "new session"):
+        await clear_command(update, context)
+        return
+
+    # Check for prefix overrides
+    force_route = "auto"
+    import re
+    if user_text.startswith(("!cloud ", "/cloud ")):
+        force_route = "cloud"
+        user_text = re.sub(r"^(!cloud|/cloud)\s+", "", user_text)
+    elif user_text.startswith(("!local ", "/local ")):
+        force_route = "local"
+        user_text = re.sub(r"^(!local|/local)\s+", "", user_text)
+    elif user_text.startswith(("!code ", "/code ")):
+        force_route = "code"
+        user_text = re.sub(r"^(!code|/code)\s+", "", user_text)
+
+    reply_context = ""
     if update.message.reply_to_message and update.message.reply_to_message.text:
-        reply_text = update.message.reply_to_message.text
-        user_text = f"[In reply to your message: \"{reply_text}\"]\n\n{user_text}"
+        reply_context = update.message.reply_to_message.text
 
     # Send a "thinking" indicator
     thinking_msg = await begin_progress(
@@ -635,12 +667,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_lock = get_user_lock(chat_id)
         async with user_lock:
-            reply = await send_to_antigravity_and_wait(user_text, chat_id, context, thinking_msg)
+            reply = await send_to_antigravity_and_wait(
+                user_text,
+                chat_id,
+                context,
+                thinking_msg,
+                cloud_consent=True,
+                force_route=force_route,
+                reply_context=reply_context,
+            )
 
-        log_event("message", {"preview": user_text[:50], "routed_to": "unknown"}, notify=False)
+        log_event("message", {"preview": user_text[:50], "routed_to": force_route}, notify=False)
 
         await edit_progress(context, chat_id, thinking_msg.message_id, "Your response is ready below.")
-        await send_assistant_response(context, chat_id, reply)
+        await send_assistant_response(context, chat_id, reply, reply_markup=chat_action_keyboard())
     except Exception as e:
         logger.error(f"Error handling message: {e}")
         log_event("error", {"message": str(e)[:80], "source": "handle_message"})
@@ -944,7 +984,7 @@ if __name__ == "__main__":
         from scrapers.assignment_calendar import AssignmentCalendarService
         calendar_service = AssignmentCalendarService()
         if calendar_service.store.is_enabled():
-            calendar_service.sync_official()
+            calendar_service.sync_all()
             logger.info("Initial assignment calendar sync completed.")
     except Exception as e:
         logger.warning(f"Initial calendar sync failed: {e}")
@@ -996,7 +1036,12 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(handle_callback))
 
     app.add_handler(CommandHandler("model", model_command))
+    app.add_handler(CommandHandler("mode", mode_command))
+    app.add_handler(CommandHandler("clear", clear_command))
+    app.add_handler(CommandHandler("new", clear_command))
     app.add_handler(CommandHandler("summary", summary_command))
+    app.add_handler(CommandHandler("tasks", tasks_command))
+    app.add_handler(CommandHandler("notion", notion_command))
     app.add_handler(CommandHandler("bash", bash_command))
     app.add_handler(CommandHandler("p", priority_command))
     app.add_handler(CommandHandler("ping", ping_command))

@@ -37,7 +37,7 @@ def test_dashboard_keeps_unfinished_overdue_tasks_visible():
         status="Not started",
     )
 
-    with patch("scrapers.assignment_calendar.collect_assignments", return_value=[assignment]):
+    with patch("pathlib.Path.is_dir", return_value=False), patch("scrapers.assignment_calendar.collect_assignments", return_value=[assignment]):
         rows = dashboard_agent.read_tasks()
 
     assert len(rows) == 1

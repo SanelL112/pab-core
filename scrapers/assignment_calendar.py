@@ -10,7 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import sqlite3
+import difflib
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -413,6 +415,13 @@ class SyncStore:
                     rejected_count INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (source, course, task_type)
                 );
+                CREATE TABLE IF NOT EXISTS learned_patterns (
+                    pattern TEXT PRIMARY KEY,
+                    category TEXT NOT NULL,
+                    approved_weight INTEGER NOT NULL DEFAULT 0,
+                    rejected_weight INTEGER NOT NULL DEFAULT 0,
+                    last_updated TEXT NOT NULL
+                );
                 """
             )
 
@@ -483,6 +492,7 @@ class SyncStore:
     def resolve_proposal(self, batch_id: str, approved: bool) -> None:
         assignments = self.proposal(batch_id)
         with self._connect() as db:
+            now_iso = datetime.now(timezone.utc).isoformat()
             for item in assignments:
                 db.execute(
                     """INSERT INTO approval_preferences(source, course, task_type, approved_count, rejected_count)
@@ -492,19 +502,66 @@ class SyncStore:
                       rejected_count = rejected_count + excluded.rejected_count""",
                     (item.source, item.course, item.task_type, 1 if approved else 0, 0 if approved else 1),
                 )
-            db.execute("UPDATE proposals SET resolved_at = ? WHERE batch_id = ?", (datetime.now(timezone.utc).isoformat(), batch_id))
+                tokens = _extract_title_tokens(item.title)
+                for tok in tokens:
+                    db.execute(
+                        """INSERT INTO learned_patterns(pattern, category, approved_weight, rejected_weight, last_updated)
+                        VALUES (?, 'title_token', ?, ?, ?)
+                        ON CONFLICT(pattern) DO UPDATE SET
+                          approved_weight = approved_weight + excluded.approved_weight,
+                          rejected_weight = rejected_weight + excluded.rejected_weight,
+                          last_updated = excluded.last_updated""",
+                        (tok, 1 if approved else 0, 0 if approved else 1, now_iso),
+                    )
+            db.execute("UPDATE proposals SET resolved_at = ? WHERE batch_id = ?", (now_iso, batch_id))
+
+    def is_suppressed(self, item: Assignment) -> bool:
+        if item.official:
+            return False
+        tokens = _extract_title_tokens(item.title)
+        with self._connect() as db:
+            pref = db.execute(
+                "SELECT approved_count, rejected_count FROM approval_preferences WHERE source = ? AND course = ? AND task_type = ?",
+                (item.source, item.course, item.task_type),
+            ).fetchone()
+            if pref and pref["rejected_count"] >= 3 and pref["approved_count"] == 0:
+                return True
+
+            if tokens:
+                placeholders = ",".join("?" for _ in tokens)
+                rows = db.execute(
+                    f"SELECT pattern, approved_weight, rejected_weight FROM learned_patterns WHERE pattern IN ({placeholders})",
+                    tokens,
+                ).fetchall()
+                for r in rows:
+                    if r["rejected_weight"] >= 2 and r["rejected_weight"] > 2 * r["approved_weight"]:
+                        return True
+        return False
 
     def recommendation(self, item: Assignment) -> bool:
+        if self.is_suppressed(item):
+            return False
         with self._connect() as db:
             row = db.execute(
                 "SELECT approved_count, rejected_count FROM approval_preferences WHERE source = ? AND course = ? AND task_type = ?",
                 (item.source, item.course, item.task_type),
             ).fetchone()
-        return bool(row and row["approved_count"] > row["rejected_count"])
+            if row and row["approved_count"] > row["rejected_count"]:
+                return True
+
+            tokens = _extract_title_tokens(item.title)
+            if tokens:
+                placeholders = ",".join("?" for _ in tokens)
+                pat_rows = db.execute(
+                    f"SELECT approved_weight, rejected_weight FROM learned_patterns WHERE pattern IN ({placeholders})",
+                    tokens,
+                ).fetchall()
+                if any(p["approved_weight"] > p["rejected_weight"] for p in pat_rows):
+                    return True
+        return False
 
 
 def _assignment_from_payload(payload: dict[str, Any], source: str) -> Assignment | None:
-    external_id = str(payload.get("id") or payload.get("external_id") or "").strip()
     title = str(payload.get("title") or payload.get("name") or "").strip()
     due_at = payload.get("due_at") or payload.get("dueAt")
     due_date = payload.get("due_date") or payload.get("dueDate")
@@ -513,9 +570,17 @@ def _assignment_from_payload(payload: dict[str, Any], source: str) -> Assignment
             due_date = date(int(due_date["year"]), int(due_date["month"]), int(due_date["day"])).isoformat()
         except (KeyError, TypeError, ValueError):
             due_date = None
-    if not external_id or not title or not (due_at or due_date):
+    if not title or not (due_at or due_date):
         return None
+    external_id = str(payload.get("id") or payload.get("external_id") or "").strip()
+    if not external_id:
+        external_id = f"gen-{hashlib.md5(f'{source}:{title}:{due_at or due_date}'.encode()).hexdigest()[:12]}" 
     task_type = str(payload.get("task_type") or "Assignment")
+    official_flag = payload.get("official")
+    if official_flag is not None:
+        is_official = bool(official_flag)
+    else:
+        is_official = source in {"canvas", "canvas_pages", "google_classroom"}
     return Assignment(
         source=source,
         external_id=external_id,
@@ -526,8 +591,42 @@ def _assignment_from_payload(payload: dict[str, Any], source: str) -> Assignment
         url=str(payload.get("url") or payload.get("html_url") or "") or None,
         task_type=task_type if task_type in {"Assignment", "Test", "Project", "Reading", "Other"} else "Assignment",
         status=str(payload.get("status") or "Not started"),
-        official=bool(payload.get("official", False)) or source in {"canvas", "google_classroom"},
+        official=is_official,
     )
+
+
+def _extract_title_tokens(title: str) -> list[str]:
+    words = re.findall(r"[a-z0-9_#/-]+", title.lower())
+    stop_words = {"the", "and", "a", "an", "of", "to", "in", "for", "on", "with", "at", "by", "from", "is", "or", "your", "that", "this"}
+    cleaned = [w for w in words if len(w) >= 3 and w not in stop_words]
+    tokens = list(cleaned)
+    for i in range(len(cleaned) - 1):
+        tokens.append(f"{cleaned[i]} {cleaned[i+1]}")
+    return tokens
+
+
+def _normalize_title_for_dedupe(title: str) -> str:
+    t = re.sub(r"^\[.*?\]\s*", "", title)
+    t = re.sub(r"[^\w\s]", "", t.lower())
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _assignment_date_str(item: Assignment) -> str:
+    due = item.local_due()
+    if isinstance(due, datetime):
+        return due.date().isoformat()
+    elif isinstance(due, date):
+        return due.isoformat()
+    return ""
+
+
+def _dates_are_close(d1_str: str, d2_str: str, max_days: int = 1) -> bool:
+    try:
+        d1 = date.fromisoformat(d1_str[:10])
+        d2 = date.fromisoformat(d2_str[:10])
+        return abs((d1 - d2).days) <= max_days
+    except Exception:
+        return d1_str[:10] == d2_str[:10]
 
 
 def collect_assignments(use_composio: bool | None = None) -> list[Assignment]:
@@ -542,9 +641,33 @@ def collect_assignments(use_composio: bool | None = None) -> list[Assignment]:
     else:
         from scrapers.google_scraper import get_calendar_assignments as classroom_assignments
 
+    def _load_cached_canvas_extractions():
+        cache_file = config.CACHE_DIR / "canvas_page_extractions.json"
+        if not cache_file.exists():
+            return []
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            res = []
+            for page_key, tasks in data.items():
+                if isinstance(tasks, list):
+                    for item in tasks:
+                        if isinstance(item, dict) and item.get("title") and item.get("due_date"):
+                            t = dict(item)
+                            t["official"] = True
+                            if not t.get("id"):
+                                t["id"] = f"page-{hashlib.md5(f'{page_key}:{t.get("title")}:{t.get("due_date")}'.encode()).hexdigest()[:12]}"
+                            if not t.get("course"):
+                                t["course"] = "Canvas Coursework"
+                            res.append(t)
+            return res
+        except Exception:
+            return []
+
     candidates: list[Assignment] = []
     for source, loader in (
         ("canvas", canvas_assignments),
+        ("canvas_pages", _load_cached_canvas_extractions),
         ("google_classroom", classroom_assignments),
         ("google_docs", lambda: google_docs_assignments(use_composio=use_composio)),
         ("notion", get_calendar_tasks),
@@ -557,14 +680,63 @@ def collect_assignments(use_composio: bool | None = None) -> list[Assignment]:
         except Exception as exc:
             logger.warning("Calendar source %s failed: %s", source, exc)
 
-    # A Notion row copied from Canvas/Classroom must not get a second event.
-    official_keys = {(item.title.lower(), item.course.lower(), str(item.local_due())) for item in candidates if item.official}
-    unique: dict[str, Assignment] = {}
+    import difflib
+
+    # 1. Deduplicate official assignments across multiple courses on same date
+    official_by_title_date: dict[tuple[str, str], Assignment] = {}
+    unique_official: dict[str, Assignment] = {}
     for item in candidates:
-        duplicate = item.source == "notion" and (item.title.lower(), item.course.lower(), str(item.local_due())) in official_keys
-        if not duplicate:
-            unique[item.key] = item
-    return list(unique.values())
+        if not item.official:
+            continue
+        norm_title = _normalize_title_for_dedupe(item.title)
+        due_str = _assignment_date_str(item)
+        if not norm_title or not due_str:
+            continue
+        key_tuple = (norm_title, due_str)
+        if key_tuple in official_by_title_date:
+            continue
+        official_by_title_date[key_tuple] = item
+        unique_official[item.key] = item
+
+    # 2. Filter non-official items against official items and within proposals
+    unique_proposals: dict[str, Assignment] = {}
+    for item in candidates:
+        if item.official:
+            continue
+        norm_title = _normalize_title_for_dedupe(item.title)
+        due_str = _assignment_date_str(item)
+        if not norm_title or not due_str:
+            continue
+
+        # Check if matching official assignment exists on exact or adjacent date
+        is_dup = False
+        for (off_title, off_date) in official_by_title_date.keys():
+            if _dates_are_close(due_str, off_date, max_days=1):
+                if norm_title == off_title:
+                    is_dup = True
+                    break
+                sim = difflib.SequenceMatcher(None, norm_title, off_title).ratio()
+                if sim >= 0.75:
+                    is_dup = True
+                    break
+        if is_dup:
+            continue
+
+        # Deduplicate proposals against other proposals on the same or adjacent date
+        dup_prop = False
+        for p_item in unique_proposals.values():
+            p_due = _assignment_date_str(p_item)
+            if _dates_are_close(due_str, p_due, max_days=1):
+                p_norm = _normalize_title_for_dedupe(p_item.title)
+                if p_norm == norm_title or difflib.SequenceMatcher(None, norm_title, p_norm).ratio() >= 0.8:
+                    dup_prop = True
+                    break
+        if dup_prop:
+            continue
+
+        unique_proposals[item.key] = item
+
+    return list(unique_official.values()) + list(unique_proposals.values())
 
 
 class AssignmentCalendarService:
@@ -609,6 +781,9 @@ class AssignmentCalendarService:
         proposals: list[Assignment] = []
 
         for item in current.values():
+            if not item.official and self.store.is_suppressed(item):
+                logger.debug("Suppressed proposed item by learned pattern: %s", item.title)
+                continue
             existing = self.store.event(item.key)
             if not item.official:
                 if existing and item.completed and not existing["completed"]:
@@ -627,10 +802,6 @@ class AssignmentCalendarService:
                 or (self.google.configured() and not existing["google_event_id"])
             ):
                 actions.append(SyncAction("update", item, existing["caldav_uid"], existing["google_event_id"]))
-
-        # A missing record is ambiguous: the source may have been unreachable
-        # or only partially returned. Never turn a failed read into mass event
-        # deletion. Explicit cleanup may use the owned-event delete path later.
 
         return actions, proposals
 
@@ -665,6 +836,24 @@ class AssignmentCalendarService:
         actions, _ = self.plan(assignments if assignments is not None else collect_assignments())
         return self._apply(actions)
 
+    def sync_all(self, assignments: Iterable[Assignment] | None = None) -> int:
+        """Automatically reconcile official assignments AND high-confidence deep-crawled deadlines."""
+        all_items = list(assignments if assignments is not None else collect_assignments())
+        actions, proposals = self.plan(all_items)
+        
+        # Merge high-confidence proposals into sync actions
+        for item in proposals:
+            existing = self.store.event(item.key)
+            actions.append(
+                SyncAction(
+                    "update" if existing else "create",
+                    item,
+                    existing["caldav_uid"] if existing else None,
+                    existing["google_event_id"] if existing else None,
+                )
+            )
+        return self._apply(actions)
+
     def approve_proposal(self, batch_id: str) -> int:
         manual = self.store.proposal(batch_id)
         self.store.resolve_proposal(batch_id, approved=True)
@@ -679,6 +868,32 @@ class AssignmentCalendarService:
     def reject_proposal(self, batch_id: str) -> None:
         self.store.resolve_proposal(batch_id, approved=False)
 
+    def prune_stale_and_duplicate_events(self, valid_assignments: Iterable[Assignment] | None = None) -> int:
+        """Purge stale, deleted, or unverified events from CalDAV and SQLite store."""
+        if valid_assignments is None:
+            valid_assignments = collect_assignments()
+        valid_keys = {item.key for item in valid_assignments}
+        existing_events = self.store.active_events()
+        pruned = 0
+        for row in existing_events:
+            key = row["source_key"]
+            if key not in valid_keys:
+                caldav_uid = row["caldav_uid"]
+                google_event_id = row["google_event_id"]
+                if caldav_uid and self.caldav.configured():
+                    try:
+                        self.caldav.delete(caldav_uid)
+                    except Exception as exc:
+                        logger.debug("Could not delete CalDAV event %s: %s", caldav_uid, exc)
+                if google_event_id and self.google.configured():
+                    try:
+                        self.google.delete(google_event_id)
+                    except Exception as exc:
+                        logger.debug("Could not delete Google event %s: %s", google_event_id, exc)
+                self.store.remove_event(key)
+                pruned += 1
+        return pruned
+
 
 def format_preview(actions: list[SyncAction], batch_id: str | None, recommended: int) -> str:
     counts: dict[str, int] = {}
@@ -687,5 +902,6 @@ def format_preview(actions: list[SyncAction], batch_id: str | None, recommended:
     official = ", ".join(f"{kind}: {count}" for kind, count in sorted(counts.items())) or "No official assignment changes"
     message = f"Assignment calendar preview\nOfficial school work: {official}."
     if batch_id:
-        message += f"\nNotion, Google Docs, and manual tasks awaiting review: batch {batch_id} ({recommended} recommended from prior approvals)."
+        rec_str = f" ({recommended} recommended from your prior approvals)" if recommended > 0 else " (unsure / new patterns awaiting review)"
+        message += f"\nDeep crawl & document proposals: batch {batch_id}{rec_str}."
     return message
