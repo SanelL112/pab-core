@@ -1,7 +1,7 @@
 # AP English Language/Comp - 10225y - Jimenez - 202: Week of August 17 - 21
 
 **Source**: https://forsyth.instructure.com/courses/276996/pages/week-of-august-17-21
-**Analyzed**: 2026-08-19T16:54:27.636075
+**Analyzed**: 2026-08-20T16:41:00.856861
 
 Skip To Content
 Dashboard

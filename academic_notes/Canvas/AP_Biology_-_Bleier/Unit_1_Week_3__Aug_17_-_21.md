@@ -1,7 +1,7 @@
 # AP Biology - Bleier: Unit 1 Week 3 (Aug 17 - 21)
 
 **Source**: https://forsyth.instructure.com/courses/276592/pages/unit-1-week-3-aug-17-21-2
-**Analyzed**: 2026-08-19T16:31:53.998370
+**Analyzed**: 2026-08-20T16:32:03.901623
 
 Skip To Content
 Dashboard
@@ -269,46 +269,46 @@ Bleier's baseline,0.040,0.326,0.507,0.640,0.728,0.793
 
 [EXTERNAL DOC: wet lab data electronically here (https://docs.google.com/spreadsheets/d/1FyaleNMGDLHQZpOQnAr-hPye96eK6MNB25ppH0u-xpU/edit?usp=sharing)]:
 w,0,1,2,3,4,5
-Class mean (x),0.013,0.123,0.181,0.249,0.308,0.358
-Class stdev (s),,,,,,0.107
-# samples (n),,,,,,31
+Class mean (x),0.009,0.106,0.165,0.227,0.285,0.335
+Class stdev (s),,,,,,0.104
+# samples (n),,,,,,73
 Bleier's baseline,,,,,,
 ,,,,,,
-1st Johns table 1,,,,,,
-1st Johns table 2,,,,,,
-1st Johns table 3,,,,,,
-1st Johns table 4,,,,,,
-1st Johns table 5,,,,,,
-1st Johns table 6,,,,,,
-1st Johns table 7,,,,,,
-1st Johns table 8,,,,,,
+1st Johns table 1,0.022,0.118,0.176,0.224,0.262,0.299
+1st Johns table 2,0.000,0.031,0.084,0.146,0.197,0.242
+1st Johns table 3,0.012,0.034,0.129,0.207,0.279,0.339
+1st Johns table 4,0.000,0.054,0.124,0.183,0.237,0.282
+1st Johns table 5,0.018,0.108,0.180,0.240,0.289,0.328
+1st Johns table 6,0.000,0.119,0.163,0.246,0.335,0.373
+1st Johns table 7,0.040,0.125,0.184,0.234,0.280,0.321
+1st Johns table 8,0.000,,0.187,0.285,0.350,0.411
 ,,,,,,
-1st Schuyler table 1,,,,,,
-1st Schuyler table 2,,,,,,
-1st Schuyler table 3,,,,,,
-1st Schuyler table 4,,,,,,
-1st Schuyler table 5,,,,,,
-1st Schuyler table 6,,,,,,
-1st Schuyler table 7,,,,,,
-1st Schuyler table 8,,,,,,
+1st Schuyler table 1,0.000,0.000,0.045,0.100,0.147,0.190
+1st Schuyler table 2,0.000,0.026,0.096,0.155,0.205,0.249
+1st Schuyler table 3,0.000,0.000,0.050,0.110,0.162,0.209
+1st Schuyler table 4,0.020,0.075,0.161,0.236,0.300,0.355
+1st Schuyler table 5,0.000,0.054,0.153,0.236,0.303,0.356
+1st Schuyler table 6,0.000,0.049,0.119,0.177,0.228,0.272
+1st Schuyler table 7,0.000,1.022,0.430,0.106,0.160,0.204
+1st Schuyler table 8,0.000,0.060,0.135,0.196,0.253,0.296
 ,,,,,,
-3rd Bleier table 1,,,,,,
-3rd Bleier table 2,,,,,,
-3rd Bleier table 3,,,,,,
-3rd Bleier table 4,,,,,,
-3rd Bleier table 5,,,,,,
-3rd Bleier table 6,,,,,,
-3rd Bleier table 7,,,,,,
-3rd Bleier table 8,,,,,,
+3rd Bleier table 1,0.000,0.169,0.222,0.300,0.360,0.407
+3rd Bleier table 2,0.050,0.076,0.125,0.173,0.221,0.275
+3rd Bleier table 3,0.000,0.038,0.102,0.152,0.198,0.242
+3rd Bleier table 4,0.000,0.000,0.059,0.106,0.144,0.179
+3rd Bleier table 5,0.000,0.037,0.098,0.154,0.201,0.241
+3rd Bleier table 6,0.000,0.242,0.352,0.446,0.525,0.594
+3rd Bleier table 7,0.054,0.079,0.148,0.211,0.263,0.306
+3rd Bleier table 8,0.000,0.155,0.227,0.228,0.345,0.381
 ,,,,,,
-3rd Schuyler table 1,,,,,,
-3rd Schuyler table 2,0.060,0.121,0.194,0.258,0.313,0.353
-3rd Schuyler table 3,,,,,,
-3rd Schuyler table 4,,,,,,
-3rd Schuyler table 5,,,,,,
-3rd Schuyler table 6,,,,,,
+3rd Schuyler table 1,0.000,0.073,0.169,0.246,0.307,0.360
+3rd Schuyler table 2,0.000,0.055,0.130,0.195,0.252,0.301
+3rd Schuyler table 3,0.000,0.056,0.153,0.237,0.305,0.363
+3rd Schuyler table 4,0.025,0.101,0.189,0.259,0.324,0.378
+3rd Schuyler table 5,0.000,0.000,0.064,0.116,0.161,0.201
+3rd Schuyler table 6,0.000,0.040,0.113,0.175,0.229,0.272
 3rd Schuyler table 7,,,,,,
-3rd Schuyler table 8,,,,,,
+3rd Schuyler table 8,0.051,0.096,0.165,0.217,0.267,0.308
 ,,,,,,
 4th Bleier table 1,0.000,0.058,0.144,0.215,0.272,0.319
 4th Bleier table 2,0.000,0.133,0.228,0.302,0.367,0.415
@@ -320,24 +320,5 @@ Bleier's baseline,,,,,,
 4th Bleier table 8,0.000,0.075,0.158,0.232,0.295,0.347
 ,,,,,,
 4th Schuyler table 1,0.000,0.081,0.082,0.155,0.216,0.267
-4th Schuyler table 2,,,,,,
-4th Schuyler table 3,0.045,0.125,0.195,0.256,0.311,0.357
-4th Schuyler table 4,0.020,0.247,0.344,0.458,0.535,0.594
-4th Schuyler table 5,0.000,0.027,0.118,0.190,0.252,0.300
-4th Schuyler table 6,0.000,0.136,0.205,0.256,0.278,0.326
-4th Schuyler table 7,0.160,0.174,0.186,0.260,0.323,0.372
-4th Schuyler table 8,0.064,0.090,0.148,0.197,0.235,0.274
-,,,,,,
-5th A Johns table 1,0.000,0.078,0.169,0.247,0.309,0.358
-5th A Johns table 2,0.000,0.790,0.171,0.247,0.308,0.360
-5th A Johns table 3,0.000,0.157,0.216,0.267,0.310,0.348
-5th A Johns table 4,0.000,0.049,0.181,0.223,0.290,0.351
-5th A Johns table 5,0.000,0.076,0.156,0.225,0.284,0.333
-5th A Johns table 6,0.000,0.091,0.181,0.202,0.301,0.384
-5th A Johns table 7,0.000,0.000,0.097,0.160,0.216,0.265
-5th A Johns table 8,0.000,0.030,0.055,0.094,0.128,0.159
-,,,,,,
-5th B Bleier table 1,,,,,,
-5th B Bleier table 2,,,,,,
-5th B Bleier 
+4th Schuyler table 2,,
 

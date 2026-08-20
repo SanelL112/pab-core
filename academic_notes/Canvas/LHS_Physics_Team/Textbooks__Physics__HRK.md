@@ -1,7 +1,7 @@
 # LHS Physics Team: [Textbooks] Physics (HRK)
 
 **Source**: https://forsyth.instructure.com/courses/188657/pages/physics-hrk
-**Analyzed**: 2026-08-19T17:06:07.331521
+**Analyzed**: 2026-08-20T16:47:56.714601
 
 Skip To Content
 Dashboard

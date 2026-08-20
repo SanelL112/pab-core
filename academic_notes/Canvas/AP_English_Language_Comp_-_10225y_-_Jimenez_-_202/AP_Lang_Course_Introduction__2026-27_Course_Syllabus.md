@@ -1,7 +1,7 @@
 # AP English Language/Comp - 10225y - Jimenez - 202: [AP Lang Course Introduction] 2026-27 Course Syllabus
 
 **Source**: https://forsyth.instructure.com/api/v1/courses/276996/module_item_redirect/4734964
-**Analyzed**: 2026-08-19T16:55:36.388305
+**Analyzed**: 2026-08-20T16:41:24.799809
 
 FCS 2026-27 AP Lang Syllabus
 Saved to Drive

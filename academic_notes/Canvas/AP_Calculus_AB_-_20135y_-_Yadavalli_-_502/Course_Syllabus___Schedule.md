@@ -1,12 +1,10 @@
 # AP Calculus AB - 20135y - Yadavalli - 502: Course Syllabus & Schedule
 
 **Source**: https://forsyth.instructure.com/courses/277481/assignments/syllabus
-**Analyzed**: 2026-08-19T16:48:11.925289
+**Analyzed**: 2026-08-20T16:38:00.582649
 
 That page has been disabled for this course
-
-Failed getting To Do list
-
+That page has been disabled for this course
 Skip To Content
 Dashboard
 Account
@@ -141,14 +139,17 @@ Room#
  View Course Calendar
  View Course Notifications
 To Do
-Failure loading the To Do list
+0.1 The Power of Origi…
+AP Calculus AB - 20135y - Yadavalli - 502
+100 pointsAug 14 at 4pm
+Dismiss 0.1 The Power of Originality: Keeping your Academic Integrity
+0.2 Academic Integrity…
+AP Calculus AB - 20135y - Yadavalli - 502
+100 pointsAug 14 at 4pm
+Dismiss 0.2 Academic Integrity or Academic Dishonesty?
 Recent Feedback
 Unit 1 Derivita Assignment
 
 20%
-
-Failed getting To Do list
-
-Close
 
 

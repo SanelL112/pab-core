@@ -1,7 +1,7 @@
 # LHS Physics Team: [Textbooks] Electricity and Magnetism - Edward Purcell & David Morin
 
 **Source**: https://forsyth.instructure.com/courses/188657/pages/electricity-and-magnetism-edward-purcell-and-david-morin
-**Analyzed**: 2026-08-19T17:06:27.257733
+**Analyzed**: 2026-08-20T16:48:02.237995
 
 Skip To Content
 Dashboard

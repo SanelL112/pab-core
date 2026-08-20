@@ -1,7 +1,7 @@
 # AP Physics 1 - Lang : Course Syllabus & Schedule
 
 **Source**: https://forsyth.instructure.com/courses/276782/assignments/syllabus
-**Analyzed**: 2026-08-19T16:57:41.060625
+**Analyzed**: 2026-08-20T16:44:50.105178
 
 That page has been disabled for this course
 That page has been disabled for this course

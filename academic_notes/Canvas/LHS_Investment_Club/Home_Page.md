@@ -1,7 +1,7 @@
 # LHS Investment Club: Home Page
 
 **Source**: https://forsyth.instructure.com/courses/161127/pages/home-page-2
-**Analyzed**: 2026-08-19T17:03:53.513460
+**Analyzed**: 2026-08-20T16:45:47.048797
 
 Skip To Content
 Dashboard

@@ -1,7 +1,7 @@
 # AP English Language/Comp - 10225y - Jimenez - 202: [Previous Plans] AP Lang Template
 
 **Source**: https://forsyth.instructure.com/courses/276996/pages/ap-lang-template
-**Analyzed**: 2026-08-19T16:56:13.874619
+**Analyzed**: 2026-08-20T16:44:18.777487
 
 Skip To Content
 Dashboard

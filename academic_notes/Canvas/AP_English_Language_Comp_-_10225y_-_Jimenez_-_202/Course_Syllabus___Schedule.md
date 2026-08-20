@@ -1,7 +1,7 @@
 # AP English Language/Comp - 10225y - Jimenez - 202: Course Syllabus & Schedule
 
 **Source**: https://forsyth.instructure.com/courses/276996/assignments/syllabus
-**Analyzed**: 2026-08-19T16:54:47.567754
+**Analyzed**: 2026-08-20T16:41:07.726731
 
 That page has been disabled for this course
 That page has been disabled for this course

@@ -1,7 +1,7 @@
 # LHS Robotics: [GRITS Competition] GRITS Consent and Release Form
 
 **Source**: https://forsyth.instructure.com/api/v1/courses/124624/module_item_redirect/1912055
-**Analyzed**: 2026-08-19T17:08:43.029336
+**Analyzed**: 2026-08-20T16:52:09.609305
 
 Consent and Release form for Peachtree District.pdf
 File
@@ -125,7 +125,7 @@ ______________________________________________________________________ _________
 
 Signature of Parent or Guardian if under 18 years of age Print Name of Parent or Guardian
 
-Page 1 of 1
+Page 1 Page 1 of 1
 
 [IFRAME: Frame 2 (https://drive.google.com/drivesharing/clientmodel?id=1g-TN2OfkbnRA7CzqwImbzcUmV9V78-LM&foreignService=texmex&authuser=0&origin=https%3A%2F%2Fdrive.google.com)]:
 401. That’s an error.

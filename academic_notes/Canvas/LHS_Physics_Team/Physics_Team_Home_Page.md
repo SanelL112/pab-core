@@ -1,7 +1,7 @@
 # LHS Physics Team: Physics Team Home Page
 
 **Source**: https://forsyth.instructure.com/courses/188657/pages/physics-team-home-page
-**Analyzed**: 2026-08-19T17:04:31.459223
+**Analyzed**: 2026-08-20T16:45:59.910084
 
 Skip To Content
 Dashboard

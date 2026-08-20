@@ -1,7 +1,7 @@
 # LHS Student Information Course: Homepage - Do not Edit or Delete
 
 **Source**: https://forsyth.instructure.com/courses/150683/pages/homepage-do-not-edit-or-delete
-**Analyzed**: 2026-08-19T17:09:21.638070
+**Analyzed**: 2026-08-20T16:52:34.721731
 
 Skip To Content
 Dashboard

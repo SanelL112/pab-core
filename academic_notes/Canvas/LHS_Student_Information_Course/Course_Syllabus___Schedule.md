@@ -1,7 +1,7 @@
 # LHS Student Information Course: Course Syllabus & Schedule
 
 **Source**: https://forsyth.instructure.com/courses/150683/assignments/syllabus
-**Analyzed**: 2026-08-19T17:09:41.160372
+**Analyzed**: 2026-08-20T16:52:40.210988
 
 That page has been disabled for this course
 That page has been disabled for this course
@@ -108,6 +108,14 @@ Links to an external site.
  View Course Calendar
  View Course Notifications
 To Do
+Superintendent Woods…
+LHS Student Information Course
+Aug 11 at 10:04am
+Dismiss Superintendent Woods seeks 2026-2027 Student Advisory Council Grades 10-12
+Get your LHS All Sports…
+LHS Student Information Course
+Aug 17 at 3:32pm
+Dismiss Get your LHS All Sports Pass!
 Recent Feedback
 Nothing for now
 

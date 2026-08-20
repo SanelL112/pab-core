@@ -1,7 +1,7 @@
 # Applications of Biotechnology - 702285y - Sharer - 101: [Course Info] Syllabus: Sharer LHS Applications of Biotechnology 26/27
 
 **Source**: https://forsyth.instructure.com/courses/277616/pages/syllabus-sharer-lhs-applications-of-biotechnology-26-slash-27
-**Analyzed**: 2026-08-19T17:00:21.780510
+**Analyzed**: 2026-08-20T16:45:13.371897
 
 Skip To Content
 Dashboard

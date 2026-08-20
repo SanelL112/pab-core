@@ -1,9 +1,10 @@
 # AP English Language/Comp - 10225y - Jimenez - 202: [AP Lang Course Introduction] Introduction to AP Language
 
 **Source**: https://forsyth.instructure.com/api/v1/courses/276996/module_item_redirect/4700112
-**Analyzed**: 2026-08-19T16:56:08.573406
+**Analyzed**: 2026-08-20T16:41:32.948592
 
 Day One Intro Slides AP Lang
+Saved to Drive
 Slideshow
  
  
@@ -25,6 +26,12 @@ To enable screen reader support, press Ctrl+Alt+Z To learn about keyboard shortc
 401. That’s an error.
 
 The server cannot process the request because it is malformed. It should not be retried. That’s all we know.
+
+
+[IFRAME: Frame 7 (https://contacts.google.com/widget/hovercard/v/2?origin=https%3A%2F%2Fdocs.google.com&usegapi=1&jsh=m%3B%2F_%2Fscs%2Fabc-static%2F_%2Fjs%2Fk%3Dgapi.lb.en.zhTT8Br0Ho8.O%2Fd%3D1%2Frs%3DAHpOoo-7LeULGjNQZRvhdu3G71akb6JY6A%2Fm%3D__features__#id=I__HC_94253229&_gfid=I__HC_94253229&parent=https%3A%2F%2Fdocs.google.com&pfname=&rpctoken=30989386)]:
+window.wiz_progress&&window.wiz_progress();window.wiz_progress&&window.wiz_progress();window.wiz_tick&&window.wiz_tick('XiXPQe');(function(){'use strict';var c=window,d=[];c.aft_counter=d;var e=[],f=0;function _recordIsAboveFold(a){if(!c._isLazyImage(a)&&!a.hasAttribute("data-noaft")&&a.src){var b=(c._isVisible||function(){})(c.document,a);a.setAttribute("data-atf",b);b&&(e.indexOf(a)!==-1||d.indexOf(a)!==-1||a.complete||d.push(a),a.hasAttribute("data-iml")&&(a=Number(a.getAttribute("data-iml")),a>f&&(f=a)))}}
+c.initAft=function(){f=0;e=Array.prototype.slice.call(document.getElementsByTagName("img")).filter(function(a){return!!a.getAttribute("data-iml")});[].forEach.call(document.getElementsByTagName("img"),function(a){try{_recordIsAboveFold(a)}catch(b){throw b.message=a.hasAttribute("data-iid")?b.message+"\nrecordIsAboveFold error for defer inlined image":b.message+("\nrecordIsAboveFold error for img element with <src: "+a.src+">"),b;}});if(d.length===0)c.onaft(f);e=[]};}).call(this);
+initAft()window.IJ_values = [[null,null,"",true,null,null,true,false],'0','https:\/\/contacts.google.com\/', null ,'boq_contactsuiserver_20260809.06_p0','contacts.google.com', 0.0 ,'','wKbo7ojqNVG1PNK5mWZ4Gw','kiP089I1as8-At7Wo_w1AQ','DEFAULT','', 2026.0 ,'https:\/\/contacts.google.com\/widget\/hovercard\/v\/2', null ,'ltr', false ,'https:\/\/accounts.google.com\/AccountChooser?continue\x3dhttps:\/\/contacts.google.com\/widget\/hovercard\/v\/2?origin%3Dhttps:\/\/docs.google.com%26usegapi%3D1%26jsh%3Dm;\/_\/scs\/abc-static\/_\/js\/k%253Dgapi.lb.en.zhTT8Br0Ho8.O\/d%253D1\/rs%253DAHpOoo-7LeULGjNQZRvhdu3G71akb6JY6A\/m%253D__features__\x26hl\x3den-US','https:\/\/accounts.google.com\/ServiceLogin?hl\x3den-US\x26continue\x3dhttps:\/\/contacts.google.com\/widget\/hovercard\/v\/2?origin%3Dhttps:\/\/docs.google.com%26usegapi%3D1%26jsh%3Dm;\/_\/scs\/abc-static\/_\/js\/k%253Dgapi.lb.en.zhTT8Br0Ho8.O\/d%253D1\/rs%253DAHpOoo-7LeULGjNQZRvhdu3G71akb6JY6A\/m%253D__features__','https:\/\/accounts.google.com\/SignOutOptions?continue\x3dhttps:\/\/contacts.google.com\/widget\/hovercard\/v\/2?origin%3Dhttps:\/\/docs.google.com%26usegapi%3D1%26jsh%3Dm;\/_\/scs\/abc-static\/_\/js\/k%253Dgapi.lb.en.zhTT8Br0Ho8.O\/d%253D1\/rs%253DAHpOoo-7LeULGjNQZRvhdu3G71akb6JY6A\/m%253D__features__', false , false , false ,'en','en-US','en_US', null , null ,'https:\/\/myaccount.google.com\/privacypolicy?hl\x3den-US', false , null , true ,'\/_\/scs\/social-static\/_\/r\/','https:\/\/myaccount.google.com\/termsofservice?hl\x3den-US','gdu', null , false , null ,];if (window['_wjdc']) {const wjd = {}; window['_wjdc'](wjd); delete window['_wjdc'];}window.wiz_progress&&window.wiz_progress();window.stopScanForCss&&window.stopScanForCss(); ccTick('bl');
 
 
 [EXTERNAL DOC: Sign in (https://accounts.google.com/ServiceLogin?service=wise&passive=1209600&osid=1&continue=https://docs.google.com/presentation/d/1GGBcIzrPfISVfJW2i3VtPJ5FSexx3aq9gfb5jbWpIHQ/edit?usp%3Dsharing&followup=https://docs.google.com/presentation/d/1GGBcIzrPfISVfJW2i3VtPJ5FSexx3aq9gfb5jbWpIHQ/edit?usp%3Dsharing&ltmpl=slides&ec=GAZAmQI)]:

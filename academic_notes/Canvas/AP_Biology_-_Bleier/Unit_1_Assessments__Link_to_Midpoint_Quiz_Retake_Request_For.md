@@ -1,7 +1,7 @@
 # AP Biology - Bleier: [Unit 1 Assessments] Link to Midpoint Quiz Retake Request Form
 
 **Source**: https://forsyth.instructure.com/api/v1/courses/276592/module_item_redirect/4682464
-**Analyzed**: 2026-08-19T16:47:51.989972
+**Analyzed**: 2026-08-20T16:37:46.042201
 
 AP Biology 2026-27 Formative Retake Request Form
 If you would like to take a second attempt on a formative quiz within a unit. Generally, retakes MUST be completed BEFORE a unit test (unless told otherwise by your teacher). Remember that your retake grade is recorded whether lower or higher than the initial attempt.

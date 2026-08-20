@@ -1,7 +1,7 @@
 # AP Biology - Bleier: Course Syllabus & Schedule
 
 **Source**: https://forsyth.instructure.com/courses/276592/assignments/syllabus
-**Analyzed**: 2026-08-19T16:34:45.509546
+**Analyzed**: 2026-08-20T16:34:58.569927
 
 Skip To Content
 Dashboard

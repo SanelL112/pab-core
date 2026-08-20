@@ -361,8 +361,21 @@ def _crawl_canvas_page_links(
             continue
         description = _describe_linked_canvas_item(kind, payload)
         append_description(depth, description)
+        linked_html = _linked_canvas_item_html(kind, payload)
+        if linked_html:
+            try:
+                from scrapers.canvas_page_extractor import extract_assignments_from_html
+                extract_assignments_from_html(
+                    course_id=str(course_id),
+                    course_name="Canvas Coursework",
+                    page_title=str(payload.get("title") or payload.get("name") or "Linked Canvas Resource"),
+                    page_url=str(payload.get("html_url") or api_path),
+                    html_body=linked_html,
+                )
+            except Exception:
+                pass
         if depth < max_depth:
-            queue_links(_linked_canvas_item_html(kind, payload), depth + 1)
+            queue_links(linked_html, depth + 1)
     return descriptions
 
 
@@ -1515,9 +1528,22 @@ def _get_canvas_pages(canvas: CanvasBrowserClient, courses: list[dict[str, Any]]
                     )
                     if not isinstance(page_detail, dict):
                         continue
-                    page_text, _links = _parse_canvas_page_html(str(page_detail.get("body") or ""))
+                    page_body = str(page_detail.get("body") or "")
+                    page_text, _links = _parse_canvas_page_html(page_body)
                     if page_text:
                         lines.append(f"  {page_text[:page_text_limit]}")
+                    if page_body:
+                        try:
+                            from scrapers.canvas_page_extractor import extract_assignments_from_html
+                            extract_assignments_from_html(
+                                course_id=str(course_id),
+                                course_name=str(course_name),
+                                page_title=str(title),
+                                page_url=f"https://forsyth.instructure.com/courses/{course_id}/pages/{quote(page_url, safe="")}",
+                                html_body=page_body,
+                            )
+                        except Exception as exc:
+                            logger.debug("Page assignment extraction failed for %s: %s", title, exc)
                     root_api_path = f"/api/v1/courses/{course_id}/pages/{quote(page_url, safe='')}"
                     for depth, linked in _crawl_canvas_page_links(
                         canvas,

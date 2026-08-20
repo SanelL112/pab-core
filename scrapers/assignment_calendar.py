@@ -574,13 +574,13 @@ def _assignment_from_payload(payload: dict[str, Any], source: str) -> Assignment
         return None
     external_id = str(payload.get("id") or payload.get("external_id") or "").strip()
     if not external_id:
-        external_id = f"gen-{hashlib.md5(f'{source}:{title}:{due_at or due_date}'.encode()).hexdigest()[:12]}" 
+        external_id = f"gen-{hashlib.md5(f"{source}:{title}:{due_at or due_date}".encode()).hexdigest()[:12]}"
     task_type = str(payload.get("task_type") or "Assignment")
     official_flag = payload.get("official")
     if official_flag is not None:
         is_official = bool(official_flag)
     else:
-        is_official = source in {"canvas", "canvas_pages", "google_classroom"}
+        is_official = True
     return Assignment(
         source=source,
         external_id=external_id,
@@ -611,6 +611,13 @@ def _normalize_title_for_dedupe(title: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
+def _normalize_course_for_dedupe(course: str) -> str:
+    c = course.lower().strip()
+    c = re.sub(r"-\s*\d+.*$", "", c)
+    c = re.sub(r"[^\w\s]", "", c)
+    return re.sub(r"\s+", " ", c).strip()
+
+
 def _assignment_date_str(item: Assignment) -> str:
     due = item.local_due()
     if isinstance(due, datetime):
@@ -627,6 +634,60 @@ def _dates_are_close(d1_str: str, d2_str: str, max_days: int = 1) -> bool:
         return abs((d1 - d2).days) <= max_days
     except Exception:
         return d1_str[:10] == d2_str[:10]
+
+
+def _upsert_merge_assignments(base: Assignment, incoming: Assignment) -> Assignment:
+    """Deep-merge two matching assignments to enrich metadata without data loss."""
+    # 1. Course: Keep more descriptive course name
+    course = base.course
+    if base.course in {"Canvas Coursework", "Uncategorized", "Google Docs"} and incoming.course not in {"Canvas Coursework", "Uncategorized", "Google Docs"}:
+        course = incoming.course
+
+    # 2. Title: Keep the longer / more descriptive title
+    title = base.title if len(base.title) >= len(incoming.title) else incoming.title
+
+    # 3. ID: Prefer official upstream Canvas/Classroom ID over synthesized gen- IDs
+    external_id = base.external_id
+    if (base.external_id.startswith("gen-") or base.external_id.startswith("ext-") or base.external_id.startswith("page-")) and not (incoming.external_id.startswith("gen-") or incoming.external_id.startswith("ext-") or incoming.external_id.startswith("page-")):
+        external_id = incoming.external_id
+
+    # 4. Due Date: If incoming has specific live pacing/agenda date and base is missing/generic, prioritize incoming
+    due_at = base.due_at or incoming.due_at
+    due_date = base.due_date or incoming.due_date
+    if incoming.source in {"canvas_pages", "google_docs"} and incoming.due_date:
+        due_date = incoming.due_date
+        if incoming.due_at:
+            due_at = incoming.due_at
+
+    # 5. URL: Preserve baseline assignment link or enrich
+    url = base.url or incoming.url
+
+    # 6. Task Type: Specific types (Test/Project/Reading) override generic Assignment
+    task_type = base.task_type
+    if base.task_type == "Assignment" and incoming.task_type in {"Test", "Project", "Reading", "Other"}:
+        task_type = incoming.task_type
+
+    # 7. Official: If either is official, resulting merged is official
+    official = base.official or incoming.official
+
+    # 8. Status: Preserve Completed status
+    status = "Completed" if (base.status == "Completed" or incoming.status == "Completed") else (base.status or incoming.status or "Not started")
+
+    # 9. Source: Keep primary authoritative source
+    source = base.source if base.source in {"canvas", "google_classroom"} else incoming.source
+
+    return Assignment(
+        source=source,
+        external_id=external_id,
+        title=title,
+        course=course,
+        due_at=due_at,
+        due_date=due_date,
+        url=url,
+        task_type=task_type,
+        status=status,
+        official=official,
+    )
 
 
 def collect_assignments(use_composio: bool | None = None) -> list[Assignment]:
@@ -656,7 +717,8 @@ def collect_assignments(use_composio: bool | None = None) -> list[Assignment]:
                             t = dict(item)
                             t["official"] = True
                             if not t.get("id"):
-                                t["id"] = f"page-{hashlib.md5(f'{page_key}:{t.get("title")}:{t.get("due_date")}'.encode()).hexdigest()[:12]}"
+                                key_str = f"{page_key}:{t.get(title)}:{t.get(due_date)}"
+                                t["id"] = f"gen-{hashlib.md5(key_str.encode()).hexdigest()[:12]}"
                             if not t.get("course"):
                                 t["course"] = "Canvas Coursework"
                             res.append(t)
@@ -682,61 +744,44 @@ def collect_assignments(use_composio: bool | None = None) -> list[Assignment]:
 
     import difflib
 
-    # 1. Deduplicate official assignments across multiple courses on same date
-    official_by_title_date: dict[tuple[str, str], Assignment] = {}
-    unique_official: dict[str, Assignment] = {}
-    for item in candidates:
-        if not item.official:
-            continue
-        norm_title = _normalize_title_for_dedupe(item.title)
-        due_str = _assignment_date_str(item)
-        if not norm_title or not due_str:
-            continue
-        key_tuple = (norm_title, due_str)
-        if key_tuple in official_by_title_date:
-            continue
-        official_by_title_date[key_tuple] = item
-        unique_official[item.key] = item
+    import difflib
 
-    # 2. Filter non-official items against official items and within proposals
-    unique_proposals: dict[str, Assignment] = {}
+    merged_by_key: dict[str, Assignment] = {}
+
     for item in candidates:
-        if item.official:
-            continue
         norm_title = _normalize_title_for_dedupe(item.title)
+        norm_course = _normalize_course_for_dedupe(item.course)
         due_str = _assignment_date_str(item)
         if not norm_title or not due_str:
             continue
 
-        # Check if matching official assignment exists on exact or adjacent date
-        is_dup = False
-        for (off_title, off_date) in official_by_title_date.keys():
-            if _dates_are_close(due_str, off_date, max_days=1):
-                if norm_title == off_title:
-                    is_dup = True
-                    break
-                sim = difflib.SequenceMatcher(None, norm_title, off_title).ratio()
-                if sim >= 0.75:
-                    is_dup = True
-                    break
-        if is_dup:
-            continue
+        matched_key = None
+        for existing_key, existing_item in merged_by_key.items():
+            ex_title = _normalize_title_for_dedupe(existing_item.title)
+            ex_course = _normalize_course_for_dedupe(existing_item.course)
+            ex_due = _assignment_date_str(existing_item)
 
-        # Deduplicate proposals against other proposals on the same or adjacent date
-        dup_prop = False
-        for p_item in unique_proposals.values():
-            p_due = _assignment_date_str(p_item)
-            if _dates_are_close(due_str, p_due, max_days=1):
-                p_norm = _normalize_title_for_dedupe(p_item.title)
-                if p_norm == norm_title or difflib.SequenceMatcher(None, norm_title, p_norm).ratio() >= 0.8:
-                    dup_prop = True
-                    break
-        if dup_prop:
-            continue
+            titles_match = (
+                norm_title == ex_title
+                or norm_title in ex_title
+                or ex_title in norm_title
+                or difflib.SequenceMatcher(None, norm_title, ex_title).ratio() >= 0.8
+            )
+            dates_match = _dates_are_close(due_str, ex_due, max_days=1)
+            courses_match = (norm_course == ex_course or not norm_course or not ex_course or norm_course in ex_course or ex_course in norm_course)
 
-        unique_proposals[item.key] = item
+            if titles_match and (dates_match or courses_match):
+                matched_key = existing_key
+                break
 
-    return list(unique_official.values()) + list(unique_proposals.values())
+        if matched_key:
+            existing = merged_by_key[matched_key]
+            merged = _upsert_merge_assignments(existing, item)
+            merged_by_key[matched_key] = merged
+        else:
+            merged_by_key[item.key] = item
+
+    return list(merged_by_key.values())
 
 
 class AssignmentCalendarService:
@@ -894,6 +939,10 @@ class AssignmentCalendarService:
                 pruned += 1
         return pruned
 
+    def get_all_events(self) -> list[dict]:
+        """Return all active calendar events tracked in the store."""
+        return self.store.active_events()
+
 
 def format_preview(actions: list[SyncAction], batch_id: str | None, recommended: int) -> str:
     counts: dict[str, int] = {}
@@ -905,3 +954,10 @@ def format_preview(actions: list[SyncAction], batch_id: str | None, recommended:
         rec_str = f" ({recommended} recommended from your prior approvals)" if recommended > 0 else " (unsure / new patterns awaiting review)"
         message += f"\nDeep crawl & document proposals: batch {batch_id}{rec_str}."
     return message
+
+
+
+
+
+# Alias for backward compatibility / direct verification:
+AssignmentCalendar = AssignmentCalendarService

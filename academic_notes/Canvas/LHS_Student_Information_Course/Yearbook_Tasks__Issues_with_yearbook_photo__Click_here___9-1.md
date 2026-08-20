@@ -1,7 +1,7 @@
 # LHS Student Information Course: [Yearbook Tasks] Issues with yearbook photo? Click here! (9-11 grade- must be signed into school Google Drive)
 
 **Source**: https://forsyth.instructure.com/api/v1/courses/150683/module_item_redirect/3118301
-**Analyzed**: 2026-08-19T17:10:09.176290
+**Analyzed**: 2026-08-20T16:52:43.440755
 
 Loading
 Sign in

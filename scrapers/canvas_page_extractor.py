@@ -771,15 +771,20 @@ def _decorate(items: list, course_id: str, course_name: str, page_url: str) -> l
         if not isinstance(item, dict) or not item.get("title") or not item.get("due_date"):
             continue
         item = dict(item)
-        item["title"] = _clean_task_title(item["title"])
+        title = _clean_task_title(item["title"])
+        item["title"] = title
         item["course"] = course_name
-        id_str = f"{page_url}-{item.get('title')}-{item.get('due_date')}"
-        item["id"] = f"page-{hashlib.md5(id_str.encode()).hexdigest()[:12]}"
-        if page_url.startswith("http"):
-            item["url"] = page_url
-        else:
-            item["url"] = f"https://forsyth.instructure.com/courses/{course_id}/pages/{page_url}"
+        due_d = item.get("due_date")
+        id_str = f"{course_name}:{title}:{due_d}"
+        if not item.get("id") or item.get("id").startswith("page-") or item.get("id").startswith("gen-"):
+            item["id"] = f"page-{hashlib.md5(id_str.encode()).hexdigest()[:12]}"
+        if not item.get("url"):
+            if page_url.startswith("http"):
+                item["url"] = page_url
+            else:
+                item["url"] = f"https://forsyth.instructure.com/courses/{course_id}/pages/{page_url}"
         item["official"] = True
+        item["task_type"] = _normalize_task_type(item.get("task_type"))
         out.append(item)
     return out
 
@@ -792,12 +797,7 @@ def extract_assignments_from_html(
     page_url: str,
     html_body: str,
 ) -> list[dict]:
-    """Extract assignments from Canvas page HTML & embedded docs.
-
-    Uses local LLM inference (direct Ollama endpoint, then RPC cluster router)
-    with a deterministic heuristic fallback. Results are content-hash cached and
-    decorated with stable IDs. Never raises for a bad page — returns ``[]``.
-    """
+    """Extract assignments from Canvas page HTML & embedded docs with upsert reconciliation."""
     structured_text = _parse_html_with_structure_and_links(html_body)
     if not structured_text:
         return []
@@ -834,12 +834,39 @@ def extract_assignments_from_html(
                     }
                 )
 
+    decorated = _decorate(clean_rows, course_id, course_name, page_url)
+
+    # Deep-Merge & Upsert into section cache to preserve metadata
+    section_key = f"{course_name}::{page_title}"
     with _cache_lock:
         cache = _load_cache()
         cache[cache_key] = clean_rows
+        
+        existing_items = cache.get(section_key, [])
+        if isinstance(existing_items, list) and existing_items:
+            merged_by_title = {}
+            for ex in existing_items:
+                if isinstance(ex, dict) and ex.get("title"):
+                    norm_t = _clean_task_title(ex["title"]).lower()
+                    merged_by_title[norm_t] = dict(ex)
+            for inc in decorated:
+                norm_t = _clean_task_title(inc["title"]).lower()
+                if norm_t in merged_by_title:
+                    base = merged_by_title[norm_t]
+                    for k, v in inc.items():
+                        if v and (not base.get(k) or k in {"due_date", "due_at", "url"}):
+                            base[k] = v
+                    base["official"] = True
+                else:
+                    merged_by_title[norm_t] = dict(inc)
+            cache[section_key] = list(merged_by_title.values())
+        elif decorated:
+            cache[section_key] = decorated
+
         _save_cache(cache)
 
-    return _decorate(clean_rows, course_id, course_name, page_url)
+    return decorated
+
 
 
 # ═════════════════════════════════════════════════════════════════════════════

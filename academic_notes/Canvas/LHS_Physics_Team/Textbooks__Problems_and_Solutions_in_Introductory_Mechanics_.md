@@ -1,7 +1,7 @@
 # LHS Physics Team: [Textbooks] Problems and Solutions in Introductory Mechanics (Blue Morin)
 
 **Source**: https://forsyth.instructure.com/courses/188657/pages/problems-and-solutions-in-introductory-mechanics-blue-morin
-**Analyzed**: 2026-08-19T17:05:46.497268
+**Analyzed**: 2026-08-20T16:47:51.390966
 
 Skip To Content
 Dashboard

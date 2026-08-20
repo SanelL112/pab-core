@@ -1,7 +1,7 @@
 # AP CSA - Fuqua: Course Syllabus & Schedule
 
 **Source**: https://forsyth.instructure.com/courses/277572/assignments/syllabus
-**Analyzed**: 2026-08-19T16:49:48.794909
+**Analyzed**: 2026-08-20T16:39:37.507370
 
 That page has been disabled for this course
 That page has been disabled for this course
@@ -55,8 +55,8 @@ AP Classroom Join Codes
 
 Homework/Other:
 
-AP Classroom (Unit 1A Progress Check)
-Unit 1A Program Set
+AP Classroom (Unit 1A Progress Check) due 8/24 @ 8:00 AM
+Unit 1A Program Set due 8/24 @ 8:00 AM
 
 
 
@@ -137,14 +137,6 @@ Room# 1517
  View Course Calendar
  View Course Notifications
 To Do
-0.1 The Power of Origi…
-AP CSA - Fuqua
-100 pointsAug 14 at 4pm
-Dismiss 0.1 The Power of Originality: Keeping your Academic Integrity
-0.2 Academic Integrity…
-AP CSA - Fuqua
-100 pointsAug 14 at 4pm
-Dismiss 0.2 Academic Integrity or Academic Dishonesty?
 Recent Feedback
 1A - Greeting
 

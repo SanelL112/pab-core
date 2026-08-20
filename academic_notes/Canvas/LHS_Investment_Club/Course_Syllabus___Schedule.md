@@ -1,7 +1,7 @@
 # LHS Investment Club: Course Syllabus & Schedule
 
 **Source**: https://forsyth.instructure.com/courses/161127/assignments/syllabus
-**Analyzed**: 2026-08-19T17:04:11.302158
+**Analyzed**: 2026-08-20T16:45:53.322878
 
 That page has been disabled for this course
 That page has been disabled for this course

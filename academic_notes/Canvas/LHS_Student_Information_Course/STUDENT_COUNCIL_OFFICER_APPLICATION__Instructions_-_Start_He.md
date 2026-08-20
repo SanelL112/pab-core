@@ -1,7 +1,7 @@
 # LHS Student Information Course: [STUDENT COUNCIL OFFICER APPLICATION] Instructions - Start Here :)
 
 **Source**: https://forsyth.instructure.com/courses/150683/pages/instructions-start-here
-**Analyzed**: 2026-08-19T17:10:16.851953
+**Analyzed**: 2026-08-20T16:52:48.523862
 
 Skip To Content
 Dashboard

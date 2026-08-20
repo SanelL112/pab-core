@@ -1,7 +1,7 @@
 # Applications of Biotechnology - 702285y - Sharer - 101: [Unit Resources] Unit 1: Intro to Applications of Biotech
 
 **Source**: https://forsyth.instructure.com/courses/277616/pages/unit-1-intro-to-applications-of-biotech
-**Analyzed**: 2026-08-19T17:02:38.734552
+**Analyzed**: 2026-08-20T16:45:35.119077
 
 Skip To Content
 Dashboard

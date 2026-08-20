@@ -1,7 +1,7 @@
 # LHS Physics Team: Course Syllabus & Schedule
 
 **Source**: https://forsyth.instructure.com/courses/188657/assignments/syllabus
-**Analyzed**: 2026-08-19T17:04:51.283088
+**Analyzed**: 2026-08-20T16:46:05.653293
 
 That page has been disabled for this course
 That page has been disabled for this course

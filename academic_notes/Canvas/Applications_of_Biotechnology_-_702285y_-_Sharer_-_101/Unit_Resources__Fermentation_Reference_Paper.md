@@ -1,7 +1,7 @@
 # Applications of Biotechnology - 702285y - Sharer - 101: [Unit Resources] Fermentation Reference Paper
 
 **Source**: https://forsyth.instructure.com/courses/277616/pages/fermentation-reference-paper
-**Analyzed**: 2026-08-19T17:03:33.829092
+**Analyzed**: 2026-08-20T16:45:40.312577
 
 Skip To Content
 Dashboard

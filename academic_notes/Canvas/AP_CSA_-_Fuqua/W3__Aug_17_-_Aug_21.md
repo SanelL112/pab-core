@@ -1,7 +1,7 @@
 # AP CSA - Fuqua: W3: Aug 17 - Aug 21
 
 **Source**: https://forsyth.instructure.com/courses/277572/pages/w3-aug-17-aug-21
-**Analyzed**: 2026-08-19T16:49:00.801679
+**Analyzed**: 2026-08-20T16:38:49.583478
 
 Skip To Content
 Dashboard
@@ -53,8 +53,8 @@ AP Classroom Join Codes
 
 Homework/Other:
 
-AP Classroom (Unit 1A Progress Check)
-Unit 1A Program Set
+AP Classroom (Unit 1A Progress Check) due 8/24 @ 8:00 AM
+Unit 1A Program Set due 8/24 @ 8:00 AM
 
 
 

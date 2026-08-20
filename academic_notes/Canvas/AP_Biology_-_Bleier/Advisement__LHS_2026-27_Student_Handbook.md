@@ -1,7 +1,7 @@
 # AP Biology - Bleier: [Advisement] LHS 2026-27 Student Handbook
 
 **Source**: https://forsyth.instructure.com/api/v1/courses/276592/module_item_redirect/4818352
-**Analyzed**: 2026-08-19T16:47:08.663939
+**Analyzed**: 2026-08-20T16:37:03.023067
 
 LHS Student Handbook 26-27.pdf
 File
@@ -26,10 +26,6 @@ Hide navigation pane
 3
 4
 5
-6
-7
-8
-9
 Page 1 of 21
 
 TABLE OF CONTENTS AABLE OF CONTENTS BLE OF CONTENTS

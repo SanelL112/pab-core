@@ -1,7 +1,7 @@
 # AP CSA - Fuqua: [Course Info] AP CSA Syllabus 26-27
 
 **Source**: https://forsyth.instructure.com/courses/277572/modules/items/4738015
-**Analyzed**: 2026-08-19T16:52:47.090937
+**Analyzed**: 2026-08-20T16:40:38.813411
 
 Skip To Content
 Dashboard

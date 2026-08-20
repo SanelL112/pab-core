@@ -1,7 +1,7 @@
 # LHS Student Information Course: [FRESHMEN Student Council Application] CLICK HERE FIRST - Instructions & Interest Video
 
 **Source**: https://forsyth.instructure.com/courses/150683/pages/click-here-first-instructions-and-interest-video-2
-**Analyzed**: 2026-08-19T17:10:38.420487
+**Analyzed**: 2026-08-20T16:52:54.816023
 
 Skip To Content
 Dashboard

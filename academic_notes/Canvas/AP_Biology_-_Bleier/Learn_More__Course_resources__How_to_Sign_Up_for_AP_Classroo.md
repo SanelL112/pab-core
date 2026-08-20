@@ -1,7 +1,7 @@
 # AP Biology - Bleier: [Learn More: Course resources] How to Sign Up for AP Classroom
 
 **Source**: https://forsyth.instructure.com/courses/276592/pages/how-to-sign-up-for-ap-classroom-2-2
-**Analyzed**: 2026-08-19T16:43:57.332771
+**Analyzed**: 2026-08-20T16:36:39.233861
 
 Skip To Content
 Dashboard

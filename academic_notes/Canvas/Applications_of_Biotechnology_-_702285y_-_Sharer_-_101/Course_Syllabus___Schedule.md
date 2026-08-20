@@ -1,7 +1,7 @@
 # Applications of Biotechnology - 702285y - Sharer - 101: Course Syllabus & Schedule
 
 **Source**: https://forsyth.instructure.com/courses/277616/assignments/syllabus
-**Analyzed**: 2026-08-19T16:59:13.704991
+**Analyzed**: 2026-08-20T16:45:08.223577
 
 That page has been disabled for this course
 That page has been disabled for this course
