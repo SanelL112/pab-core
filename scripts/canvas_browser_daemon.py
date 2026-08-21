@@ -287,52 +287,100 @@ class BrowserDaemon:
             filename = str(metadata.get("display_name") or metadata.get("filename") or f"canvas-{file_id}")
             return content, str(result.get("contentType") or "application/octet-stream"), filename
 
-    def _open_m365_app_if_visible(self) -> bool:
-        assert self.client.driver is not None
-        driver = self.client.driver
+    def _find_clickable(self, driver, needles: list[str], exact: bool = False,
+                        exclude: list[str] | None = None):
+        """Deepest clickable element whose label matches a needle and none of
+        the exclusions.
+
+        Searches light DOM and shadow roots (ClassLink renders tiles inside
+        web components). Prefers the candidate with the shortest matching
+        label — tile nodes over their wrappers.
+        """
+        return driver.execute_script(
+            """
+            const needles = arguments[0];
+            const exact = arguments[1];
+            const exclude = arguments[2] || [];
+            const norm = (el) => [
+                el.innerText, el.textContent,
+                el.getAttribute && el.getAttribute('aria-label'),
+                el.getAttribute && el.getAttribute('title'),
+                el.getAttribute && el.getAttribute('alt')
+            ].filter(Boolean).join(' ').replace(/\\s+/g, ' ').trim().toLowerCase();
+            let best = null;
+            let bestLen = Infinity;
+            function consider(el) {
+                const target = el.closest('a, button, [role="button"], [role="link"], .app-icon, .app-tile') || el;
+                const label = norm(target);
+                if (!label) return;
+                if (exclude.some((n) => label.includes(n))) return;
+                const hit = exact
+                    ? needles.some((n) => label === n)
+                    : needles.some((n) => label.includes(n));
+                if (!hit || label.length >= bestLen) return;
+                best = target;
+                bestLen = label.length;
+            }
+            function walk(root) {
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) walk(el.shadowRoot);
+                    consider(el);
+                }
+            }
+            walk(document);
+            return best;
+            """,
+            needles,
+            exact,
+            exclude or [],
+        )
+
+    def _click_follow(self, driver, element) -> str:
+        """Click an element and follow the outcome.
+
+        Returns 'new_tab' after switching into a freshly opened tab, or
+        'same' when the click navigated in place. Raises on obvious failure.
+        """
+        from selenium.webdriver.common.action_chains import ActionChains
+
+        handles_before = set(driver.window_handles)
+        url_before = driver.current_url
         try:
-            from selenium.webdriver.common.action_chains import ActionChains
-            from selenium.webdriver.support.ui import WebDriverWait
-
-            handles_before = set(driver.window_handles)
-            app = WebDriverWait(driver, 20).until(
-                lambda _d: driver.execute_script(
-                    """
-                    function findM365(root) {
-                        for (const element of root.querySelectorAll('a, button, [role="button"], img, [aria-label], [title], .app-icon, .app-tile')) {
-                            const label = [
-                                element.innerText, element.getAttribute('aria-label'),
-                                element.getAttribute('title'), element.getAttribute('alt')
-                            ].filter(Boolean).join(' ').toLowerCase();
-                            if (label.includes('outlook 365') || label.includes('onedrive') || label.includes('office 365')) {
-                                return element.closest('a, button, [role="button"], .app-icon, .app-tile') || element;
-                            }
-                        }
-                        for (const element of root.querySelectorAll('*')) {
-                            if (element.shadowRoot) {
-                                const nested = findM365(element.shadowRoot);
-                                if (nested) return nested;
-                            }
-                        }
-                        return null;
-                    }
-                    return findM365(document);
-                    """
-                )
-            )
-            if not app:
-                return False
-
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", app)
-            ActionChains(driver).move_to_element(app).pause(0.2).click().perform()
-            WebDriverWait(driver, 30).until(lambda d: len(d.window_handles) > len(handles_before))
-            new_handles = [h for h in driver.window_handles if h not in handles_before]
-            if new_handles:
-                driver.switch_to.window(new_handles[-1])
-            return True
+            element.click()
         except Exception:
-            logger.debug("M365 ClassLink app tile click failed", exc_info=True)
-            return False
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+            ActionChains(driver).move_to_element(element).pause(0.2).click().perform()
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            handles = driver.window_handles
+            fresh = [h for h in handles if h not in handles_before]
+            if fresh:
+                driver.switch_to.window(fresh[-1])
+                return "new_tab"
+            try:
+                if driver.current_url != url_before:
+                    return "same"
+            except Exception:
+                pass
+            time.sleep(1)
+        return "same"
+
+    def _wait_off_auth_hosts(self, driver, timeout: float = 45) -> bool:
+        """Wait until the current tab leaves login/classlink/adfs hosts."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                host = urlsplit(driver.current_url).netloc.lower()
+            except Exception:
+                time.sleep(2)
+                continue
+            if host and not any(
+                fragment in host
+                for fragment in ("login.microsoftonline", "login.live", "classlink", "adfs")
+            ):
+                return True
+            time.sleep(2)
+        return False
 
     def _microsoft_sign_in(self) -> tuple[bool, str]:
         """Complete the Microsoft sign-in form with stored school credentials.
@@ -544,81 +592,185 @@ class BrowserDaemon:
         except Exception:
             pass
         return tabs
-    def crawl_onenote_web(self, target: str = "https://onenote.cloud.microsoft/") -> dict[str, Any]:
-        """Reach OneNote through the ClassLink → M365 SSO chain.
+    def crawl_onenote_web(self, target: str = "") -> dict[str, Any]:
+        """Reach OneNote through the working manual path:
 
-        Clicks the M365 tile, waits for the SSO redirect chain in the NEW tab
-        to settle (login.microsoftonline.com → app), then checks the sign-in
-        state before navigating. Navigating too early — or in the wrong tab —
-        lands on the anonymous marketing page, which is what the previous
-        fixed-sleep version did.
+        ClassLink LaunchPad → Drives folder → Microsoft 365 tile → Copilot
+        shell → waffle (app launcher) → More apps → OneNote. If OneNote asks
+        to sign in, click its "Sign in" — the org session SSOs silently;
+        otherwise fall back to the full stored-credential form flow.
         """
+        trace: list[str] = []
+
+        def note(step: str) -> None:
+            trace.append(step)
+            logger.info("OneNote crawl: %s", step)
+
         with self.lock:
             assert self.client.driver is not None
             driver = self.client.driver
 
-            # 1. Switch to ClassLink LaunchPad
+            # 1. ClassLink entry — same bootstrap the Canvas auth flow uses.
             if not self._select_classlink_tab():
                 return {"status": "error", "message": "ClassLink tab not found"}
-
-            # 2. Click the M365 tile; the helper switches into the new SSO tab.
-            opened = self._open_m365_app_if_visible()
-            if not opened:
-                return {"status": "error", "message": "M365 tile not found on LaunchPad"}
-
-            # 3. Wait for the redirect chain to settle on an M365 app domain.
-            deadline = time.monotonic() + 45
-            while time.monotonic() < deadline:
+            try:
+                host = urlsplit(driver.current_url).netloc.lower()
+            except Exception:
+                host = ""
+            if "launchpad.classlink.com" in host or "/login" in driver.current_url:
+                note("ClassLink session dead; running Canvas ClassLink sign-in flow")
                 try:
-                    url = driver.current_url
-                except Exception:
-                    time.sleep(2)
-                    continue
-                host = urlsplit(url).netloc.lower()
-                if host and not any(
-                    fragment in host
-                    for fragment in ("login.microsoftonline", "login.live", "classlink", "adfs")
-                ):
+                    self.client._sign_in_via_classlink()
+                except Exception as exc:
+                    return {"status": "needs_manual_sign_in", "location": driver.current_url,
+                            "message": f"ClassLink sign-in failed: {exc}"}
+                if not self._select_classlink_tab():
+                    return {"status": "error", "message": "ClassLink tab not found after sign-in"}
+            note("on ClassLink LaunchPad")
+            # Always reload the ROOT grid — a folder view (e.g. "LCS
+            # Databases & Resources") hides the Drives folder tile.
+            driver.get(CLASSLINK_APP_URL)
+            time.sleep(5)
+
+            drives = None
+            for _ in range(10):
+                # "OneDrive" also contains "drive" — exclude it.
+                drives = self._find_clickable(driver, ["drives"], exclude=["onedrive"])
+                if drives is not None:
+                    break
+                time.sleep(1)
+            if drives is None:
+                return {"status": "error", "message": "Drives folder not found on LaunchPad",
+                        "path": trace}
+            self._click_follow(driver, drives)
+            time.sleep(3)
+            note("opened Drives")
+
+            # 3. Click the Microsoft 365 tile inside Drives; it opens Copilot
+            # in a new tab and federates automatically.
+            m365 = None
+            for _ in range(10):
+                m365 = self._find_clickable(
+                    driver,
+                    ["microsoft 365", "office 365", "o365", "m365"],
+                    exclude=["onedrive", "outlook"],
+                )
+                if m365 is not None:
+                    break
+                time.sleep(1)
+            if m365 is None:
+                return {"status": "error", "message": "Microsoft 365 tile not found in Drives",
+                        "path": trace}
+            self._click_follow(driver, m365)
+            if not self._wait_off_auth_hosts(driver):
+                return {"status": "needs_manual_sign_in", "location": driver.current_url,
+                        "message": "M365 redirect chain did not settle", "path": trace}
+            time.sleep(5)  # let the Copilot/M365 shell render
+            note(f"M365 shell loaded at {driver.current_url[:80]}")
+
+            # 4. Waffle (app launcher) → More apps.
+            waffle = None
+            for _ in range(15):
+                waffle = self._find_clickable(
+                    driver,
+                    ["app launcher", "open the app", "launcher", "waffle"],
+                )
+                if waffle is not None:
                     break
                 time.sleep(2)
+            if waffle is None:
+                return {"status": "error", "message": "App launcher (waffle) not found",
+                        "path": trace}
+            # The flyout may fail to open on the first click (animation or
+            # wrong node); re-click the waffle and re-search up to 3 rounds.
+            more = None
+            for _round in range(3):
+                self._click_follow(driver, waffle)
+                for _ in range(5):
+                    more = self._find_clickable(
+                        driver,
+                        ["more apps", "all apps", "explore all your apps", "all my apps"],
+                        exclude=["onenote"],
+                    )
+                    if more is not None:
+                        break
+                    time.sleep(2)
+                if more is not None:
+                    break
+            if more is None:
+                # Flyout wording varies; the "More apps" link simply leads to
+                # the all-apps grid, so go there directly.
+                note("flyout 'More apps' not found; opening the apps grid directly")
+                driver.get("https://m365.cloud.microsoft/apps")
+                time.sleep(6)
+            else:
+                self._click_follow(driver, more)
+                time.sleep(5)  # all-apps grid render
+            note("opened More apps")
 
-            time.sleep(3)  # let the app shell render past the redirect
-
-            # 4. Navigate to the target, THEN probe. The org M365 session
-            # (OneDrive/SharePoint) does not auto-apply to
-            # onenote.cloud.microsoft — its marketing shell still shows a
-            # "Sign in" button that must be clicked once; the click then SSOs
-            # silently through the existing session.
-            driver.get(target)
-            time.sleep(8)
-
-            signed_in = driver.execute_script(
-                """
-                if (location.host.includes('login.microsoftonline')
-                    || location.host.includes('login.live')) {
-                    return false;  // mid-auth: picker or form page
-                }
-                const body = document.body.innerText || '';
-                const byText = body.toLowerCase().includes('sign in');
-                const byHref = !!document.querySelector(
-                    'a[href*="signin"], a[href*="login"], a[data-testid*="signin"]'
-                );
-                return !(byText || byHref);
-                """
+            # 5. OneNote tile. The grid may launch directly or open a detail
+            # pane with an Open button — handle both. Include-match: labels
+            # concatenate several attributes, so exact equality never hits.
+            onenote = self._find_clickable(driver, ["onenote"])
+            if onenote is None:
+                return {"status": "error", "message": "OneNote tile not found in More apps",
+                        "path": trace}
+            self._click_follow(driver, onenote)
+            time.sleep(4)
+            opener = self._find_clickable(
+                driver,
+                ["open onenote", "launch onenote", "open in browser", "open"],
+                exclude=["app launcher", "launcher"],
             )
-            if not signed_in:
-                # First-run: complete the Microsoft form with stored school
-                # credentials so the session persists in the profile.
-                signed_in, sign_in_detail = self._microsoft_sign_in()
+            host = urlsplit(driver.current_url).netloc.lower()
+            if opener is not None and "onenote.cloud.microsoft" not in host:
+                self._click_follow(driver, opener)
+            if not self._wait_off_auth_hosts(driver):
+                return {"status": "needs_manual_sign_in", "location": driver.current_url,
+                        "message": "OneNote launch did not settle", "path": trace}
+            time.sleep(8)
+            note(f"OneNote opened at {driver.current_url[:80]}")
+
+            # 6. Sign-in gate. The marketing shell shows "Sign in"; clicking
+            # it SSOs silently through the org session established above.
+            def _anonymous() -> bool:
+                return bool(driver.execute_script(
+                    """
+                    if (location.host.includes('login.microsoftonline')
+                        || location.host.includes('login.live')) {
+                        return true;  // mid-auth: picker or form page
+                    }
+                    const body = document.body.innerText || '';
+                    const byText = body.toLowerCase().includes('sign in');
+                    const byHref = !!document.querySelector(
+                        'a[href*="signin"], a[href*="login"], a[data-testid*="signin"]'
+                    );
+                    return byText || byHref;
+                    """
+                ))
+
+            if _anonymous():
+                note("OneNote anonymous; clicking its Sign in for silent SSO")
+                sign_in_btn = self._find_clickable(driver, ["sign in"])
+                if sign_in_btn is not None:
+                    self._click_follow(driver, sign_in_btn)
+                    self._wait_off_auth_hosts(driver, timeout=60)
+                    time.sleep(8)
+            if _anonymous():
+                note("silent SSO insufficient; running stored-credential form flow")
+                signed_in, detail = self._microsoft_sign_in()
                 if not signed_in:
                     return {
                         "status": "needs_manual_sign_in",
                         "m365_tile_opened": True,
                         "location": driver.current_url,
-                        "message": f"Automated M365 sign-in failed: {sign_in_detail}",
+                        "message": f"Automated M365 sign-in failed: {detail}",
+                        "path": trace,
                     }
-                # Sign-in completed: reload the target app shell.
                 time.sleep(5)
+
+            # 7. Optional explicit destination once authenticated.
+            if target:
                 driver.get(target)
                 time.sleep(8)
 
@@ -638,6 +790,7 @@ class BrowserDaemon:
                 "location": driver.current_url,
                 "title": driver.title,
                 "discovered": discovered[:25],
+                "path": trace,
             }
 
     def close(self) -> None:
@@ -660,7 +813,7 @@ class DaemonHandler(BaseHTTPRequestHandler):
                 ):
                     self._send(400, {"error": "target must be a Microsoft domain"})
                     return
-                res = self.server.daemon.crawl_onenote_web(target=target or "https://onenote.cloud.microsoft/")
+                res = self.server.daemon.crawl_onenote_web(target=target)
                 # Diagnostic: report every open tab so tab-mechanics bugs in
                 # the SSO chain are visible from the outside.
                 res["tabs"] = self.server.daemon.open_tabs()
