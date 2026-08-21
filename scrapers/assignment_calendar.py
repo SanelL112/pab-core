@@ -399,7 +399,10 @@ class SyncStore:
                     google_event_id TEXT,
                     official INTEGER NOT NULL,
                     completed INTEGER NOT NULL DEFAULT 0,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    title TEXT,
+                    course TEXT,
+                    due_date TEXT
                 );
                 CREATE TABLE IF NOT EXISTS proposals (
                     batch_id TEXT PRIMARY KEY,
@@ -424,6 +427,13 @@ class SyncStore:
                 );
                 """
             )
+            # Migrate databases created before title/course/due_date metadata
+            # was tracked; the duplicate pruner needs it to recognize which
+            # stored events are variants of the same task.
+            existing_cols = {r["name"] for r in db.execute("PRAGMA table_info(events)")}
+            for column in ("title", "course", "due_date"):
+                if column not in existing_cols:
+                    db.execute(f"ALTER TABLE events ADD COLUMN {column} TEXT")
 
     def is_enabled(self) -> bool:
         with self._connect() as db:
@@ -455,8 +465,9 @@ class SyncStore:
         with self._connect() as db:
             db.execute(
                 """INSERT OR REPLACE INTO events
-                (source_key, fingerprint, caldav_uid, google_event_id, official, completed, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (source_key, fingerprint, caldav_uid, google_event_id, official, completed, updated_at,
+                 title, course, due_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     assignment.key,
                     assignment.fingerprint(),
@@ -465,6 +476,9 @@ class SyncStore:
                     int(assignment.official),
                     int(assignment.completed),
                     datetime.now(timezone.utc).isoformat(),
+                    assignment.title,
+                    assignment.course,
+                    _assignment_date_str(assignment),
                 ),
             )
 
@@ -572,6 +586,8 @@ def _assignment_from_payload(payload: dict[str, Any], source: str) -> Assignment
             due_date = None
     if not title or not (due_at or due_date):
         return None
+    if _is_junk_title(title):
+        return None
     external_id = str(payload.get("id") or payload.get("external_id") or "").strip()
     if not external_id:
         external_id = f"gen-{hashlib.md5(f"{source}:{title}:{due_at or due_date}".encode()).hexdigest()[:12]}"
@@ -609,6 +625,119 @@ def _normalize_title_for_dedupe(title: str) -> str:
     t = re.sub(r"^\[.*?\]\s*", "", title)
     t = re.sub(r"[^\w\s]", "", t.lower())
     return re.sub(r"\s+", " ", t).strip()
+
+
+_GENERIC_COURSES = {"canvas coursework", "uncategorized", "google docs"}
+
+
+def _is_junk_title(title: str) -> bool:
+    """True for schedule scaffolding rows that are not tasks.
+
+    Mirrors the extractor's filter so junk is rejected at both the source
+    (extraction) and the gate (calendar payload), covering feeds that bypass
+    the extractor (Notion, Google Docs, cached rows from older runs).
+    """
+    raw = str(title or "").strip()
+    # A leading pipe means this row is a raw table-cell fragment; the extractor
+    # path emits the cleaned form, so the fragment copy is pure duplication.
+    if raw.startswith("|"):
+        return True
+    core = re.sub(r"^[^A-Za-z0-9(\"]+", "", raw).strip()
+    # "Label: remainder" rows are junk at the gate (the extractor rescues the
+    # remainder at the source; raw feeds don't get that far).
+    m = re.match(r"^([A-Za-z0-9][A-Za-z0-9/&.' ]{0,30}?)\s*[:|\-–—]\s*(.+)$", core)
+    if m and _JUNK_TITLE_RE.fullmatch(m.group(1).strip()):
+        return True
+    core = core.rstrip(":;-–—. ").strip()
+    if not core or re.fullmatch(r"[\d\s./&-]+", core):
+        return True
+    # Leftover HTML-entity fragments ("x26#xa;U1Q2") from double-encoded
+    # payloads are decode artifacts, not titles.
+    if re.search(r"&#|#[xX][0-9a-fA-F]{1,4};", core):
+        return True
+    return bool(_JUNK_TITLE_RE.fullmatch(core) or _SENTENCE_OPENER_RE.match(core))
+
+
+_JUNK_TITLE_RE = re.compile(
+    r"""(?xi)
+    (?:
+        due(?:\s*(?:today|tomorrow|date|dates?|this\s+week))?
+        | homework(?:/other|/classwork)?
+        | classwork
+        | upcoming
+        | this\s*week
+        | week\s+(?:of\s+)?[A-Za-z]+\.?\s*\d{1,2}(?:\s*[-–/&]\s*\d{0,2})?
+        | week(?:\s+of)?(?:\s+\w+){0,3}
+        | announcements?
+        | reminders?
+        | objectives?
+        | success\s+criteria
+        | agenda
+        | (?:unit\s+)?(?:formative|summative)\s+assessments?
+        | assessments?
+        | standards?
+        | materials?
+        | notes?
+        | day\s*\d+
+        | (?:mon|tue|wed|thu|fri|sat|sun)(?:day)?
+    )
+    """
+)
+
+
+_SENTENCE_OPENER_RE = re.compile(
+    r"^(?:each\s|you\s|your\s|please\b|make\s+sure\b|be\s+sure\b|if\s+you\b"
+    r"|students\s+(?:will|should|can)\b|we\s+will\b|click\s+here\b"
+    r"|use\s+this\b|this\s+link\b)",
+    re.IGNORECASE,
+)
+
+
+
+def _courses_compatible(a: str, b: str) -> bool:
+    """Course names match when equal, prefix-related, or one is generic.
+
+    Canvas course titles drift between crawl paths ("AP Physics 1 - Lang" vs
+    "AP Physics 1 - 276782 - Lang"); treating prefixes and generic labels as
+    compatible is what lets the same task merge into one event.
+    """
+    na, nb = _normalize_course_for_dedupe(a), _normalize_course_for_dedupe(b)
+    if not na or not nb or na in _GENERIC_COURSES or nb in _GENERIC_COURSES:
+        return True
+    return na == nb or na.startswith(nb) or nb.startswith(na)
+
+
+def _collapse_residual_duplicates(items: list[Assignment]) -> list[Assignment]:
+    """Collapse same-title items whose dates are within a few days.
+
+    Deep-crawl variants of one task ("U1Q1", "U1Q1 (Quiz 1)") can differ by a
+    day or two depending on which page they were read from; they must produce
+    ONE calendar event, not one per variant.
+    """
+    by_title: dict[str, list[Assignment]] = {}
+    for item in items:
+        by_title.setdefault(_normalize_title_for_dedupe(item.title), []).append(item)
+
+    source_rank = {"canvas": 0, "google_classroom": 1, "canvas_pages": 2, "google_docs": 3, "notion": 4}
+
+    def _authority(item: Assignment) -> tuple[int, str]:
+        return (source_rank.get(item.source, 9), item.course or "")
+
+    collapsed: list[Assignment] = []
+    for group in by_title.values():
+        group.sort(key=_authority)
+        kept: list[Assignment] = []
+        for item in group:
+            for i, base in enumerate(kept):
+                if _courses_compatible(base.course, item.course) and _dates_are_close(
+                    _assignment_date_str(item), _assignment_date_str(base), max_days=3
+                ):
+                    kept[i] = _upsert_merge_assignments(base, item)
+                    break
+            else:
+                kept.append(item)
+        collapsed.extend(kept)
+    return collapsed
 
 
 def _normalize_course_for_dedupe(course: str) -> str:
@@ -695,36 +824,56 @@ def collect_assignments(use_composio: bool | None = None) -> list[Assignment]:
     from scrapers.canvas_scraper import get_calendar_assignments as canvas_assignments
     from scrapers.google_docs_calendar import get_calendar_assignments as google_docs_assignments
     from scrapers.notion_client import get_calendar_tasks
-
     use_composio = config.USE_COMPOSIO if use_composio is None else use_composio
     if use_composio:
         from scrapers.composio_fetcher import get_calendar_assignments as classroom_assignments
     else:
         from scrapers.google_scraper import get_calendar_assignments as classroom_assignments
 
+
     def _load_cached_canvas_extractions():
+        from scrapers.canvas_page_extractor import _clean_task_title
         cache_file = config.CACHE_DIR / "canvas_page_extractions.json"
         if not cache_file.exists():
             return []
         try:
             with open(cache_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            res = []
-            for page_key, tasks in data.items():
-                if isinstance(tasks, list):
-                    for item in tasks:
-                        if isinstance(item, dict) and item.get("title") and item.get("due_date"):
-                            t = dict(item)
-                            t["official"] = True
-                            if not t.get("id"):
-                                key_str = f"{page_key}:{t.get(title)}:{t.get(due_date)}"
-                                t["id"] = f"gen-{hashlib.md5(key_str.encode()).hexdigest()[:12]}"
-                            if not t.get("course"):
-                                t["course"] = "Canvas Coursework"
-                            res.append(t)
-            return res
-        except Exception:
+        except (OSError, ValueError):
             return []
+        today = date.today()
+        res: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for page_key, tasks in data.items():
+            if not isinstance(tasks, list):
+                continue
+            for item in tasks:
+                if not isinstance(item, dict):
+                    continue
+                title = _clean_task_title(str(item.get("title") or ""))
+                due = str(item.get("due_date") or "")[:10]
+                if not title or not due or _is_junk_title(title):
+                    continue
+                # Drop stale weekly-plan rows: the calendar tracks upcoming
+                # work, and the dashboard only surfaces 7 days of overdue.
+                try:
+                    if date.fromisoformat(due) < today - timedelta(days=7):
+                        continue
+                except ValueError:
+                    continue
+                dedupe = (title.lower(), due)
+                if dedupe in seen:
+                    continue
+                seen.add(dedupe)
+                t = dict(item)
+                t["official"] = True
+                if not t.get("id"):
+                    key_str = f"{page_key}:{title}:{due}"
+                    t["id"] = f"gen-{hashlib.md5(key_str.encode()).hexdigest()[:12]}"
+                if not t.get("course"):
+                    t["course"] = "Canvas Coursework"
+                res.append(t)
+        return res
 
     candidates: list[Assignment] = []
     for source, loader in (
@@ -742,10 +891,6 @@ def collect_assignments(use_composio: bool | None = None) -> list[Assignment]:
         except Exception as exc:
             logger.warning("Calendar source %s failed: %s", source, exc)
 
-    import difflib
-
-    import difflib
-
     merged_by_key: dict[str, Assignment] = {}
 
     for item in candidates:
@@ -758,7 +903,6 @@ def collect_assignments(use_composio: bool | None = None) -> list[Assignment]:
         matched_key = None
         for existing_key, existing_item in merged_by_key.items():
             ex_title = _normalize_title_for_dedupe(existing_item.title)
-            ex_course = _normalize_course_for_dedupe(existing_item.course)
             ex_due = _assignment_date_str(existing_item)
 
             titles_match = (
@@ -767,21 +911,23 @@ def collect_assignments(use_composio: bool | None = None) -> list[Assignment]:
                 or ex_title in norm_title
                 or difflib.SequenceMatcher(None, norm_title, ex_title).ratio() >= 0.8
             )
+            if not titles_match:
+                continue
             dates_match = _dates_are_close(due_str, ex_due, max_days=1)
-            courses_match = (norm_course == ex_course or not norm_course or not ex_course or norm_course in ex_course or ex_course in norm_course)
-
-            if titles_match and (dates_match or courses_match):
+            # Generic course labels carry no attribution, so they must not
+            # block a merge; that's how "U1Q1 (Canvas Coursework)" variants
+            # used to escape dedup and pile up as separate events.
+            if dates_match or _courses_compatible(item.course, existing_item.course):
                 matched_key = existing_key
                 break
 
         if matched_key:
             existing = merged_by_key[matched_key]
-            merged = _upsert_merge_assignments(existing, item)
-            merged_by_key[matched_key] = merged
+            merged_by_key[matched_key] = _upsert_merge_assignments(existing, item)
         else:
             merged_by_key[item.key] = item
 
-    return list(merged_by_key.values())
+    return _collapse_residual_duplicates(list(merged_by_key.values()))
 
 
 class AssignmentCalendarService:
@@ -885,7 +1031,7 @@ class AssignmentCalendarService:
         """Automatically reconcile official assignments AND high-confidence deep-crawled deadlines."""
         all_items = list(assignments if assignments is not None else collect_assignments())
         actions, proposals = self.plan(all_items)
-        
+
         # Merge high-confidence proposals into sync actions
         for item in proposals:
             existing = self.store.event(item.key)
@@ -897,7 +1043,11 @@ class AssignmentCalendarService:
                     existing["google_event_id"] if existing else None,
                 )
             )
-        return self._apply(actions)
+        applied = self._apply(actions)
+        # Reconcile the stored calendar against the fresh collection: drop
+        # junk-titled events, residual duplicates, and long-past deadlines so
+        # the variant-event landfill can never regrow.
+        return applied + self.prune_duplicates_and_junk()
 
     def approve_proposal(self, batch_id: str) -> int:
         manual = self.store.proposal(batch_id)
@@ -937,6 +1087,74 @@ class AssignmentCalendarService:
                         logger.debug("Could not delete Google event %s: %s", google_event_id, exc)
                 self.store.remove_event(key)
                 pruned += 1
+        return pruned
+
+    def prune_duplicates_and_junk(self, past_grace_days: int = 21) -> int:
+        """Delete junk-titled, duplicated, and long-past events from the calendar.
+
+        Complements ``prune_stale_and_duplicate_events``: it works from the
+        title/course/due metadata persisted in the store, so it catches the
+        deep-crawler variant events (the same task re-extracted under several
+        source keys) that key-based pruning cannot see.
+        """
+        rows = [dict(r) for r in self.store.active_events()]
+        known = [r for r in rows if r.get("title")]
+        today = date.today()
+        removed: set[str] = set()
+
+        def _delete(row: dict) -> int:
+            key = row["source_key"]
+            if key in removed:
+                return 0
+            removed.add(key)
+            if row.get("caldav_uid") and self.caldav.configured():
+                try:
+                    self.caldav.delete(row["caldav_uid"])
+                except Exception as exc:
+                    logger.debug("Could not delete CalDAV event %s: %s", row["caldav_uid"], exc)
+            if row.get("google_event_id") and self.google.configured():
+                try:
+                    self.google.delete(row["google_event_id"])
+                except Exception as exc:
+                    logger.debug("Could not delete Google event %s: %s", row["google_event_id"], exc)
+            self.store.remove_event(key)
+            return 1
+
+        pruned = 0
+        # 1. Junk titles and long-past deadlines.
+        for row in known:
+            if _is_junk_title(row["title"]):
+                pruned += _delete(row)
+                continue
+            due_raw = str(row.get("due_date") or "")
+            try:
+                if due_raw and date.fromisoformat(due_raw[:10]) < today - timedelta(days=past_grace_days):
+                    pruned += _delete(row)
+            except ValueError:
+                pass
+
+        # 2. Residual duplicates: same normalized title with near dates.
+        groups: dict[str, list[dict]] = {}
+        for row in known:
+            if row["source_key"] in removed:
+                continue
+            groups.setdefault(_normalize_title_for_dedupe(row["title"]), []).append(row)
+
+        source_rank = {"canvas": 0, "google_classroom": 1, "canvas_pages": 2, "google_docs": 3, "notion": 4}
+
+        def _authority(row: dict) -> tuple[int, str]:
+            source = str(row["source_key"]).split(":", 1)[0]
+            return (source_rank.get(source, 9), str(row.get("due_date") or ""))
+
+        for group in groups.values():
+            if len(group) < 2:
+                continue
+            group.sort(key=_authority)
+            keep = group[0]
+            for row in group[1:]:
+                near = _dates_are_close(str(row.get("due_date") or ""), str(keep.get("due_date") or ""), max_days=3)
+                if near and _courses_compatible(str(keep.get("course") or ""), str(row.get("course") or "")):
+                    pruned += _delete(row)
         return pruned
 
     def get_all_events(self) -> list[dict]:

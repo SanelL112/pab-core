@@ -214,7 +214,10 @@ def _fetch_external_link_text(url: str, timeout: float = 6.0) -> str:
                     lambda m: chr(int(m.group(1), 16)),
                     decoded,
                 )
-                decoded = html.unescape(decoded)
+                # Slide payloads are sometimes double-encoded ("\u0026amp;#xa;");
+                # a single unescape leaves literal "&#x26;#xa;" fragments that
+                # then glue onto task titles as mojibake.
+                decoded = html.unescape(html.unescape(decoded))
                 matches = re.findall(r'\"Plans[^\"]+\"', decoded)
                 if matches:
                     return "\n".join(matches).replace("\\n", "\n")[:4000]
@@ -382,38 +385,52 @@ _MONTHS.update({name.lower(): i for i, name in enumerate(calendar.month_abbr) if
 
 
 def _clean_task_title(title: str, max_len: int = 55) -> str:
-    """Clean and summarize messy syllabus/agenda table rows into crisp calendar titles."""
+    """Clean and summarize messy syllabus/agenda table rows into crisp calendar titles.
+
+    Returns "" for rows that are not tasks (bare labels like "Due Today:",
+    section headers, day-of-week fragments) so callers can drop them instead
+    of polluting the calendar with non-assignments.
+    """
     if not title or not isinstance(title, str):
-        return "Assignment"
+        return ""
     
     t = title.strip()
+    # Strip leading emoji / decorative symbols and table pipes — page content
+    # arrives as "📋Success Criteria | ..." and the emoji defeats every
+    # anchored junk pattern downstream if left in place.
+    t = re.sub(r"^[^A-Za-z0-9(\"]+", "", t).strip()
     # Strip leading day of week & date prefixes (e.g. 'Wednesday / Thursday, 8/26 & 27 -', 'Friday 8/21 -', 'Week of Aug 24 |')
     t = re.sub(r"^(?:(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)[a-z/&, ]*\d{1,2}(?:[./-]\d{1,2})?\s*[-:—|]\s*)", "", t, flags=re.IGNORECASE)
     t = re.sub(r"^(?:Week\s+of\s+[A-Za-z0-9\s/-]+\s*[-:—|]\s*)", "", t, flags=re.IGNORECASE)
     t = re.sub(r"^(?:Day\s*\d+[A-Za-z0-9\s/-]*\s*[-:—|]\s*)", "", t, flags=re.IGNORECASE)
-    t = re.sub(r"^(?:Success\s+Criteria\s*[-:—|]\s*)", "", t, flags=re.IGNORECASE)
-    t = re.sub(r"^\d+\)\s*", "", t)  # Strip leading 1) or 2)
-    t = re.sub(r"^\d+\.\d+\s*", "", t) # Strip 0.1, 0.2
     
-    # Strip pipe table separators and trailing details
-    if "|" in t:
-        parts = [p.strip() for p in t.split("|") if p.strip()]
-        # Pick the most descriptive part (containing assignment/lab/quiz/report/homework keywords)
-        best = parts[0]
-        for p in parts:
-            if any(k in p.lower() for k in ["quiz", "test", "exam", "lab", "report", "homework", "due", "summative", "formative", "activity"]):
-                best = p
-                break
-        t = best
+    # "Label: remainder" header rows ("Next Week: Trial #2 Fermentation Lab")
+    # describe a real task after the label; keep the remainder, drop the label.
+    m = re.match(r"^([A-Za-z0-9][A-Za-z0-9/&.' ]{0,30}?)\s*[:|\-–—]\s*(.+)$", t)
+    if m and _JUNK_TITLE_RE.fullmatch(m.group(1).strip()):
+        t = m.group(2).strip()
 
     t = re.sub(r"^\d+\)\s*", "", t).strip()
     t = re.sub(r"\s+", " ", t).strip()
-    
+
+    # Multi-item agenda lines ("1) Finish lab 2) Review graphs") carry several
+    # tasks; keep only the first so the title stays a single actionable item.
+    t = re.split(r"\s+\d+\)\s*", t, maxsplit=1)[0].strip()
+
     # If title is still too long, truncate cleanly at word boundary
     if len(t) > max_len:
         t = t[:max_len].rsplit(" ", 1)[0].rstrip(" ,.-:")
-    
-    return t or "Class Assignment"
+
+    core = t.rstrip(":;-–—. ").strip()
+    if (
+        not core
+        or _JUNK_TITLE_RE.fullmatch(core)
+        or re.fullmatch(r"[\d\s./&-]+", core)
+        or _SENTENCE_OPENER_RE.match(core)
+        or re.search(r"&#|#[xX][0-9a-fA-F]{1,4};", core)
+    ):
+        return ""
+    return core
 
 
 def _valid_ymd(year: int, month: int, day: int) -> str | None:
@@ -486,6 +503,44 @@ _JUNK_PAGE_PATTERNS = (
     "discussion topic", "finish group review", "finish water properties",
     "macromolecule structure", "roly poly", "reflect on your notetaking",
     "getting familiar with", "getting to know", "advisement", "lesson 1.", "lesson 2."
+)
+
+# Titles that are schedule scaffolding rather than tasks: bare section
+# labels, weekday fragments, and generic headers. Anchored fullmatch so real
+# titles like "Unit 1 Quiz 1" or "LOR Quiz" are never dropped.
+_JUNK_TITLE_RE = re.compile(
+    r"""(?xi)
+    (?:
+        due(?:\s*(?:today|tomorrow|date|dates?|this\s+week))?
+        | homework(?:/other|/classwork)?
+        | classwork
+        | upcoming
+        | this\s*week
+        | next\s*week
+        | announcements?
+        | reminders?
+        | objectives?
+        | success\s+criteria
+        | agenda
+        | week(?:\s+of)?(?:\s+\w+){0,3}
+        | (?:unit\s+)?(?:formative|summative)\s+assessments?
+        | assessments?
+        | standards?
+        | materials?
+        | notes?
+        | day\s*\d+
+        | (?:mon|tue|wed|thu|fri|sat|sun)(?:day)?
+    )
+    """
+)
+
+# Sentence fragments are instructions, not calendar titles ("Each person must
+# submit an individual report for credit").
+_SENTENCE_OPENER_RE = re.compile(
+    r"^(?:each\s|you\s|your\s|please\b|make\s+sure\b|be\s+sure\b|if\s+you\b"
+    r"|students\s+(?:will|should|can)\b|we\s+will\b|click\s+here\b"
+    r"|use\s+this\b|this\s+link\b)",
+    re.IGNORECASE,
 )
 
 
@@ -582,13 +637,15 @@ def _heuristic_rule_extraction(text: str) -> list[dict]:
                 r"^(Homework|Quiz|Test)\s*[-:]\s*", "", cleaned, flags=re.IGNORECASE
             ).strip()
             if current_date and len(cleaned) > 3:
-                results.append(
-                    {
-                        "title": cleaned[:100],
-                        "due_date": current_date,
-                        "task_type": _normalize_task_type(line),
-                    }
-                )
+                title = _clean_task_title(cleaned)
+                if title:
+                    results.append(
+                        {
+                            "title": title,
+                            "due_date": current_date,
+                            "task_type": _normalize_task_type(line),
+                        }
+                    )
     return results
 
 
@@ -766,15 +823,27 @@ def _llm_extract(page_title: str, course_name: str, structured_text: str) -> lis
 
 # ── Decoration ───────────────────────────────────────────────────────────────
 def _decorate(items: list, course_id: str, course_name: str, page_url: str) -> list[dict]:
+    # Course names arrive from several crawl paths with cosmetic drift
+    # (trailing spaces, "- Lang" vs "- 276782 - Lang"). Normalizing here keeps
+    # the deterministic page-<hash> IDs stable across paths, which is what
+    # prevents the same task from minting duplicate calendar events.
+    course_name = str(course_name or "").strip()
     out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
     for item in items:
         if not isinstance(item, dict) or not item.get("title") or not item.get("due_date"):
             continue
         item = dict(item)
         title = _clean_task_title(item["title"])
+        if not title:
+            continue
+        due_d = item.get("due_date")
+        dedupe_key = (title.lower(), str(due_d))
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
         item["title"] = title
         item["course"] = course_name
-        due_d = item.get("due_date")
         id_str = f"{course_name}:{title}:{due_d}"
         if not item.get("id") or item.get("id").startswith("page-") or item.get("id").startswith("gen-"):
             item["id"] = f"page-{hashlib.md5(id_str.encode()).hexdigest()[:12]}"
