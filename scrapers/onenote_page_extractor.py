@@ -52,9 +52,9 @@ from scrapers.canvas_page_extractor import (  # noqa: E402
     _PER_CALL_TIMEOUT,
 )
 
-# Direct local multimodal endpoint (Ollama-native /api/generate with images).
-_VISION_URL = os.getenv("ONENOTE_VISION_URL", "http://127.0.0.1:11434/api/generate")
-_VISION_MODEL = os.getenv("ONENOTE_VISION_MODEL", "LFM2.5-VL")
+# Cluster multimodal endpoint: Surface llama-server (LFM2-VL) via Pi ip_forward.
+_VISION_URL = os.getenv("ONENOTE_VISION_URL", "http://10.42.0.1:8081")
+_VISION_MODEL = os.getenv("ONENOTE_VISION_MODEL", "LFM2-VL-1.6B")
 _VISION_TIMEOUT = float(os.getenv("ONENOTE_VISION_TIMEOUT_SECONDS", "45"))
 
 # Row band (px): text blocks whose ``top`` differs by less than this are treated
@@ -202,7 +202,11 @@ def detect_visual_content(html_body: str) -> dict[str, bool]:
 
 # ── Vision routing seam ─────────────────────────────────────────────────────────
 def _call_vision_llm(image_bytes: bytes, prompt: str, timeout: float) -> str:
-    """Send a rendered page snapshot to the local multimodal endpoint.
+    """Send a rendered page snapshot to the cluster's vision endpoint.
+
+    The Surface Pro runs llama-server with LFM2-VL-1.6B (+mmproj) on port
+    8081 (see the llama-vision user service); the Dell reaches it through the
+    Pi's ip_forward. OpenAI-compatible chat API with a base64 data URL.
 
     Network seam — unit tests monkeypatch this. Returns an empty string on any
     failure so the caller degrades gracefully to no tasks.
@@ -213,19 +217,37 @@ def _call_vision_llm(image_bytes: bytes, prompt: str, timeout: float) -> str:
 
     b64 = base64.b64encode(image_bytes).decode("ascii")
     payload = {
-        "model": _VISION_MODEL,
-        "prompt": prompt,
-        "images": [b64],
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64}"},
+                    },
+                ],
+            }
+        ],
+        "max_tokens": 512,
+        "temperature": 0.0,
         "stream": False,
-        "options": {"temperature": 0.0},
     }
     try:
-        resp = requests.post(_VISION_URL, json=payload, timeout=timeout)
+        resp = requests.post(
+            _VISION_URL.rstrip("/") + "/v1/chat/completions",
+            json=payload,
+            timeout=timeout,
+        )
         if resp.status_code != 200:
             logger.debug("Vision endpoint returned HTTP %s", resp.status_code)
             return ""
         data = resp.json()
-        text = data.get("response", "") if isinstance(data, dict) else ""
+        choices = data.get("choices") if isinstance(data, dict) else None
+        if not choices:
+            return ""
+        message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+        text = message.get("content", "") if isinstance(message, dict) else ""
         return text.strip() if isinstance(text, str) else ""
     except Exception as exc:
         logger.debug("Vision endpoint failed: %s", type(exc).__name__)
@@ -384,3 +406,4 @@ def extract_tasks_from_page(
 
     # 3. Nothing extractable.
     return []
+

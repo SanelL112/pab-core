@@ -433,17 +433,21 @@ def test_vision_llm_base64_encodes_image(monkeypatch):
     sent = {}
 
     def fake_post(url, json=None, timeout=None):
+        sent["url"] = url
         sent["payload"] = json
-        return FakeResponse(json_data={"response": "[]"})
+        return FakeResponse(json_data={"choices": [{"message": {"content": "[]"}}]})
 
     monkeypatch.setattr(requests, "post", fake_post)
     out = onenote_extractor._call_vision_llm(b"\x89PNG_BYTES", "prompt", 10.0)
     assert out == "[]"
+    assert sent["url"].endswith("/v1/chat/completions")
     payload = sent["payload"]
     assert payload is not None
-    assert payload["images"] == [base64.b64encode(b"\x89PNG_BYTES").decode("ascii")]
-    assert payload["model"] == onenote_extractor._VISION_MODEL
-    assert payload["options"]["temperature"] == 0.0
+    assert payload["temperature"] == 0.0
+    content = payload["messages"][0]["content"]
+    assert content[0] == {"type": "text", "text": "prompt"}
+    expected_b64 = base64.b64encode(b"\x89PNG_BYTES").decode("ascii")
+    assert content[1]["image_url"]["url"] == f"data:image/png;base64,{expected_b64}"
 
 
 def test_empty_page_returns_empty():

@@ -1010,10 +1010,12 @@ def call_local_rpc_result(**kwargs) -> InferenceResult:
     )
 
 
-# ── RPC (llama-server HTTP path — legacy) ───────────────────────────────────
-# Older path using llama-server HTTP API instead of direct llama-cli.
-# Kept for backward compatibility with overnight research tasks.
-LLAMACPP_RPC_URL = os.getenv("LLAMACPP_RPC_URL", "http://10.0.0.47:8080")
+# ── RPC (llama-server HTTP path) ────────────────────────────────────────────
+# Surface Pro runs llama-server (OpenAI-compatible) with LFM2.5-2.6B-Q8_0.
+# Network: Dell (10.10.10.1, wired) → Pi (10.10.10.2, end1) → Surface
+# (10.42.0.1, usb0 — reachable from the Dell via Pi ip_forward). The Pi also
+# runs ggml-rpc-server on :50052 as an RPC worker.
+LLAMACPP_RPC_URL = os.getenv("LLAMACPP_RPC_URL", "http://10.42.0.1:8080")
 RPC_MODEL_PATH = os.getenv(
     "RPC_MODEL_PATH",
     "/home/sanel/.ollama/models/blobs/sha256-*qwen2.5*7b*"
@@ -1085,6 +1087,13 @@ def call_llamacpp_rpc(
             message = choices[0].get("message", {})
             content = message.get("content", "") if isinstance(message, dict) else ""
             text = content.strip() if isinstance(content, str) else ""
+            if not text:
+                # Reasoning models (LFM2.5-2.6B) spend early tokens in
+                # reasoning_content before answering; a tight max_tokens can
+                # exhaust the budget there. Return the reasoning trace rather
+                # than failing — callers scanning for JSON still find the draft.
+                reasoning = message.get("reasoning_content", "") if isinstance(message, dict) else ""
+                text = reasoning.strip() if isinstance(reasoning, str) else ""
             if not text:
                 return ""
             duration = time.monotonic() - start
