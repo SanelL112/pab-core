@@ -334,8 +334,225 @@ class BrowserDaemon:
             logger.debug("M365 ClassLink app tile click failed", exc_info=True)
             return False
 
-    def crawl_onenote_web(self) -> dict[str, Any]:
-        """Navigate to Microsoft 365 via ClassLink SSO, then crawl OneNote notebooks."""
+    def _microsoft_sign_in(self) -> tuple[bool, str]:
+        """Complete the Microsoft sign-in form with stored school credentials.
+
+        The ClassLink SSO tile does not federate into M365 for this tenant, so
+        the first sign-in is a normal form flow: UPN (MICROSOFT_UPN) → ADFS →
+        school password (CLASSLINK_PASSWORD) → "Stay signed in". Returns
+        (success, detail).
+        """
+        assert self.client.driver is not None
+        driver = self.client.driver
+        upn = get_setting("MICROSOFT_UPN") or get_setting("CLASSLINK_USERNAME")
+        password = get_setting("CLASSLINK_PASSWORD")
+        if not upn or not password:
+            return False, "MICROSOFT_UPN/CLASSLINK_PASSWORD not configured"
+
+        def _wait_css(selector: str, timeout: float) -> Any | None:
+            from selenium.webdriver.support.ui import WebDriverWait
+
+            try:
+                return WebDriverWait(driver, timeout).until(
+                    lambda d: d.execute_script(
+                        "const el = document.querySelector(arguments[0]);"
+                        "return el ? el : null;",
+                        selector,
+                    )
+                )
+            except Exception:
+                return None
+
+        # 1. Click the "Sign in" affordance on the anonymous shell. When the
+        # crawl already landed mid-auth (pick-account / form), skip straight
+        # to the credential steps.
+        on_login_page = driver.execute_script(
+            "return location.host.includes('login.microsoftonline')"
+            " || location.host.includes('login.live');"
+        )
+        clicked = on_login_page
+        if not clicked:
+            clicked = driver.execute_script(
+                """
+                const candidates = Array.from(
+                    document.querySelectorAll('a, button, [role="button"]')
+                );
+                const norm = (el) => (el.innerText || el.getAttribute('aria-label') || '')
+                    .trim().toLowerCase();
+                const btn = candidates.find((el) => norm(el) === 'sign in')
+                    || candidates.find((el) => norm(el).includes('sign in'))
+                    || document.querySelector('a[href*="signin"], a[href*="login"]');
+                if (btn) { btn.click(); return true; }
+                return false;
+                """
+            )
+        if not clicked:
+            return False, "no Sign in button found"
+
+        # 2a. "Pick an account" — the profile remembers the school UPN; click
+        # its tile when present (skips the email form entirely). Uses a
+        # Selenium-native click: JS .click() on the row's inner nodes does not
+        # trigger the picker's event handlers.
+        picker_detail = "picker never appeared"
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            try:
+                tiles = driver.find_elements(
+                    "xpath",
+                    "//*[contains(translate(normalize-space(.), "
+                    "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), "
+                    "'" + upn.lower() + "')]",
+                )
+            except Exception:
+                tiles = []
+            if tiles:
+                try:
+                    tiles[-1].click()  # deepest match
+                    picker_detail = f"clicked {tiles[-1].tag_name}"
+                    break
+                except Exception as exc:
+                    picker_detail = f"click failed: {type(exc).__name__}"
+            elif driver.execute_script(
+                "return !!document.querySelector("
+                "\"input[type='email'], input[name='loginfmt'], input[type='password']\");"
+            ):
+                picker_detail = "form shown instead of picker"
+                break
+            time.sleep(1)
+
+        # 2b. UPN step (login.microsoftonline.com / login.live.com), when the
+        # picker did not short-circuit it.
+        email_input = _wait_css("input[type='email'], input[name='loginfmt']", 12)
+        if email_input:
+            email_input.clear()
+            email_input.send_keys(upn)
+            driver.execute_script(
+                """
+                const next = document.querySelector('input[type=submit], #idSIButton9')
+                    || Array.from(document.querySelectorAll('button'))
+                        .find((b) => (b.innerText || '').trim().toLowerCase() === 'next');
+                if (next) next.click();
+                """
+            )
+
+        # 2c. Settle: the session may already be valid (picker → straight to
+        # the app, no password), or the federated ADFS form appears — in the
+        # main document OR inside an iframe, so search frames before giving up.
+        def _find_password_input(timeout: float):
+            from selenium.webdriver.support.ui import WebDriverWait
+
+            def poll(_d):
+                try:
+                    return _d.find_element(
+                        "css selector",
+                        "input[type='password'], input[name='passwd'], #passwordInput",
+                    )
+                except Exception:
+                    pass
+                try:
+                    for frame in _d.find_elements("tag name", "iframe"):
+                        try:
+                            _d.switch_to.frame(frame)
+                            return _d.find_element(
+                                "css selector",
+                                "input[type='password'], input[name='passwd'], #passwordInput",
+                            )
+                        except Exception:
+                            _d.switch_to.default_content()
+                except Exception:
+                    pass
+                return None
+
+            try:
+                return WebDriverWait(driver, timeout).until(poll)
+            except Exception:
+                driver.switch_to.default_content()
+                return None
+
+        def _on_login_domain() -> bool:
+            try:
+                host = urlsplit(driver.current_url).netloc.lower()
+            except Exception:
+                return True
+            return "login.microsoftonline" in host or "login.live" in host
+
+        deadline = time.monotonic() + 45
+        password_input = None
+        while time.monotonic() < deadline:
+            if not _on_login_domain():
+                return True, "signed in (existing session, no password needed)"
+            password_input = _find_password_input(2)
+            if password_input is not None:
+                break
+            time.sleep(2)
+
+        if password_input is None:
+            if not _on_login_domain():
+                return True, "signed in (existing session, no password needed)"
+            driver.switch_to.default_content()
+            return False, f"password step did not appear (picker: {picker_detail})"
+        password_input.clear()
+        password_input.send_keys(password)
+        in_frame = False
+        try:
+            password_input.parent.switch_to.default_content()
+        except Exception:
+            pass
+        driver.switch_to.default_content()
+        driver.execute_script(
+            """
+            const go = document.querySelector(
+                'input[type=submit], #idSIButton9, #submitButton, span#submitButton'
+            ) || Array.from(document.querySelectorAll('button')).find(
+                (b) => ['sign in', 'next'].includes((b.innerText || '').trim().toLowerCase())
+            );
+            if (go) go.click();
+            """
+        )
+        # 4. "Stay signed in?" prompt — accept so the session persists.
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            time.sleep(2)
+            url = driver.current_url
+            if "login.microsoftonline" not in url and "login.live" not in url:
+                return True, "signed in"
+            driver.execute_script(
+                """
+                const kmsi = document.querySelector('#idSIButton9, #acceptButton')
+                    || Array.from(document.querySelectorAll('button')).find(
+                        (b) => (b.innerText || '').trim().toLowerCase() === 'yes'
+                    );
+                if (kmsi) kmsi.click();
+                """
+            )
+        return False, "sign-in did not settle (MFA prompt?)"
+
+    def open_tabs(self) -> list[dict[str, str]]:
+        """Return every open tab (title + URL) for SSO-chain diagnostics."""
+        assert self.client.driver is not None
+        driver = self.client.driver
+        current = driver.current_window_handle
+        tabs: list[dict[str, str]] = []
+        for handle in driver.window_handles:
+            try:
+                driver.switch_to.window(handle)
+                tabs.append({"title": driver.title[:80], "url": driver.current_url[:120]})
+            except Exception:
+                continue
+        try:
+            driver.switch_to.window(current)
+        except Exception:
+            pass
+        return tabs
+    def crawl_onenote_web(self, target: str = "https://onenote.cloud.microsoft/") -> dict[str, Any]:
+        """Reach OneNote through the ClassLink → M365 SSO chain.
+
+        Clicks the M365 tile, waits for the SSO redirect chain in the NEW tab
+        to settle (login.microsoftonline.com → app), then checks the sign-in
+        state before navigating. Navigating too early — or in the wrong tab —
+        lands on the anonymous marketing page, which is what the previous
+        fixed-sleep version did.
+        """
         with self.lock:
             assert self.client.driver is not None
             driver = self.client.driver
@@ -344,31 +561,82 @@ class BrowserDaemon:
             if not self._select_classlink_tab():
                 return {"status": "error", "message": "ClassLink tab not found"}
 
-            time.sleep(1)
-            # 2. Click M365 tile using pointer actions
+            # 2. Click the M365 tile; the helper switches into the new SSO tab.
             opened = self._open_m365_app_if_visible()
-            time.sleep(6)
+            if not opened:
+                return {"status": "error", "message": "M365 tile not found on LaunchPad"}
 
-            # 3. Navigate directly to OneNote Notebooks portal with active session
-            driver.get("https://www.onenote.com/notebooks")
+            # 3. Wait for the redirect chain to settle on an M365 app domain.
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline:
+                try:
+                    url = driver.current_url
+                except Exception:
+                    time.sleep(2)
+                    continue
+                host = urlsplit(url).netloc.lower()
+                if host and not any(
+                    fragment in host
+                    for fragment in ("login.microsoftonline", "login.live", "classlink", "adfs")
+                ):
+                    break
+                time.sleep(2)
+
+            time.sleep(3)  # let the app shell render past the redirect
+
+            # 4. Navigate to the target, THEN probe. The org M365 session
+            # (OneDrive/SharePoint) does not auto-apply to
+            # onenote.cloud.microsoft — its marketing shell still shows a
+            # "Sign in" button that must be clicked once; the click then SSOs
+            # silently through the existing session.
+            driver.get(target)
             time.sleep(8)
 
-            curr_url = driver.current_url
-            curr_title = driver.title
+            signed_in = driver.execute_script(
+                """
+                if (location.host.includes('login.microsoftonline')
+                    || location.host.includes('login.live')) {
+                    return false;  // mid-auth: picker or form page
+                }
+                const body = document.body.innerText || '';
+                const byText = body.toLowerCase().includes('sign in');
+                const byHref = !!document.querySelector(
+                    'a[href*="signin"], a[href*="login"], a[data-testid*="signin"]'
+                );
+                return !(byText || byHref);
+                """
+            )
+            if not signed_in:
+                # First-run: complete the Microsoft form with stored school
+                # credentials so the session persists in the profile.
+                signed_in, sign_in_detail = self._microsoft_sign_in()
+                if not signed_in:
+                    return {
+                        "status": "needs_manual_sign_in",
+                        "m365_tile_opened": True,
+                        "location": driver.current_url,
+                        "message": f"Automated M365 sign-in failed: {sign_in_detail}",
+                    }
+                # Sign-in completed: reload the target app shell.
+                time.sleep(5)
+                driver.get(target)
+                time.sleep(8)
 
             discovered = driver.execute_script(
                 """
-                return Array.from(document.querySelectorAll('a, button, [role="link"], .notebook-item, .ms-List-cell, [data-automationid="DetailsRowCell"]')).map(el => ({
+                return Array.from(document.querySelectorAll(
+                    'a, button, [role="link"], [role="option"], [data-automationid], [role="row"]'
+                )).map((el) => ({
                     title: (el.innerText || el.getAttribute('aria-label') || el.title || '').trim(),
                     url: el.href || ''
-                })).filter(n => n.title.length > 2 && (n.url.includes('onenote') || n.url.includes('sharepoint') || n.url.includes('office') || n.url.includes('microsoft')));
+                })).filter(n => n.title.length > 2);
                 """
             )
             return {
                 "status": "authenticated_and_navigated",
-                "m365_tile_opened": opened,
-                "location": curr_url,
-                "title": curr_title,
+                "m365_tile_opened": True,
+                "location": driver.current_url,
+                "title": driver.title,
                 "discovered": discovered[:25],
             }
 
@@ -386,7 +654,16 @@ class DaemonHandler(BaseHTTPRequestHandler):
             return
         if route.path == "/onenote/crawl":
             try:
-                res = self.server.daemon.crawl_onenote_web()
+                target = parse_qs(route.query).get("target", [""])[0]
+                if target and not urlsplit(target).netloc.lower().endswith(
+                    (".microsoft.com", ".cloud.microsoft", ".microsoft", ".office.com", ".onenote.com", ".sharepoint.com")
+                ):
+                    self._send(400, {"error": "target must be a Microsoft domain"})
+                    return
+                res = self.server.daemon.crawl_onenote_web(target=target or "https://onenote.cloud.microsoft/")
+                # Diagnostic: report every open tab so tab-mechanics bugs in
+                # the SSO chain are visible from the outside.
+                res["tabs"] = self.server.daemon.open_tabs()
                 self._send(200, res)
             except Exception as exc:
                 logger.exception("OneNote web crawl failed")
