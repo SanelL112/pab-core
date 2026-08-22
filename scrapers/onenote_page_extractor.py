@@ -367,6 +367,7 @@ def extract_tasks_from_page(
     profile = detect_visual_content(html_body)
 
     # 1. Text route — positioned/plain DOM text is present.
+    visual_page = bool(profile["has_ink"] or profile["has_images"])
     if profile["has_text"]:
         text = parse_spatial_layout(html_body)
         remaining = _budget_remaining()
@@ -391,10 +392,14 @@ def extract_tasks_from_page(
                 clean.append(
                     {"title": title, "due_date": iso, "task_type": _normalize_task_type(row.get("task_type"))}
                 )
-        return _decorate(clean, page_id, page_title, web_url)
+        if clean or not visual_page or render_snapshot is None:
+            return _decorate(clean, page_id, page_title, web_url)
+        # Text carried only a header; the real content is ink/images — let
+        # the vision route read the rendered page below.
 
-    # 2. Vision route — image-/ink-only page.
-    if profile["image_only"] and render_snapshot is not None:
+    # 2. Vision route — ink/image content (image-only pages, and text pages
+    # whose extraction came up empty while the page carries visuals).
+    if visual_page and render_snapshot is not None:
         try:
             snapshot = render_snapshot(page, html_body)
         except Exception as exc:
