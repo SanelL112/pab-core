@@ -33,6 +33,7 @@ from scrapers.canvas_scraper import (  # noqa: E402
     CanvasSessionError,
     CanvasSignInRequired,
 )
+import config  # noqa: E402
 from config import get_setting  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -298,9 +299,9 @@ class BrowserDaemon:
         """
         return driver.execute_script(
             """
-            const needles = arguments[0];
+            const needles = arguments[0].map((n) => n.toLowerCase());
             const exact = arguments[1];
-            const exclude = arguments[2] || [];
+            const exclude = (arguments[2] || []).map((n) => n.toLowerCase());
             const norm = (el) => [
                 el.innerText, el.textContent,
                 el.getAttribute && el.getAttribute('aria-label'),
@@ -793,6 +794,352 @@ class BrowserDaemon:
                 "path": trace,
             }
 
+    # ------------------------------------------------------------------
+    # OneNote content harvest
+
+    def harvest_onenote(self, notebooks: list[str] | None = None,
+                        max_pages: int = 40) -> dict[str, Any]:
+        """Walk notebooks → sections → pages in the web app and extract tasks.
+
+        Reaches the signed-in /notebooks view via crawl_onenote_web, then for
+        every notebook opens the SharePoint-hosted editor (inside iframe
+        #WebApplicationFrame), clicks each section and page, and feeds the
+        live page HTML to extract_tasks_from_page.  Ink pages are rendered
+        from the live editor (element screenshot) for the vision model.
+        Results are written to CACHE_DIR/onenote_page_extractions.json in the
+        same {page_key: [tasks]} shape the canvas cache uses, so
+        collect_assignments can pick them up.
+        """
+        import hashlib
+
+        from scrapers.onenote_page_extractor import extract_tasks_from_page
+
+        trace: list[str] = []
+        errors: list[str] = []
+
+        def note(msg: str) -> None:
+            trace.append(msg)
+            logger.info("OneNote harvest: %s", msg)
+
+        res = self.crawl_onenote_web()
+        if res.get("status") != "authenticated_and_navigated":
+            res["message"] = f"could not reach OneNote: {res.get('message', res.get('status'))}"
+            return res
+
+        with self.lock:
+            assert self.client.driver is not None
+            driver = self.client.driver
+            # Background threads (Canvas auto-reauth) may have switched tabs
+            # while the crawl held the lock; always re-select the OneNote tab.
+            self._return_to_notebook_list(driver)
+
+            if not notebooks:
+                notebooks = self._detect_notebooks(driver)
+            if not notebooks:
+                return {"status": "error", "message": "no notebooks detected", "path": trace}
+            note(f"notebooks: {notebooks}")
+
+            cache_data: dict[str, list[dict]] = {}
+            pages_scanned = 0
+            tasks_total = 0
+
+            for nb_name in notebooks:
+                if pages_scanned >= max_pages:
+                    note("page budget reached; stopping")
+                    break
+                try:
+                    stats = self._harvest_notebook(
+                        driver, nb_name, cache_data, trace, errors,
+                        extract_tasks_from_page,
+                        remaining=max_pages - pages_scanned,
+                    )
+                    pages_scanned += stats["pages"]
+                    tasks_total += stats["tasks"]
+                except Exception as exc:
+                    logger.exception("notebook %s failed", nb_name)
+                    errors.append(f"{nb_name}: {exc}")
+                    # Return to the notebook list for the next notebook.
+                    self._return_to_notebook_list(driver)
+
+            cache_path = config.CACHE_DIR / "onenote_page_extractions.json"
+            try:
+                config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(json.dumps(cache_data, indent=1), encoding="utf-8")
+            except OSError as exc:
+                errors.append(f"cache write failed: {exc}")
+
+            return {
+                "status": "ok" if tasks_total or pages_scanned else "empty",
+                "pages_scanned": pages_scanned,
+                "tasks_extracted": tasks_total,
+                "notebooks": notebooks,
+                "cache": str(cache_path),
+                "errors": errors,
+                "path": trace,
+            }
+
+    def _detect_notebooks(self, driver) -> list[str]:
+        """Notebook names from ONENOTE_NOTEBOOKS, else auto-detect tiles."""
+        configured = get_setting("ONENOTE_NOTEBOOKS", "")
+        if configured:
+            return [n.strip() for n in configured.split(",") if n.strip()]
+        return driver.execute_script(
+            """
+            const seen = new Set();
+            for (const el of document.querySelectorAll('div, a')) {
+                const t = (el.textContent || '').trim();
+                if (t.length < 5 || t.length > 70) continue;
+                if (!el.querySelector('img, svg')) continue;
+                if (el.querySelector('div, a')) {
+                    // keep only leafmost labelled cards
+                    const inner = Array.from(el.querySelectorAll('div, a'))
+                        .some((c) => { const ct=(c.textContent||'').trim();
+                                       return ct.length>=5 && ct.length<=70 && c.querySelector('img, svg'); });
+                    if (inner) continue;
+                }
+                seen.add(t);
+            }
+            return Array.from(seen);
+            """
+        ) or []
+
+    def _return_to_notebook_list(self, driver) -> bool:
+        """Switch to (or open) the OneNote notebooks list.
+
+        Closes stale SharePoint editor tabs left by earlier attempts first —
+        they self-close or get discarded and poison later handle switches.
+        """
+        driver.switch_to.default_content()
+        keep: list[tuple[str, str]] = []
+        for handle in list(driver.window_handles):
+            try:
+                driver.switch_to.window(handle)
+                url = driver.current_url.lower()
+            except Exception:
+                continue  # already discarded
+            if "sharepoint.com" in url:
+                try:
+                    driver.close()
+                except Exception:
+                    pass
+            else:
+                keep.append((handle, url))
+        for handle, url in keep:
+            try:
+                driver.switch_to.window(handle)
+            except Exception:
+                continue
+            if "onenote.cloud.microsoft/notebooks" in url:
+                return True
+        for handle, url in keep:
+            try:
+                driver.switch_to.window(handle)
+            except Exception:
+                continue
+            if "onenote.cloud.microsoft" in url:
+                driver.get("https://onenote.cloud.microsoft/notebooks")
+                time.sleep(5)
+                return True
+        return False
+    def _harvest_notebook(self, driver, nb_name: str, cache_data: dict,
+                          trace: list[str], errors: list[str],
+                          extract_fn, remaining: int) -> dict[str, int]:
+        """Open one notebook and harvest every section's pages."""
+        import hashlib
+
+
+        driver.switch_to.default_content()
+        if not self._return_to_notebook_list(driver):
+            raise RuntimeError("no onenote.cloud.microsoft tab available")
+        time.sleep(3)
+
+        # Click the notebook card: the deepest exact-text node carries the
+        # click handler.
+        clicked = None
+        for _ in range(6):
+            clicked = driver.execute_script(
+                """
+                const want = arguments[0].toLowerCase();
+                const cands = Array.from(document.querySelectorAll('div, a'))
+                    .filter((el) => (el.textContent || '').trim().toLowerCase() === want);
+                if (!cands.length) return false;
+                cands[cands.length - 1].click();
+                return true;
+                """,
+                nb_name,
+            )
+            if clicked:
+                break
+            time.sleep(2)
+        if not clicked:
+            raise RuntimeError(f"notebook tile not found (at {driver.current_url[:80]})")
+
+        # Wait for the editor tab. OneNote may open a NEW tab or focus an
+        # existing one (singleton per notebook), so scan every handle by URL
+        # and title instead of only watching for fresh handles.
+        deadline = time.monotonic() + 75
+        found_editor = False
+        while time.monotonic() < deadline and not found_editor:
+            for handle in driver.window_handles:
+                try:
+                    driver.switch_to.window(handle)
+                    url = driver.current_url.lower()
+                    title = (driver.title or "").lower()
+                except Exception:
+                    continue
+                if ("sharepoint.com" in url and "doc.aspx" in url) or nb_name.lower() in title:
+                    found_editor = True
+                    break
+            if not found_editor:
+                time.sleep(2)
+        if not found_editor:
+            raise RuntimeError("editor tab never opened")
+
+        driver.switch_to.default_content()
+        frame_el = None
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and frame_el is None:
+            try:
+                frame_el = driver.find_element("id", "WebApplicationFrame")
+            except Exception:
+                time.sleep(2)
+        if frame_el is None:
+            raise RuntimeError("WebApplicationFrame never appeared")
+        driver.switch_to.frame(frame_el)
+
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if driver.execute_script("return document.querySelectorAll('.sectionListItem').length;"):
+                break
+            time.sleep(2)
+
+        sections = driver.execute_script(
+            "return Array.from(document.querySelectorAll('.sectionListItem'))"
+            ".map(e => (e.innerText||'').trim()).filter(t => t.length > 1);"
+        ) or []
+        trace.append(f"{nb_name}: sections {sections}")
+
+        pages_done = 0
+        tasks_done = 0
+
+        def _snapshot(_page, _html):
+            panel = driver.find_element("css selector", "#WACViewPanel")
+            return panel.screenshot_as_png
+
+        for sec in sections:
+            if pages_done >= remaining:
+                break
+            try:
+                sec_el = driver.execute_script(
+                    """
+                    const want = arguments[0];
+                    const els = Array.from(document.querySelectorAll('.sectionListItem'));
+                    const hit = els.find(e => (e.innerText||'').trim() === want);
+                    if (hit) { hit.click(); return true; }
+                    return false;
+                    """,
+                    sec,
+                )
+                if not sec_el:
+                    errors.append(f"{nb_name}/{sec}: section click failed")
+                    continue
+                time.sleep(3)
+
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    if driver.execute_script("return document.querySelectorAll('.pageListItem').length;"):
+                        break
+                    time.sleep(2)
+
+                pages = driver.execute_script(
+                    "return Array.from(document.querySelectorAll('.pageListItem'))"
+                    ".map(e => (e.innerText||'').trim()).filter(t => t.length > 0);"
+                ) or []
+
+                for pg in pages:
+                    if pages_done >= remaining:
+                        break
+                    try:
+                        hit = driver.execute_script(
+                            """
+                            const want = arguments[0];
+                            const els = Array.from(document.querySelectorAll('.pageListItem'));
+                            const p = els.find(e => (e.innerText||'').trim() === want);
+                            if (p) { p.click(); return true; }
+                            return false;
+                            """,
+                            pg,
+                        )
+                        if not hit:
+                            continue
+                        time.sleep(3)  # let the page canvas render
+                        html = driver.execute_script(
+                            "const p = document.querySelector('#WACViewPanel');"
+                            "return p ? p.outerHTML : '';"
+                        )
+                        if not html:
+                            continue
+                        page_id = hashlib.md5(f"{nb_name}|{sec}|{pg}".encode()).hexdigest()[:12]
+                        page_meta = {"id": page_id, "title": pg, "links": {}}
+                        tasks = extract_fn(page_meta, html, render_snapshot=_snapshot)
+                        for t in tasks:
+                            t["course"] = nb_name
+                        cache_data[f"{nb_name}/{sec}/{pg}"] = tasks
+                        pages_done += 1
+                        tasks_done += len(tasks)
+                        trace.append(f"  {nb_name}/{sec}/{pg}: {len(tasks)} tasks")
+                    except Exception as exc:
+                        errors.append(f"{nb_name}/{sec}/{pg}: {exc}")
+            except Exception as exc:
+                errors.append(f"{nb_name}/{sec}: {exc}")
+
+        # Close the editor tab and go back to the list for the next notebook.
+        driver.switch_to.default_content()
+        driver.close()
+        self._return_to_notebook_list(driver)
+        trace.append(f"{nb_name}: {pages_done} pages, {tasks_done} tasks")
+        return {"pages": pages_done, "tasks": tasks_done}
+
+    def run_js(self, expr: str, tab: str = "", frame: str = ""):
+        """Run JS in a tab (diagnostics only); ``tab`` matches URL/title."""
+        with self.lock:
+            assert self.client.driver is not None
+            driver = self.client.driver
+            if tab:
+                found = False
+                for handle in driver.window_handles:
+                    driver.switch_to.window(handle)
+                    if tab.lower() in driver.current_url.lower() or tab.lower() in driver.title.lower():
+                        found = True
+                        break
+                if not found:
+                    raise LookupError(f"no tab matching {tab!r}")
+            if frame:
+                def _find_frame(d, fid, depth=0):
+                    try:
+                        for f in d.find_elements("tag name", "iframe"):
+                            if (f.get_attribute("id") or "") == fid or (f.get_attribute("name") or "") == fid:
+                                d.switch_to.frame(f)
+                                return True
+                            try:
+                                d.switch_to.frame(f)
+                            except Exception:
+                                continue
+                            if depth < 3 and _find_frame(d, fid, depth + 1):
+                                return True
+                            d.switch_to.default_content()
+                            # restore outer chain on failure
+                    except Exception:
+                        pass
+                    return False
+
+                driver.switch_to.default_content()
+                if not _find_frame(driver, frame):
+                    raise LookupError(f"no iframe matching {frame!r}")
+            else:
+                driver.switch_to.default_content()
+            return driver.execute_script(expr)
+
     def close(self) -> None:
         self.client.close()
 
@@ -804,6 +1151,22 @@ class DaemonHandler(BaseHTTPRequestHandler):
         route = urlsplit(self.path)
         if route.path == "/health":
             self._send(200, self.server.daemon.health())
+            return
+        if route.path == "/js":
+            # Localhost-only diagnostic: run JS in the active tab to explore
+            # SPA DOM (OneNote editor structure) during crawler development.
+            try:
+                expr = parse_qs(route.query).get("expr", [""])[0]
+                tab = parse_qs(route.query).get("tab", [""])[0]
+                frame = parse_qs(route.query).get("frame", [""])[0]
+                if not expr:
+                    self._send(400, {"error": "expr required"})
+                    return
+                res = self.server.daemon.run_js(expr, tab=tab, frame=frame)
+                self._send(200, {"result": repr(res)[:4000]})
+            except Exception as exc:
+                logger.exception("JS debug failed")
+                self._send(500, {"error": str(exc)})
             return
         if route.path == "/onenote/crawl":
             try:
@@ -820,6 +1183,17 @@ class DaemonHandler(BaseHTTPRequestHandler):
                 self._send(200, res)
             except Exception as exc:
                 logger.exception("OneNote web crawl failed")
+                self._send(500, {"error": str(exc)})
+            return
+        if route.path == "/onenote/harvest":
+            try:
+                qs = parse_qs(route.query)
+                notebooks = [n for n in qs.get("notebooks", [""])[0].split(",") if n.strip()] or None
+                max_pages = int(qs.get("max_pages", ["40"])[0])
+                res = self.server.daemon.harvest_onenote(notebooks=notebooks, max_pages=max_pages)
+                self._send(200, res)
+            except Exception as exc:
+                logger.exception("OneNote harvest failed")
                 self._send(500, {"error": str(exc)})
             return
         if route.path == "/apps":
