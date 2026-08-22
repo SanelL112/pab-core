@@ -906,7 +906,7 @@ def call_local_rpc(
 
     surface_timeout = min(remaining(), 10.0)
 
-    logger.info("call_local_rpc: trying Surface orchestrator API (10.0.0.47:8080)")
+    logger.info("call_local_rpc: trying Surface orchestrator API (%s)", LLAMACPP_RPC_URL)
     result = ""
     if surface_timeout > 0:
         result = call_llamacpp_rpc(
