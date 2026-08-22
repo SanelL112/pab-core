@@ -1219,6 +1219,18 @@ class BrowserDaemon:
                 driver.switch_to.default_content()
             return driver.execute_script(expr)
 
+    def screenshot(self, tab: str = "", frame: str = "",
+                   selector: str = "") -> bytes:
+        """PNG of a page element (or the viewport) — diagnostics."""
+        with self.lock:
+            assert self.client.driver is not None
+            driver = self.client.driver
+            self.run_js("return true;", tab=tab, frame=frame)
+            if selector:
+                el = driver.find_element("css selector", selector)
+                return el.screenshot_as_png
+            return driver.get_screenshot_as_png()
+
     def close(self) -> None:
         self.client.close()
 
@@ -1273,6 +1285,19 @@ class DaemonHandler(BaseHTTPRequestHandler):
                 self._send(200, res)
             except Exception as exc:
                 logger.exception("OneNote harvest failed")
+                self._send(500, {"error": str(exc)})
+            return
+        if route.path == "/screenshot":
+            try:
+                qs = parse_qs(route.query)
+                png = self.server.daemon.screenshot(
+                    tab=qs.get("tab", [""])[0],
+                    frame=qs.get("frame", [""])[0],
+                    selector=qs.get("selector", [""])[0],
+                )
+                self._send(200, {"png_b64": base64.b64encode(png).decode()})
+            except Exception as exc:
+                logger.exception("Screenshot failed")
                 self._send(500, {"error": str(exc)})
             return
         if route.path == "/apps":

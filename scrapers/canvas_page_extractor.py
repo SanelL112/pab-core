@@ -209,33 +209,40 @@ def _fetch_external_link_text(url: str, timeout: float = 6.0) -> str:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw_html = resp.read().decode("utf-8", errors="ignore")
                 decoded = raw_html.replace("\\n", "\n").replace("\\t", "\t")
+                # Payload strings are JS-escaped: "\u00e9" unicode and "\x22"
+                # hex forms both appear (aria-label\x3d\x22Plans\x26#xa;...\x22).
                 decoded = re.sub(
                     r"\\u([0-9a-fA-F]{4})",
                     lambda m: chr(int(m.group(1), 16)),
                     decoded,
                 )
-                # Slide payloads are sometimes double-encoded ("\u0026amp;#xa;");
+                decoded = re.sub(
+                    r"\\x([0-9a-fA-F]{2})",
+                    lambda m: chr(int(m.group(1), 16)),
+                    decoded,
+                )
+                # Payloads are sometimes double-encoded ("\u0026amp;#xa;");
                 # a single unescape leaves literal "&#x26;#xa;" fragments that
                 # then glue onto task titles as mojibake.
                 decoded = html.unescape(html.unescape(decoded))
+
+                # Slide text lives in SVG accessibility labels — one
+                # aria-label per slide on role="img" groups. This is the only
+                # place published decks expose their text; the old
+                # '"Plans..."' quoted-string shape is gone.
+                labels = re.findall(r'aria-label="([^"]{15,})"', decoded)
+                slide_text = "\n".join(
+                    lbl.replace("\\n", "\n").strip()
+                    for lbl in labels
+                    if re.search(r"[A-Za-z]{3}", lbl)
+                )
+                if slide_text.strip():
+                    return slide_text[:6000]
+
+                # Legacy fallback: quoted "Plans..." strings in older payloads.
                 matches = re.findall(r'\"Plans[^\"]+\"', decoded)
                 if matches:
                     return "\n".join(matches).replace("\\n", "\n")[:4000]
-                tokens = re.findall(r'[\w\s.,;:!?\(\)/\'\"#\-]{4,}', decoded)
-                meaningful = [
-                    t.strip()
-                    for t in tokens
-                    if any(
-                        k in t.lower()
-                        for k in [
-                            "quiz", "test", "exam", "homework", "u1q", "due",
-                            "monday", "tuesday", "wednesday", "thursday", "friday",
-                            "plans", "upcoming",
-                        ]
-                    )
-                ]
-                if meaningful:
-                    return "\n".join(meaningful[:35])
         except Exception as e:
             logger.debug("Failed to fetch published Google Slide %s: %s", pub_url, e)
             return ""
@@ -427,6 +434,7 @@ def _clean_task_title(title: str, max_len: int = 55) -> str:
         or _JUNK_TITLE_RE.fullmatch(core)
         or re.fullmatch(r"[\d\s./&-]+", core)
         or _SENTENCE_OPENER_RE.match(core)
+        or _DATE_HEADER_RE.fullmatch(core)
         or re.search(r"&#|#[xX][0-9a-fA-F]{1,4};", core)
     ):
         return ""
@@ -532,6 +540,14 @@ _JUNK_TITLE_RE = re.compile(
         | (?:mon|tue|wed|thu|fri|sat|sun)(?:day)?
     )
     """
+)
+
+# Week-range headers from agenda tables ("Aug 17 - Aug 21", "Aug 6") are
+# dates, not tasks.
+_DATE_HEADER_RE = re.compile(
+    r"^(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*\.?\s*"
+    r"\d{0,2}(?:\s*[-–/&]|to\s)*\s*)+$",
+    re.IGNORECASE,
 )
 
 # Sentence fragments are instructions, not calendar titles ("Each person must

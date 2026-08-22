@@ -314,6 +314,7 @@ class OneNoteClient:
             raise OneNoteRequestError(f"Graph returned non-JSON for {path_or_url}") from exc
         return data if isinstance(data, dict) else {}
 
+
     # ── Page listing ──────────────────────────────────────────────────────────
     def list_pages(
         self,
