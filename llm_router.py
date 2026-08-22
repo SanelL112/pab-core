@@ -904,7 +904,7 @@ def call_local_rpc(
     # starve the Pi/Dell fallbacks below (see config.RPC_SURFACE_TIMEOUT).
     from config import RPC_SURFACE_TIMEOUT
 
-    surface_timeout = min(remaining(), 10.0)
+    surface_timeout = min(remaining(), float(RPC_SURFACE_TIMEOUT))
 
     logger.info("call_local_rpc: trying Surface orchestrator API (%s)", LLAMACPP_RPC_URL)
     result = ""
