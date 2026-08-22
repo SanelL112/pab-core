@@ -64,6 +64,36 @@ _ROW_BAND_PX = int(os.getenv("ONENOTE_ROW_BAND_PX", "12"))
 # Minimum characters of recovered text before we trust the DOM over vision.
 _MIN_TEXT_CHARS = int(os.getenv("ONENOTE_MIN_TEXT_CHARS", "8"))
 
+# OneNote renders a creation-date header on every page ("Wednesday, July 29,
+# 2026 12:01 PM").  Small local models read it as a deadline no matter what
+# the prompt says, so extracted rows dated exactly on a page-header date are
+_HEADER_DATE_RE = re.compile(
+    r"(?:(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day,\s*)?"
+    r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|"
+    r"Dec(?:ember)?)\s+(\d{1,2}),?\s+(20\d{2})"
+)
+_MONTHS = {m: i + 1 for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"])}
+
+
+def _page_header_dates(html_body: str) -> set[str]:
+    """ISO dates (YYYY-MM-DD) displayed as page headers on this page."""
+    out: set[str] = set()
+    if not html_body:
+        return out
+    for m in _HEADER_DATE_RE.finditer(html_body):
+        mon = _MONTHS.get(m.group(1)[:3].lower())
+        if not mon:
+            continue
+        try:
+            out.add(f"{int(m.group(3)):04d}-{mon:02d}-{int(m.group(2)):02d}")
+        except ValueError:
+            continue
+    return out
+
+
 
 # ── Coordinate parsing ────────────────────────────────────────────────────────
 _POS_RE = re.compile(r"position\s*:\s*absolute", re.IGNORECASE)
@@ -375,6 +405,15 @@ def extract_tasks_from_page(
 
     # 1. Text route — positioned/plain DOM text is present.
     visual_page = bool(profile["has_ink"] or profile["has_images"])
+    header_dates = _page_header_dates(html_body)
+
+    def _drop_header_dated(rows: list[dict]) -> list[dict]:
+        if not header_dates or not rows:
+            return rows
+        dropped = [r for r in rows if str(r.get("due_date") or "")[:10] in header_dates]
+        if dropped:
+            logger.debug("Dropped %d rows using the page-header date as due_date", len(dropped))
+        return [r for r in rows if str(r.get("due_date") or "")[:10] not in header_dates]
     if profile["has_text"]:
         text = parse_spatial_layout(html_body)
         remaining = _budget_remaining()
@@ -384,7 +423,7 @@ def extract_tasks_from_page(
                 _TEXT_SYSTEM_PROMPT,
                 min(_PER_CALL_TIMEOUT, remaining),
             )
-            rows = _rows_from_raw(raw)
+            rows = _drop_header_dated(_rows_from_raw(raw))
             if rows:
                 return _decorate(rows, page_id, page_title, web_url)
         # Fall back to the shared deterministic heuristic on the sorted text.
@@ -399,6 +438,7 @@ def extract_tasks_from_page(
                 clean.append(
                     {"title": title, "due_date": iso, "task_type": _normalize_task_type(row.get("task_type"))}
                 )
+        clean = _drop_header_dated(clean)
         if clean or not visual_page or render_snapshot is None:
             return _decorate(clean, page_id, page_title, web_url)
         # Text carried only a header; the real content is ink/images — let
@@ -413,7 +453,7 @@ def extract_tasks_from_page(
             logger.debug("Snapshot render failed for %s: %s", page_id, exc)
             snapshot = b""
         raw = _call_vision_llm(snapshot, _VISION_PROMPT, _VISION_TIMEOUT)
-        rows = _rows_from_raw(raw)
+        rows = _drop_header_dated(_rows_from_raw(raw))
         return _decorate(rows, page_id, page_title, web_url)
 
     # 3. Nothing extractable.

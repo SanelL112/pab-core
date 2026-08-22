@@ -46,3 +46,40 @@ def test_text_success_still_skips_vision(monkeypatch):
 
     rows = ope.extract_tasks_from_page(_make_page(), html, render_snapshot=lambda p, h: b"X")
     assert len(rows) == 1 and rows[0]["title"] == "HW"
+
+
+def test_header_date_rows_are_dropped():
+    """Rows dated exactly on the page's creation header must be dropped —
+    small models read that header as a deadline regardless of prompt."""
+    html = (
+        "<div>Wednesday, July 29, 2026 12:01 PM</div>"
+        '<div style="position:absolute;top:40px;left:20px">Unit 1 Notes Packet</div>'
+        "<img src='x.png'>"
+    )
+    monkeypatched_vision = json.dumps([
+        {"title": "Fake from header", "due_date": "2026-07-29", "task_type": "Reading"},
+        {"title": "Real quiz", "due_date": "2026-09-02", "task_type": "Quiz"},
+    ])
+    from scrapers import onenote_page_extractor as ope
+    ope._call_local_llm = lambda *a: "[]"  # not used: no text route rows
+    rows = ope.extract_tasks_from_page(
+        {"id": "p", "title": "T", "links": {}}, html,
+        render_snapshot=lambda p, h: b"PNG",
+    ) if False else None
+    # call through the vision path directly with monkeypatch
+    import unittest.mock as mock
+    with mock.patch.object(ope, "_call_local_llm", return_value="[]"), \
+         mock.patch.object(ope, "_call_vision_llm", return_value=monkeypatched_vision):
+        rows = ope.extract_tasks_from_page(
+            {"id": "p", "title": "T", "links": {}}, html,
+            render_snapshot=lambda p, h: b"PNG",
+        )
+    titles = [r["title"] for r in rows]
+    assert "Fake from header" not in titles
+    assert "Real quiz" in titles
+
+
+def test_header_date_detector():
+    from scrapers.onenote_page_extractor import _page_header_dates
+    h = "<div>Wednesday, July 29, 2026 12:01 PM</div><p>due Friday, September 2, 2026</p>"
+    assert _page_header_dates(h) == {"2026-07-29", "2026-09-02"}
