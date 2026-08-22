@@ -258,6 +258,10 @@ _VISION_PROMPT = (
     "This is a snapshot of a student's handwritten or image-only OneNote page. "
     "Read all visible text, including handwriting, and extract any tests, quizzes, "
     "readings, homework, or projects with their due dates. "
+    "IMPORTANT: OneNote pages show a creation-date header (e.g. 'Wednesday, July 29, "
+    "2026 12:01 PM') — that is when the page was written, NOT a deadline. Never use "
+    "it. Only give an item a due_date when the content explicitly ties a date to it "
+    "(e.g. 'due Friday 9/2', 'Test Sept 5'); otherwise omit the item entirely. "
     "Respond ONLY with a valid JSON array of objects with keys "
     '"title", "due_date" (YYYY-MM-DD), and "task_type" '
     "(one of Test, Project, Reading, Assignment). If none, output []."
@@ -274,6 +278,9 @@ def _text_prompt(page_title: str, text: str) -> str:
     return f"""You are helping a student organize their calendar.
 Below is text read from a OneNote page titled '{page_title}', already sorted into natural reading order.
 Extract any upcoming tests, quizzes, readings, homework, or projects with their due dates.
+IMPORTANT: OneNote pages carry a creation-date header — never treat it as a deadline. Only assign
+due_date when the content explicitly ties a date to an item (e.g. 'due Friday 9/2', 'Test Sept 5');
+otherwise omit the item.
 Assume the current year is {_ASSUMED_YEAR}.
 Respond ONLY with valid JSON in this exact format (no markdown, no extra text):
 [
