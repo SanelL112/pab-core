@@ -55,7 +55,7 @@ from scrapers.canvas_page_extractor import (  # noqa: E402
 # Cluster multimodal endpoint: Surface llama-server (LFM2-VL) via Pi ip_forward.
 _VISION_URL = os.getenv("ONENOTE_VISION_URL", "http://10.42.0.1:8081")
 _VISION_MODEL = os.getenv("ONENOTE_VISION_MODEL", "LFM2-VL-1.6B")
-_VISION_TIMEOUT = float(os.getenv("ONENOTE_VISION_TIMEOUT_SECONDS", "45"))
+_VISION_TIMEOUT = float(os.getenv("ONENOTE_VISION_TIMEOUT_SECONDS", "300"))
 
 # Row band (px): text blocks whose ``top`` differs by less than this are treated
 # as the same visual line and ordered by ``left``.
