@@ -655,7 +655,11 @@ def _is_junk_title(title: str) -> bool:
     # payloads are decode artifacts, not titles.
     if re.search(r"&#|#[xX][0-9a-fA-F]{1,4};", core):
         return True
-    return bool(_JUNK_TITLE_RE.fullmatch(core) or _SENTENCE_OPENER_RE.match(core))
+    return bool(
+        _JUNK_TITLE_RE.fullmatch(core)
+        or _SENTENCE_OPENER_RE.match(core)
+        or _DATE_HEADER_RE.fullmatch(core)
+    )
 
 
 _JUNK_TITLE_RE = re.compile(
@@ -689,6 +693,13 @@ _SENTENCE_OPENER_RE = re.compile(
     r"^(?:each\s|you\s|your\s|please\b|make\s+sure\b|be\s+sure\b|if\s+you\b"
     r"|students\s+(?:will|should|can)\b|we\s+will\b|click\s+here\b"
     r"|use\s+this\b|this\s+link\b)",
+    re.IGNORECASE,
+)
+
+
+_DATE_HEADER_RE = re.compile(
+    r"^(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*\.?\s*"
+    r"\d{0,2}(?:\s*[-–/&]|to\s)*\s*)+$",
     re.IGNORECASE,
 )
 
@@ -875,10 +886,58 @@ def collect_assignments(use_composio: bool | None = None) -> list[Assignment]:
                 res.append(t)
         return res
 
+    def _load_cached_onenote_extractions():
+        """OneNote web-app harvest (daemon writes the same {page: [tasks]}
+        shape).  Teacher-posted notebook content: not official, keeps its
+        own course label (the notebook name)."""
+        from scrapers.canvas_page_extractor import _clean_task_title
+        cache_file = config.CACHE_DIR / "onenote_page_extractions.json"
+        if not cache_file.exists():
+            return []
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return []
+        today = date.today()
+        res: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for page_key, tasks in data.items():
+            if not isinstance(tasks, list):
+                continue
+            for item in tasks:
+                if not isinstance(item, dict):
+                    continue
+                title = _clean_task_title(str(item.get("title") or ""))
+                due = str(item.get("due_date") or "")[:10]
+                if not title or not due or _is_junk_title(title):
+                    continue
+                try:
+                    if date.fromisoformat(due) < today - timedelta(days=7):
+                        continue
+                except ValueError:
+                    continue
+                dedupe = (title.lower(), due)
+                if dedupe in seen:
+                    continue
+                seen.add(dedupe)
+                t = dict(item)
+                t["official"] = False
+                t["source"] = "onenote"
+                if not t.get("id"):
+                    key_str = f"{page_key}:{title}:{due}"
+                    t["id"] = f"onenote-{hashlib.md5(key_str.encode()).hexdigest()[:12]}"
+                if not t.get("course"):
+                    t["course"] = "OneNote Notebook"
+                res.append(t)
+        return res
+
+
     candidates: list[Assignment] = []
     for source, loader in (
         ("canvas", canvas_assignments),
         ("canvas_pages", _load_cached_canvas_extractions),
+        ("onenote_pages", _load_cached_onenote_extractions),
         ("google_classroom", classroom_assignments),
         ("google_docs", lambda: google_docs_assignments(use_composio=use_composio)),
         ("notion", get_calendar_tasks),

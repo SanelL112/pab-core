@@ -830,8 +830,10 @@ class BrowserDaemon:
             assert self.client.driver is not None
             driver = self.client.driver
             # Background threads (Canvas auto-reauth) may have switched tabs
-            # while the crawl held the lock; always re-select the OneNote tab.
-            self._return_to_notebook_list(driver)
+            # while the crawl held the lock; always re-guarantee the grid.
+            if not self._ensure_notebooks_view(driver):
+                return {"status": "needs_manual_sign_in",
+                        "message": "could not reach authenticated notebooks grid"}
 
             if not notebooks:
                 notebooks = self._detect_notebooks(driver)
@@ -847,19 +849,45 @@ class BrowserDaemon:
                 if pages_scanned >= max_pages:
                     note("page budget reached; stopping")
                     break
-                try:
-                    stats = self._harvest_notebook(
-                        driver, nb_name, cache_data, trace, errors,
-                        extract_tasks_from_page,
-                        remaining=max_pages - pages_scanned,
-                    )
-                    pages_scanned += stats["pages"]
-                    tasks_total += stats["tasks"]
-                except Exception as exc:
-                    logger.exception("notebook %s failed", nb_name)
-                    errors.append(f"{nb_name}: {exc}")
-                    # Return to the notebook list for the next notebook.
-                    self._return_to_notebook_list(driver)
+                for attempt in range(3):
+                    cached_before = sum(len(v) for v in cache_data.values())
+                    try:
+                        stats = self._harvest_notebook(
+                            driver, nb_name, cache_data, trace, errors,
+                            extract_tasks_from_page,
+                            remaining=max_pages - pages_scanned,
+                        )
+                        pages_scanned += stats["pages"]
+                        tasks_total += stats["tasks"]
+                        break
+                    except Exception as exc:
+                        # Pages harvested before the failure are already in
+                        # cache_data — keep them instead of losing the walk.
+                        gained = sum(len(v) for v in cache_data.values()) - cached_before
+                        if gained > 0:
+                            logger.warning("notebook %s partially harvested: %d tasks kept (%s)",
+                                           nb_name, gained, exc)
+                            errors.append(f"{nb_name}: partial, kept {gained} tasks ({exc})")
+                            tasks_total += gained
+                            break
+                    except Exception as exc:
+                        msg = str(exc).lower()
+                        transient = (
+                            "discarded" in msg
+                            or "nosuchwindow" in msg
+                            or "no such window" in msg
+                            or "already closed" in msg
+                        )
+                        logger.exception("notebook %s failed (attempt %d)", nb_name, attempt + 1)
+                        errors.append(f"{nb_name} (attempt {attempt + 1}): {exc}")
+                        # Recover the grid, then retry — Firefox discards
+                        # tabs nondeterministically under session churn.
+                        try:
+                            self._ensure_notebooks_view(driver)
+                        except Exception:
+                            pass
+                        if not transient or attempt == 2:
+                            break
 
             cache_path = config.CACHE_DIR / "onenote_page_extractions.json"
             try:
@@ -903,11 +931,36 @@ class BrowserDaemon:
             """
         ) or []
 
-    def _return_to_notebook_list(self, driver) -> bool:
-        """Switch to (or open) the OneNote notebooks list.
+    def _authenticated_grid(self, driver) -> bool:
+        """True when the active tab shows a usable notebooks grid.
 
-        Closes stale SharePoint editor tabs left by earlier attempts first —
-        they self-close or get discarded and poison later handle switches.
+        The signed-in shell still contains stray "Sign in" strings (header
+        overflow), so text-probing for them is unreliable; the configured
+        notebook names are the strongest signal, with marketing-page
+        markers as the negative check.
+        """
+        try:
+            url = driver.current_url.lower()
+            body = (driver.execute_script(
+                "return document.body ? document.body.innerText : '';") or "").lower()
+        except Exception:
+            return False
+        if "onenote.cloud.microsoft" not in url:
+            return False
+        names = [n.strip().lower() for n in (get_setting("ONENOTE_NOTEBOOKS", "") or "").split(",") if n.strip()]
+        if names:
+            return any(n in body for n in names)
+        return ("all notebooks" in body or "recent" in body) and "see plans & pricing" not in body
+
+    def _ensure_notebooks_view(self, driver) -> bool:
+        """Guarantee the active tab sits on an AUTHENTICATED /notebooks grid.
+
+        A cold navigation to /notebooks can land on the anonymous marketing
+        shell (the app reports APPHOME-WEB.UNAUTH); clicking its "Sign in"
+        then SSOs silently through the org session.  So never trust the
+        URL — verify the grid content and drive the sign-in gate whenever
+        needed.  Also closes stale SharePoint editor tabs, which self-close
+        or get discarded and poison later handle switches.
         """
         driver.switch_to.default_content()
         keep: list[tuple[str, str]] = []
@@ -917,30 +970,56 @@ class BrowserDaemon:
                 url = driver.current_url.lower()
             except Exception:
                 continue  # already discarded
-            if "sharepoint.com" in url:
+            # Stale editors AND heavyweight M365/Copilot SPAs get closed:
+            # this machine discards tabs under memory pressure, and each
+            # discarded context poisons the Selenium session.
+            heavy = ("sharepoint.com", "m365.cloud.microsoft", "www.office.com",
+                     "word.cloud.microsoft", "excel.cloud.microsoft",
+                     "powerpoint.cloud.microsoft", "copilot.microsoft.com")
+            if any(h in url for h in heavy):
                 try:
                     driver.close()
                 except Exception:
                     pass
             else:
                 keep.append((handle, url))
-        for handle, url in keep:
+
+        for handle, _url in keep:
             try:
                 driver.switch_to.window(handle)
             except Exception:
                 continue
-            if "onenote.cloud.microsoft/notebooks" in url:
+            if self._authenticated_grid(driver):
                 return True
-        for handle, url in keep:
+
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
             try:
-                driver.switch_to.window(handle)
+                url = driver.current_url.lower()
+                if "onenote.cloud.microsoft" not in url and "login." not in url:
+                    driver.get("https://onenote.cloud.microsoft/notebooks")
+                    time.sleep(6)
+                elif self._authenticated_grid(driver):
+                    return True
+                elif url.startswith("https://onenote.cloud.microsoft") and not self._onenote_midauth(url):
+                    # Marketing/anonymous shell: click its Sign in for a
+                    # silent SSO through the existing org session.
+                    btn = self._find_clickable(driver, ["sign in"])
+                    if btn is not None:
+                        self._click_follow(driver, btn)
+                        self._wait_off_auth_hosts(driver, timeout=60)
+                        time.sleep(6)
+                    else:
+                        driver.get("https://onenote.cloud.microsoft/notebooks")
+                        time.sleep(6)
+                # mid-auth (login.*): just wait for the redirect chain
             except Exception:
-                continue
-            if "onenote.cloud.microsoft" in url:
-                driver.get("https://onenote.cloud.microsoft/notebooks")
-                time.sleep(5)
-                return True
+                time.sleep(3)
         return False
+
+    @staticmethod
+    def _onenote_midauth(url: str) -> bool:
+        return "login.microsoftonline" in url or "login.live" in url
     def _harvest_notebook(self, driver, nb_name: str, cache_data: dict,
                           trace: list[str], errors: list[str],
                           extract_fn, remaining: int) -> dict[str, int]:
@@ -949,8 +1028,8 @@ class BrowserDaemon:
 
 
         driver.switch_to.default_content()
-        if not self._return_to_notebook_list(driver):
-            raise RuntimeError("no onenote.cloud.microsoft tab available")
+        if not self._ensure_notebooks_view(driver):
+            raise RuntimeError("could not reach authenticated notebooks grid")
         time.sleep(3)
 
         # Click the notebook card: the deepest exact-text node carries the
@@ -1096,7 +1175,7 @@ class BrowserDaemon:
         # Close the editor tab and go back to the list for the next notebook.
         driver.switch_to.default_content()
         driver.close()
-        self._return_to_notebook_list(driver)
+        self._ensure_notebooks_view(driver)
         trace.append(f"{nb_name}: {pages_done} pages, {tasks_done} tasks")
         return {"pages": pages_done, "tasks": tasks_done}
 
