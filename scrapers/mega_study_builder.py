@@ -168,8 +168,12 @@ def generate_mega_guide(topic: str, pdf_text: str = "") -> str:
     # pipeline deliberately uses the local inference chain only.
     token_budget = TokenBudget(MAX_NIGHTLY_TOKENS)
 
-    def _call_local(prompt_text, timeout=3600):
-        """Generate locally while sharing one bounded per-guide budget."""
+    def _call_local(prompt_text, timeout=3600, max_tokens=4_000):
+        """Generate locally while sharing one bounded per-guide budget.
+
+        max_tokens stays modest per call: sustained full-tilt generation on
+        the Surface tablet drains its battery faster than charging replenishes
+        and has hard-crashed the node mid-build."""
         prompt_tokens = estimate_tokens(prompt_text)
         if not token_budget.reserve(prompt_tokens):
             logger.warning(
@@ -180,7 +184,7 @@ def generate_mega_guide(topic: str, pdf_text: str = "") -> str:
             return ""
         result = call_local_rpc_result(
             prompt=prompt_text,
-            max_tokens=4_000,
+            max_tokens=max_tokens,
             timeout=timeout,
             allow_cloud=False,
             sensitivity=Sensitivity.PERSONAL,
@@ -210,7 +214,9 @@ def generate_mega_guide(topic: str, pdf_text: str = "") -> str:
     internal_notes = internal_notes.replace('\x00', '') if internal_notes else ""
     
     def _chunk_and_summarize(text, label):
-        max_chunk_size = 40_000
+        # 12KB chunks (~3k prompt tokens): keeps each Surface generation
+        # short so sustained load cannot drain the tablet's battery.
+        max_chunk_size = 12_000
         if len(text) > max_chunk_size:
             logger.info(f"Chunking {label} ({len(text)} chars)...")
             summarized = ""
@@ -218,7 +224,7 @@ def generate_mega_guide(topic: str, pdf_text: str = "") -> str:
                 chunk = text[i:i+max_chunk_size]
                 prompt = f"Extract all facts, concepts, formulas, and notes strictly relevant to '{topic}'. Be comprehensive but concise. Ignore unrelated subjects.\n\nSOURCE TEXT ({label} Chunk {i//max_chunk_size + 1}):\n{chunk}"
                 logger.info(f"Summarizing {label} chunk {i//max_chunk_size + 1} / {(len(text)//max_chunk_size)+1}...")
-                summary = _call_local(prompt)
+                summary = _call_local(prompt, max_tokens=1_200)
                 if summary:
                     summarized += summary + "\n\n"
                     
