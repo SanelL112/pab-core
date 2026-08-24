@@ -224,7 +224,9 @@ def generate_mega_guide(topic: str, pdf_text: str = "") -> str:
                 chunk = text[i:i+max_chunk_size]
                 prompt = f"Extract all facts, concepts, formulas, and notes strictly relevant to '{topic}'. Be comprehensive but concise. Ignore unrelated subjects.\n\nSOURCE TEXT ({label} Chunk {i//max_chunk_size + 1}):\n{chunk}"
                 logger.info(f"Summarizing {label} chunk {i//max_chunk_size + 1} / {(len(text)//max_chunk_size)+1}...")
-                summary = _call_local(prompt, max_tokens=1_200)
+                # 800 tokens ≈ 4 min at the Surface's ~3.5 tok/s CPU rate —
+                # fits the 540s window; the synthesis pass re-cleans anyway.
+                summary = _call_local(prompt, max_tokens=800)
                 if summary:
                     summarized += summary + "\n\n"
                     
