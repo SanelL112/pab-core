@@ -227,6 +227,10 @@ def generate_mega_guide(topic: str, pdf_text: str = "") -> str:
                 # 800 tokens ≈ 4 min at the Surface's ~3.5 tok/s CPU rate —
                 # fits the 540s window; the synthesis pass re-cleans anyway.
                 summary = _call_local(prompt, max_tokens=800)
+                # Duty-cycle: a 20s breather between generations keeps the
+                # Surface's average power draw under what its charger
+                # supplies — sustained peak load browned the tablet out.
+                time.sleep(20)
                 if summary:
                     summarized += summary + "\n\n"
                     
