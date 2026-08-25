@@ -1086,11 +1086,13 @@ class BrowserDaemon:
             raise RuntimeError("WebApplicationFrame never appeared")
         driver.switch_to.frame(frame_el)
 
-        deadline = time.monotonic() + 20
+        # Cold SharePoint loads can take >40s before the section rail
+        # renders; give it a full minute before declaring the notebook empty.
+        deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             if driver.execute_script("return document.querySelectorAll('.sectionListItem').length;"):
                 break
-            time.sleep(2)
+            time.sleep(3)
 
         sections = driver.execute_script(
             "return Array.from(document.querySelectorAll('.sectionListItem'))"
@@ -1123,12 +1125,11 @@ class BrowserDaemon:
                     errors.append(f"{nb_name}/{sec}: section click failed")
                     continue
                 time.sleep(3)
-
-                deadline = time.monotonic() + 15
+                deadline = time.monotonic() + 40
                 while time.monotonic() < deadline:
                     if driver.execute_script("return document.querySelectorAll('.pageListItem').length;"):
                         break
-                    time.sleep(2)
+                    time.sleep(3)
 
                 pages = driver.execute_script(
                     "return Array.from(document.querySelectorAll('.pageListItem'))"
