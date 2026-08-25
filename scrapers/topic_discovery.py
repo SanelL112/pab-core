@@ -41,6 +41,9 @@ def _clean_title(title: str) -> str:
 
 _HASH_KEY_RE = re.compile(r"^[0-9a-f]{16,}$")
 
+# class material key -> human label inferred by the refinement model
+_LAST_LABELS: dict[str, str] = {}
+
 
 def _load_course_names(cache_dir: Path) -> dict[str, str]:
     """course-id -> name, refreshed best-effort from the daemon's Canvas session."""
@@ -67,7 +70,19 @@ def _load_course_names(cache_dir: Path) -> dict[str, str]:
 
 
 def _material_from_caches(cache_dir: Path, cutoff: datetime) -> dict[str, dict]:
-    """class -> {pages: [page titles], tasks: [task titles]}"""
+    """class -> {pages: [page titles], tasks: [task titles]}
+
+    Only ACTIVE classes survive: at least one task dated within
+    [today - 7d, today + 60d], or the class is a configured OneNote
+    notebook.  Stale summer/last-year courses must not pollute proposals.
+    """
+    from config import get_setting
+
+    window_start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    window_end = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
+    notebook_names = [n.strip().lower() for n in
+                      (get_setting("ONENOTE_NOTEBOOKS", "") or "").split(",") if n.strip()]
+    classes_active: set[str] = set()
     classes: dict[str, dict] = defaultdict(lambda: {"pages": [], "tasks": []})
 
     canvas = _load_json(cache_dir / "canvas_page_extractions.json") or {}
@@ -75,35 +90,46 @@ def _material_from_caches(cache_dir: Path, cutoff: datetime) -> dict[str, dict]:
     for page_key, tasks in canvas.items():
         if not isinstance(tasks, list):
             continue
-        course_id = str(page_key).split("/")[0].strip()
+        course_id = str(page_key).split("/")[0].strip().split("::")[0].strip()
         course = course_names.get(course_id) or (
             f"Canvas course {course_id[:8]}" if _HASH_KEY_RE.match(course_id) else course_id
         )
-        if course:
-            title = str(page_key).split("/")[-1]
-            if not _HASH_KEY_RE.match(title):
-                classes[course]["pages"].append(title)
+        if not course:
+            continue
+        title = str(page_key).split("/")[-1]
         for item in tasks:
-            if isinstance(item, dict) and item.get("title"):
+            if not isinstance(item, dict):
+                continue
+            due = str(item.get("due_date") or "")[:10]
+            if window_start <= due <= window_end:
+                classes_active.add(course)
+            if item.get("title"):
                 classes[course]["tasks"].append(str(item["title"]))
+        if not _HASH_KEY_RE.match(title):
+            classes[course]["pages"].append(title)
 
     onenote = _load_json(cache_dir / "onenote_page_extractions.json") or {}
     for page_key, tasks in onenote.items():
         if not isinstance(tasks, list):
             continue
         parts = str(page_key).split("/")
-        notebook = parts[0].strip() if parts else ""
+        notebook = parts[0].strip().split("::")[0].strip() if parts else ""
         if notebook:
             classes[notebook]["pages"].append(parts[-1] if len(parts) > 2 else page_key)
+            classes_active.add(notebook)
         for item in tasks:
             if isinstance(item, dict) and item.get("title"):
                 classes[notebook]["tasks"].append(str(item["title"]))
 
-    # Drop classes with no real material.
-    return {
-        cls: data for cls, data in classes.items()
-        if len(" ".join(data["pages"] + data["tasks"]).strip()) >= _MIN_MATERIAL_CHARS
-    }
+    # Drop classes with no real material; keep only currently-active ones
+    # (plus configured OneNote notebooks, which are always current).
+    keep = {}
+    for cls, data in classes.items():
+        if len(" ".join(data["pages"] + data["tasks"]).strip()) < _MIN_MATERIAL_CHARS:
+            continue
+        if cls.lower() in notebook_names or cls in classes_active:
+            keep[cls] = data
+    return keep
 
 
 def _deterministic_topics(data: dict, limit: int) -> list[str]:
@@ -184,8 +210,9 @@ def discover_topics_per_class(
     for cls, topics in deterministic.items():
         online = [t for t in refined.get(cls, []) if t]
         merged = online + [t for t in topics if t.lower() not in {o.lower() for o in online}]
-        result[cls] = merged[:max_topics_per_class]
-        logger.info("Topics for %s: %s", cls, result[cls])
+        display = _LAST_LABELS.get(cls, cls)
+        result[display] = merged[:max_topics_per_class]
+        logger.info("Topics for %s: %s", display, result[display])
     return result
 
 
@@ -199,9 +226,12 @@ def _llm_refine_batch(classes_material: dict[str, list[str]]) -> dict[str, list[
         blocks.append(f'CLASS: "{cls}"\n{bullet_list}')
     joined_blocks = "\n\n".join(blocks)
     prompt = (
-        "A student is taking the classes below. For EACH class, name 2-3 specific "
-        "academic topics/study subjects the material covers.\n"
-        "Respond ONLY with a JSON object mapping each class name to an array of topic strings.\n\n"
+        "A student is taking the classes below. For EACH class: infer the class's real "
+        "subject name (label, e.g. 'AP Computer Science', 'AP Biology') and name 2-3 "
+        "specific academic topics/study subjects the material covers.\n"
+        "Respond ONLY with a JSON object mapping each class's material key to an object "
+        "with keys \"label\" (inferred class name) and \"topics\" (array of 2-3 topic "
+        "strings). Use the material keys exactly as given.\n\n"
         + joined_blocks
     )
     raw, provider = generate_online(prompt, max_tokens=800, timeout=240)
@@ -214,12 +244,24 @@ def _llm_refine_batch(classes_material: dict[str, list[str]]) -> dict[str, list[
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         parsed = _json.loads(match.group(0)) if match else {}
         out: dict[str, list[str]] = {}
-        for cls, topics in parsed.items():
-            if isinstance(topics, list):
-                clean = [_clean_title(t) for t in topics if isinstance(t, str)]
-                match_cls = next((k for k in classes_material if k.strip() == cls.strip()), None)
-                if match_cls and clean:
-                    out[match_cls] = [t for t in clean if len(t) >= 4][:4]
+        labels: dict[str, str] = {}
+        for key, value in parsed.items():
+            match_cls = next((k for k in classes_material if k.strip() == str(key).strip()), None)
+            if match_cls is None:
+                continue
+            if isinstance(value, dict):
+                label = _clean_title(value.get("label") or "")
+                topics = value.get("topics") or []
+            elif isinstance(value, list):
+                label, topics = "", value
+            else:
+                continue
+            clean = [_clean_title(t) for t in topics if isinstance(t, str) and len(t) >= 4][:4]
+            if clean:
+                out[match_cls] = clean
+                if label:
+                    labels[match_cls] = label
+        _LAST_LABELS.update(labels)
         logger.info("Batched refinement served %d/%d classes via %s",
                     len(out), len(classes_material), provider)
         return out
