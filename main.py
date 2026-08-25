@@ -548,8 +548,17 @@ async def _check_updates_impl(context: ContextTypes.DEFAULT_TYPE):
             pass
         await send_assistant_response(context, chat_id, digest, title="Briefing")
 
-    # 3. Ask to Compile Mega Study Guides (with inline keyboard)
+    # 3. Ask to Compile Mega Study Guides (per class, grounded discovery)
+    try:
+        from scrapers.topic_discovery import discover_topics_per_class
+        discovered = await asyncio.to_thread(discover_topics_per_class)
+    except Exception:
+        logger.exception("Per-class topic discovery failed")
+        discovered = {}
     topics = ai_result.get("topics", [])
+    if discovered:
+        # Grounded per-class topics replace the generic digest topics.
+        topics = [f"{cls}: {t}" for cls, ts in discovered.items() for t in ts]
     if topics:
         topics_str = "\n".join([f"- {t}" for t in topics])
         msg = (

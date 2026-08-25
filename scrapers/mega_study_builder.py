@@ -170,11 +170,22 @@ def generate_mega_guide(topic: str, pdf_text: str = "") -> str:
     token_budget = TokenBudget(MAX_NIGHTLY_TOKENS)
 
     def _call_local(prompt_text, timeout=3600, max_tokens=4_000):
-        """Generate locally while sharing one bounded per-guide budget.
+        """Generate for one guide call: free online providers first, local
+        chain as offline fallback.  Online generation takes seconds-minutes
+        instead of the Surface's hours and cannot brown out the tablet."""
+        from scrapers.study_providers import generate_online
 
-        max_tokens stays modest per call: sustained full-tilt generation on
-        the Surface tablet drains its battery faster than charging replenishes
-        and has hard-crashed the node mid-build."""
+        online, provider = generate_online(
+            prompt_text,
+            system_prompt="You are an elite academic tutor writing a rigorous study guide.",
+            max_tokens=max_tokens,
+            timeout=420,
+        )
+        if online:
+            logger.info("Guide call served by online provider: %s", provider)
+            return online
+        logger.warning("Online providers unavailable; falling back to local inference")
+
         prompt_tokens = estimate_tokens(prompt_text)
         if not token_budget.reserve(prompt_tokens):
             logger.warning(
