@@ -94,12 +94,17 @@ class BrowserDaemon:
         self.client.driver.get(CLASSLINK_URL)
 
     def _session_alive(self) -> bool:
-        """Cheap probe: is Selenium still connected to a live Firefox?"""
+        """Cheap probe: is the CURRENT browsing context still usable?
+
+        ``window_handles`` is browser-level and keeps succeeding after the
+        tab the driver is parked on gets discarded (Firefox memory
+        pressure), so probe something that touches the current context.
+        """
         driver = self.client.driver
         if driver is None:
             return False
         try:
-            driver.window_handles
+            driver.current_url
             return True
         except Exception:
             return False
@@ -852,7 +857,12 @@ class BrowserDaemon:
             trace.append(msg)
             logger.info("OneNote harvest: %s", msg)
 
-        res = self.crawl_onenote_web()
+        try:
+            res = self.crawl_onenote_web()
+        except Exception as exc:
+            logger.warning("harvest crawl failed (%s); relaunching browser once", type(exc).__name__)
+            self.restart_browser()
+            res = self.crawl_onenote_web()
         if res.get("status") != "authenticated_and_navigated":
             res["message"] = f"could not reach OneNote: {res.get('message', res.get('status'))}"
             return res
@@ -860,6 +870,10 @@ class BrowserDaemon:
         with self.lock:
             assert self.client.driver is not None
             driver = self.client.driver
+            # The class notebooks repeat the same pages across period
+            # sections; skip any page title already harvested (this run or
+            # a previous one) so the budget reaches the other notebooks.
+            seen_titles = {k.rsplit("/", 1)[-1] for k in cache_data}
             # Background threads (Canvas auto-reauth) may have switched tabs
             # while the crawl held the lock; always re-guarantee the grid.
             if not self._ensure_notebooks_view(driver):
@@ -887,6 +901,7 @@ class BrowserDaemon:
                             driver, nb_name, cache_data, trace, errors,
                             extract_tasks_from_page,
                             remaining=max_pages - pages_scanned,
+                            seen_titles=seen_titles,
                         )
                         pages_scanned += stats["pages"]
                         tasks_total += stats["tasks"]
@@ -1055,7 +1070,8 @@ class BrowserDaemon:
         return "login.microsoftonline" in url or "login.live" in url
     def _harvest_notebook(self, driver, nb_name: str, cache_data: dict,
                           trace: list[str], errors: list[str],
-                          extract_fn, remaining: int) -> dict[str, int]:
+                          extract_fn, remaining: int,
+                          seen_titles: set[str] | None = None) -> dict[str, int]:
         """Open one notebook and harvest every section's pages."""
         import hashlib
 
@@ -1172,6 +1188,8 @@ class BrowserDaemon:
                 for pg in pages:
                     if pages_done >= remaining:
                         break
+                    if seen_titles and pg in seen_titles:
+                        continue  # same shared notebook page in another section
                     try:
                         hit = driver.execute_script(
                             """
@@ -1198,6 +1216,8 @@ class BrowserDaemon:
                         for t in tasks:
                             t["course"] = nb_name
                         cache_data[f"{nb_name}/{sec}/{pg}"] = tasks
+                        if seen_titles is not None:
+                            seen_titles.add(pg)
                         pages_done += 1
                         tasks_done += len(tasks)
                         trace.append(f"  {nb_name}/{sec}/{pg}: {len(tasks)} tasks")
