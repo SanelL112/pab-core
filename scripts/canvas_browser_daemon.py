@@ -93,6 +93,33 @@ class BrowserDaemon:
         assert self.client.driver is not None
         self.client.driver.get(CLASSLINK_URL)
 
+    def _session_alive(self) -> bool:
+        """Cheap probe: is Selenium still connected to a live Firefox?"""
+        driver = self.client.driver
+        if driver is None:
+            return False
+        try:
+            driver.window_handles
+            return True
+        except Exception:
+            return False
+
+    def restart_browser(self) -> None:
+        """Relaunch Firefox after the Selenium session dies (crash, OOM).
+
+        Cookies persist in the profile, so Canvas/ClassLink/OneNote sign-ins
+        restore silently on the next crawl. Caller must hold self.lock (or be
+        the sole operator) — this swaps self.client wholesale.
+        """
+        logger.warning("Browser session dead — relaunching Firefox")
+        try:
+            self.client.close()
+        except Exception:
+            pass
+        self.client = CanvasBrowserClient(headless=False, use_daemon=False)
+        self.start()
+        logger.info("Browser relaunched")
+
     def location(self) -> str:
         assert self.client.driver is not None
         return self.client._safe_browser_location()
@@ -193,6 +220,8 @@ class BrowserDaemon:
 
     def health(self) -> dict[str, object]:
         with self.lock:
+            if not self._session_alive():
+                self.restart_browser()
             assert self.client.driver is not None
             self._select_canvas_tab()
             host = urlsplit(self.client.driver.current_url).netloc
@@ -608,6 +637,8 @@ class BrowserDaemon:
             logger.info("OneNote crawl: %s", step)
 
         with self.lock:
+            if not self._session_alive():
+                self.restart_browser()
             assert self.client.driver is not None
             driver = self.client.driver
 
@@ -886,6 +917,8 @@ class BrowserDaemon:
                             self._ensure_notebooks_view(driver)
                         except Exception:
                             pass
+                        if transient and not self._session_alive():
+                            self.restart_browser()
                         if not transient or attempt == 2:
                             break
 
