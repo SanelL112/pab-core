@@ -870,10 +870,6 @@ class BrowserDaemon:
         with self.lock:
             assert self.client.driver is not None
             driver = self.client.driver
-            # The class notebooks repeat the same pages across period
-            # sections; skip any page title already harvested (this run or
-            # a previous one) so the budget reaches the other notebooks.
-            seen_titles = {k.rsplit("/", 1)[-1] for k in cache_data}
             # Background threads (Canvas auto-reauth) may have switched tabs
             # while the crawl held the lock; always re-guarantee the grid.
             if not self._ensure_notebooks_view(driver):
@@ -887,6 +883,10 @@ class BrowserDaemon:
             note(f"notebooks: {notebooks}")
 
             cache_data: dict[str, list[dict]] = {}
+            # The class notebooks repeat the same pages across period
+            # sections; skip any page title already harvested (this run or
+            # a previous one) so the budget reaches the other notebooks.
+            seen_titles = {k.rsplit("/", 1)[-1] for k in cache_data}
             pages_scanned = 0
             tasks_total = 0
 
