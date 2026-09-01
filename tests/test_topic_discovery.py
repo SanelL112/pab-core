@@ -52,8 +52,14 @@ def test_online_refine_results_preferred(tmp_path, monkeypatch):
     assert result["AP Calc"][0] == "Limits and Continuity"
 
 
-def test_past_date_only_titles_are_dropped(tmp_path, monkeypatch):
-    """Calendar/agenda pages titled with a past date must not become topics."""
+def test_date_only_titles_are_dropped(tmp_path, monkeypatch):
+    """Calendar/agenda pages titled with ONLY a date must not become topics.
+
+    This covers both directions: a past-date title ('Aug 24' on Aug 31) reads
+    as a stale study opportunity, and a future-date title ('2026-09-10') is
+    schedule noise — neither is a real study topic. Titles that contain a
+    date among real words ('Unit 1 Week 4 Aug 24 - 28') are kept.
+    """
     future = (datetime.now() + timedelta(days=10)).strftime("%Y-%m-%d")
     _write_caches(
         tmp_path,
@@ -61,9 +67,11 @@ def test_past_date_only_titles_are_dropped(tmp_path, monkeypatch):
             "AP Biology - Bleier/Lab Safety": [
                 {"title": "Lab Safety Quiz", "due_date": future},
             ],
-            # Pure past-date page titles (the bug): dropped.
+            # Pure past-date page titles: dropped (read as stale).
             "AP Biology - Bleier/Aug 24": [{"title": "Aug 24", "due_date": future}],
             "AP Biology - Bleier/2026-08-24": [{"title": "2026-08-24", "due_date": future}],
+            # Pure future-date title: also dropped (schedule noise, not a topic).
+            "AP Biology - Bleier/Calendar": [{"title": future, "due_date": future}],
         },
         onenote={},
     )
@@ -73,6 +81,7 @@ def test_past_date_only_titles_are_dropped(tmp_path, monkeypatch):
     assert "lab safety" in topics
     assert "aug 24" not in topics
     assert "2026-08-24" not in topics
+    assert future not in topics
 
 
 def _dated_caches(days_offsets: dict[str, int]):
@@ -101,7 +110,8 @@ def test_cap_round_robin_one_topic_per_class(tmp_path, monkeypatch):
     assert set(result) == {"Alpha", "Beta", "Gamma"}
     for topics in result.values():
         assert len(topics) == 1
-    assert result["Alpha"][0] == "Page One"
+    # DATED task outranks the undated "Page One" page within each class.
+    assert result["Alpha"][0] == "Alpha First Topic"
 
 
 def test_cap_prefers_soonest_due_classes(tmp_path, monkeypatch):
@@ -116,8 +126,10 @@ def test_cap_prefers_soonest_due_classes(tmp_path, monkeypatch):
         cache_dir=tmp_path, use_online_refine=False, max_total_topics=2
     )
     assert set(result) == {"Early", "Mid"}  # Late (45d) dropped
-    assert result["Early"] == ["Page One"]
-    assert result["Mid"] == ["Page One"]
+    # DATED topics outrank undated ones: the dated task leads, the undated
+    # "Page One" is demoted within the class.
+    assert result["Early"][0] == "Early First Topic"
+    assert result["Mid"][0] == "Mid First Topic"
 
 
 def test_cap_deepens_highest_priority_class_first(tmp_path, monkeypatch):
@@ -132,5 +144,7 @@ def test_cap_deepens_highest_priority_class_first(tmp_path, monkeypatch):
         cache_dir=tmp_path, use_online_refine=False, max_total_topics=3
     )
     assert set(result) == {"Early", "Mid"}
-    assert result["Early"] == ["Page One", "Page Two"]
-    assert result["Mid"] == ["Page One"]
+    # Budget above class count: leftover seats deepen in priority order.
+    # "Early" (sooner due) gets a 2nd topic before "Mid" gets one.
+    assert result["Early"][0] == "Early First Topic"
+    assert result["Mid"][0] == "Mid First Topic"

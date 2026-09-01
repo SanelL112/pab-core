@@ -44,23 +44,25 @@ def _clean_title(title: str) -> str:
 _HASH_KEY_RE = re.compile(r"^[0-9a-f]{16,}$")
 
 
-def _is_past_date_title(title: str) -> bool:
-    """True if *title* is nothing but a date that has already passed.
+def _is_date_only_title(title: str) -> bool:
+    """True if *title* is nothing but a parseable date.
 
     Canvas/OneNote extractions include calendar/agenda pages whose entire
-    title is a date (e.g. ``Aug 24``, ``2026-08-24``). On Aug 31 those read
-    as stale study opportunities, so drop them.  Titles that merely *contain*
-    a date among real words (``Unit 1 Week 4 Aug 24 - 28``) are NOT dropped —
-    strict parsing rejects them, which is the safe default.
+    title is a date (e.g. ``Aug 24``, ``2026-08-24``, ``2026-09-10``). Such
+    pages are never meaningful study topics — past ones read as stale study
+    opportunities, future ones as schedule noise — so they are dropped.
+    Titles that merely *contain* a date among real words (``Unit 1 Week 4
+    Aug 24 - 28``) are NOT dropped: strict parsing rejects them, which is
+    the safe default.
     """
     cleaned = re.sub(r"\s+", " ", title or "").strip()
     if not cleaned:
         return False
     try:
-        parsed = _date_parser.parse(cleaned, fuzzy=False)
+        _date_parser.parse(cleaned, fuzzy=False)
     except (ValueError, TypeError, OverflowError):
         return False
-    return parsed.date() < datetime.now().date()
+    return True
 
 # class material key -> human label inferred by the refinement model
 _LAST_LABELS: dict[str, str] = {}
@@ -91,11 +93,14 @@ def _load_course_names(cache_dir: Path) -> dict[str, str]:
 
 
 def _material_from_caches(cache_dir: Path, cutoff: datetime) -> dict[str, dict]:
-    """class -> {pages: [page titles], tasks: [task titles]}
+    """class -> {pages: [(title, due)], tasks: [(title, due)]}
 
     Only ACTIVE classes survive: at least one task dated within
-    [today - 7d, today + 60d], or the class is a configured OneNote
+    [today, today + 60d], or the class is a configured OneNote
     notebook.  Stale summer/last-year courses must not pollute proposals.
+
+    Each candidate topic carries its due date ('' if undated) so discovery
+    can rank dated material above undated material within a class.
     """
     from config import get_setting
 
@@ -134,9 +139,9 @@ def _material_from_caches(cache_dir: Path, cutoff: datetime) -> dict[str, dict]:
                 if next_due.get(course, "9999-99-99") > due:
                     next_due[course] = due
             if item.get("title"):
-                classes[course]["tasks"].append(str(item["title"]))
+                classes[course]["tasks"].append((str(item["title"]), due))
         if not _HASH_KEY_RE.match(title):
-            classes[course]["pages"].append(title)
+            classes[course]["pages"].append((title, ""))
 
     onenote = _load_json(cache_dir / "onenote_page_extractions.json") or {}
     for page_key, tasks in onenote.items():
@@ -145,12 +150,12 @@ def _material_from_caches(cache_dir: Path, cutoff: datetime) -> dict[str, dict]:
         parts = str(page_key).split("/")
         notebook = parts[0].strip().split("::")[0].strip() if parts else ""
         if notebook:
-            classes[notebook]["pages"].append(parts[-1] if len(parts) > 2 else page_key)
+            classes[notebook]["pages"].append((parts[-1] if len(parts) > 2 else page_key, ""))
             classes_active.add(notebook)
         for item in tasks:
             if isinstance(item, dict) and item.get("title"):
-                classes[notebook]["tasks"].append(str(item["title"]))
                 due = str(item.get("due_date") or "")[:10]
+                classes[notebook]["tasks"].append((str(item["title"]), due))
                 if window_start <= due <= window_end and next_due.get(notebook, "9999-99-99") > due:
                     next_due[notebook] = due
 
@@ -158,7 +163,8 @@ def _material_from_caches(cache_dir: Path, cutoff: datetime) -> dict[str, dict]:
     # (plus configured OneNote notebooks, which are always current).
     keep = {}
     for cls, data in classes.items():
-        if len(" ".join(data["pages"] + data["tasks"]).strip()) < _MIN_MATERIAL_CHARS:
+        titles = [title for title, _ in data["pages"] + data["tasks"]]
+        if len(" ".join(titles).strip()) < _MIN_MATERIAL_CHARS:
             continue
         if cls.lower() in notebook_names or cls in classes_active:
             data["active"] = True
@@ -168,10 +174,17 @@ def _material_from_caches(cache_dir: Path, cutoff: datetime) -> dict[str, dict]:
 
 
 def _deterministic_topics(data: dict, limit: int) -> list[str]:
-    """Recent page/task titles, cleaned and deduped — no LLM needed."""
+    """Recent page/task titles, cleaned, deduped, and date-ranked — no LLM needed.
+
+    Within a class, dated topics come before undated ones (an explicit due
+    date is a stronger study signal than an undated page), and sooner due
+    dates come before later ones. This is the defense against undated or
+    stale-titled material crowding out real upcoming work.
+    """
     seen: set[str] = set()
-    out: list[str] = []
-    for title in data["pages"] + data["tasks"]:
+    # (clean_title, due_date) — due_date is "" when the item has none.
+    scored: list[tuple[str, str]] = []
+    for title, due in data["pages"] + data["tasks"]:
         if _HASH_KEY_RE.match(str(title).strip()):
             continue
         clean = _clean_title(title)
@@ -180,14 +193,20 @@ def _deterministic_topics(data: dict, limit: int) -> list[str]:
             continue
         if re.search(r"\b(advisement|syllabus|handbook|observe|signature)\b", low):
             continue
-        if _is_past_date_title(clean):
-            logger.debug("Dropped stale calendar page title: %r", clean)
+        if _is_date_only_title(clean):
+            logger.debug("Dropped calendar/agenda page title: %r", clean)
             continue
         seen.add(low)
-        out.append(clean)
-        if len(out) >= limit:
-            break
-    return out
+        scored.append((clean, due))
+
+    def _rank(item: tuple[str, str]) -> tuple[int, str, str]:
+        title, due = item
+        if due and re.fullmatch(r"\d{4}-\d{2}-\d{2}", due):
+            return (0, due, title.lower())          # dated: sooner first
+        return (1, "", title.lower())                # undated: last
+
+    scored.sort(key=_rank)
+    return [title for title, _ in scored[:limit]]
 
 
 def _llm_refine(cls: str, topics: list[str]) -> list[str]:
