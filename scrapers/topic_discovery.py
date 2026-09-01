@@ -20,6 +20,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import dateutil.parser as _date_parser
+
 logger = logging.getLogger(__name__)
 
 _TOPIC_NAME_RE = re.compile(r"[^A-Za-z0-9 +&:'\-]")
@@ -40,6 +42,25 @@ def _clean_title(title: str) -> str:
 
 
 _HASH_KEY_RE = re.compile(r"^[0-9a-f]{16,}$")
+
+
+def _is_past_date_title(title: str) -> bool:
+    """True if *title* is nothing but a date that has already passed.
+
+    Canvas/OneNote extractions include calendar/agenda pages whose entire
+    title is a date (e.g. ``Aug 24``, ``2026-08-24``). On Aug 31 those read
+    as stale study opportunities, so drop them.  Titles that merely *contain*
+    a date among real words (``Unit 1 Week 4 Aug 24 - 28``) are NOT dropped —
+    strict parsing rejects them, which is the safe default.
+    """
+    cleaned = re.sub(r"\s+", " ", title or "").strip()
+    if not cleaned:
+        return False
+    try:
+        parsed = _date_parser.parse(cleaned, fuzzy=False)
+    except (ValueError, TypeError, OverflowError):
+        return False
+    return parsed.date() < datetime.now().date()
 
 # class material key -> human label inferred by the refinement model
 _LAST_LABELS: dict[str, str] = {}
@@ -158,6 +179,9 @@ def _deterministic_topics(data: dict, limit: int) -> list[str]:
         if len(clean) < 6 or low in seen:
             continue
         if re.search(r"\b(advisement|syllabus|handbook|observe|signature)\b", low):
+            continue
+        if _is_past_date_title(clean):
+            logger.debug("Dropped stale calendar page title: %r", clean)
             continue
         seen.add(low)
         out.append(clean)

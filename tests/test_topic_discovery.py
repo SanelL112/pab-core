@@ -1,5 +1,6 @@
 """Per-class topic discovery from the extraction caches."""
 import json
+from datetime import datetime, timedelta
 
 from scrapers import topic_discovery as td
 
@@ -49,6 +50,29 @@ def test_online_refine_results_preferred(tmp_path, monkeypatch):
     )
     result = td.discover_topics_per_class(cache_dir=tmp_path, use_online_refine=True)
     assert result["AP Calc"][0] == "Limits and Continuity"
+
+
+def test_past_date_only_titles_are_dropped(tmp_path, monkeypatch):
+    """Calendar/agenda pages titled with a past date must not become topics."""
+    future = (datetime.now() + timedelta(days=10)).strftime("%Y-%m-%d")
+    _write_caches(
+        tmp_path,
+        canvas={
+            "AP Biology - Bleier/Lab Safety": [
+                {"title": "Lab Safety Quiz", "due_date": future},
+            ],
+            # Pure past-date page titles (the bug): dropped.
+            "AP Biology - Bleier/Aug 24": [{"title": "Aug 24", "due_date": future}],
+            "AP Biology - Bleier/2026-08-24": [{"title": "2026-08-24", "due_date": future}],
+        },
+        onenote={},
+    )
+    monkeypatch.setattr(td, "_llm_refine_batch", lambda cm: {})
+    result = td.discover_topics_per_class(cache_dir=tmp_path, use_online_refine=False)
+    topics = " ".join(result.get("AP Biology - Bleier", [])).lower()
+    assert "lab safety" in topics
+    assert "aug 24" not in topics
+    assert "2026-08-24" not in topics
 
 
 def _dated_caches(days_offsets: dict[str, int]):
