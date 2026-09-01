@@ -78,7 +78,11 @@ def _material_from_caches(cache_dir: Path, cutoff: datetime) -> dict[str, dict]:
     """
     from config import get_setting
 
-    window_start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    # Only UPCOMING material qualifies a class as active for study
+    # opportunities — a due date in the past (even yesterday) is not a
+    # "study opportunity" the digest should surface. The +60d horizon
+    # catches the next major test/assignment in each class.
+    window_start = datetime.now().strftime("%Y-%m-%d")
     window_end = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
     notebook_names = [n.strip().lower() for n in
                       (get_setting("ONENOTE_NOTEBOOKS", "") or "").split(",") if n.strip()]
