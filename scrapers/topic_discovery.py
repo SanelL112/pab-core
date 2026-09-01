@@ -83,6 +83,9 @@ def _material_from_caches(cache_dir: Path, cutoff: datetime) -> dict[str, dict]:
     notebook_names = [n.strip().lower() for n in
                       (get_setting("ONENOTE_NOTEBOOKS", "") or "").split(",") if n.strip()]
     classes_active: set[str] = set()
+    # Soonest upcoming (within the active window) due date per class, used to
+    # rank topics when the digest must show a limited number of buttons.
+    next_due: dict[str, str] = {}
     classes: dict[str, dict] = defaultdict(lambda: {"pages": [], "tasks": []})
 
     canvas = _load_json(cache_dir / "canvas_page_extractions.json") or {}
@@ -103,6 +106,8 @@ def _material_from_caches(cache_dir: Path, cutoff: datetime) -> dict[str, dict]:
             due = str(item.get("due_date") or "")[:10]
             if window_start <= due <= window_end:
                 classes_active.add(course)
+                if next_due.get(course, "9999-99-99") > due:
+                    next_due[course] = due
             if item.get("title"):
                 classes[course]["tasks"].append(str(item["title"]))
         if not _HASH_KEY_RE.match(title):
@@ -120,6 +125,9 @@ def _material_from_caches(cache_dir: Path, cutoff: datetime) -> dict[str, dict]:
         for item in tasks:
             if isinstance(item, dict) and item.get("title"):
                 classes[notebook]["tasks"].append(str(item["title"]))
+                due = str(item.get("due_date") or "")[:10]
+                if window_start <= due <= window_end and next_due.get(notebook, "9999-99-99") > due:
+                    next_due[notebook] = due
 
     # Drop classes with no real material; keep only currently-active ones
     # (plus configured OneNote notebooks, which are always current).
@@ -128,6 +136,8 @@ def _material_from_caches(cache_dir: Path, cutoff: datetime) -> dict[str, dict]:
         if len(" ".join(data["pages"] + data["tasks"]).strip()) < _MIN_MATERIAL_CHARS:
             continue
         if cls.lower() in notebook_names or cls in classes_active:
+            data["active"] = True
+            data["next_due"] = next_due.get(cls, "")
             keep[cls] = data
     return keep
 
@@ -183,8 +193,15 @@ def discover_topics_per_class(
     cache_dir: Path | None = None,
     max_topics_per_class: int = 3,
     use_online_refine: bool = True,
+    max_total_topics: int = 12,
 ) -> dict[str, list[str]]:
-    """class name -> list of study topics, grounded in that class's material."""
+    """class name -> list of study topics, grounded in that class's material.
+
+    ``max_total_topics`` caps the combined button list so the digest message
+    stays under Telegram's size limit. Classes with the soonest upcoming dated
+    task get priority; within the budget every shown class gets its first
+    topic before any class gets a second (round-robin).
+    """
     from config import CACHE_DIR
 
     cache_dir = Path(cache_dir or CACHE_DIR)
@@ -206,14 +223,70 @@ def discover_topics_per_class(
     if use_online_refine:
         refined = _llm_refine_batch(deterministic)
 
-    result: dict[str, list[str]] = {}
-    for cls, topics in deterministic.items():
+    # Priority order: classes with the SOONEST upcoming dated task first
+    # (an explicit deadline is the strongest urgency signal), ties by name.
+    rows: list[tuple[bool, str, str, str, list[str]]] = []
+    for cls, deterministic_topics in deterministic.items():
         online = [t for t in refined.get(cls, []) if t]
-        merged = online + [t for t in topics if t.lower() not in {o.lower() for o in online}]
+        merged = online + [t for t in deterministic_topics
+                           if t.lower() not in {o.lower() for o in online}]
+        topics = merged[:max_topics_per_class]
+        if not topics:
+            continue
         display = _LAST_LABELS.get(cls, cls)
-        result[display] = merged[:max_topics_per_class]
-        logger.info("Topics for %s: %s", display, result[display])
-    return result
+        meta = material.get(cls, {}) or {}
+        due = str(meta.get("next_due") or "")
+        has_due = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", due))
+        rows.append((has_due, due, display.lower(), display, topics))
+        logger.info("Topics for %s: %s", display, topics)
+
+    if not rows:
+        return {}
+
+    max_total_topics = max(1, int(max_total_topics))
+    rows.sort(key=lambda r: (not r[0], r[1], r[2]))
+    total_before = sum(len(r[4]) for r in rows)
+
+    final: dict[str, list[str]] = {}
+    remaining = max_total_topics
+
+    def _one_seat() -> None:
+        """Every shown class gets its first topic before any gets a second."""
+        nonlocal remaining
+        for _, _, _, display, topics in rows:
+            if remaining <= 0:
+                return
+            if display in final:
+                continue
+            final[display] = [topics[0]]
+            remaining -= 1
+
+    def _deepen() -> None:
+        """Fill leftover budget by deepening classes in priority order."""
+        nonlocal remaining
+        for _, _, _, display, topics in rows:
+            if remaining <= 0:
+                return
+            if display not in final:
+                continue
+            for t in topics[1:]:
+                if remaining <= 0:
+                    return
+                final[display].append(t)
+                remaining -= 1
+
+    _one_seat()
+    _deepen()
+
+    shown = sum(len(v) for v in final.values())
+    if shown < total_before:
+        logger.info(
+            "Topic discovery capped: %d/%d classes shown, %d/%d topics "
+            "(max_total_topics=%d)\n%s",
+            len(final), len(rows), shown, total_before, max_total_topics,
+            "\n".join(f"- {k}: {', '.join(v)}" for k, v in final.items()),
+        )
+    return final
 
 
 def _llm_refine_batch(classes_material: dict[str, list[str]]) -> dict[str, list[str]]:

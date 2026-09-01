@@ -49,3 +49,64 @@ def test_online_refine_results_preferred(tmp_path, monkeypatch):
     )
     result = td.discover_topics_per_class(cache_dir=tmp_path, use_online_refine=True)
     assert result["AP Calc"][0] == "Limits and Continuity"
+
+
+def _dated_caches(days_offsets: dict[str, int]):
+    """cache dict: class name -> list of pages, one dated task each."""
+    from datetime import datetime, timedelta
+
+    canvas = {}
+    for cls, offset in days_offsets.items():
+        due = (datetime.now() + timedelta(days=offset)).strftime("%Y-%m-%d")
+        canvas[f"{cls}/Page One"] = [{"title": f"{cls} First Topic", "due_date": due}]
+        canvas[f"{cls}/Page Two"] = [{"title": f"{cls} Second Topic", "due_date": due}]
+    return canvas
+
+
+def test_cap_round_robin_one_topic_per_class(tmp_path, monkeypatch):
+    """Cap below class count: each class keeps ONE topic, none get a second."""
+    _write_caches(
+        tmp_path,
+        canvas=_dated_caches({"Alpha": 5, "Beta": 10, "Gamma": 20}),
+        onenote={},
+    )
+    monkeypatch.setattr(td, "_llm_refine_batch", lambda cm: {})
+    result = td.discover_topics_per_class(
+        cache_dir=tmp_path, use_online_refine=False, max_total_topics=3
+    )
+    assert set(result) == {"Alpha", "Beta", "Gamma"}
+    for topics in result.values():
+        assert len(topics) == 1
+    assert result["Alpha"][0] == "Page One"
+
+
+def test_cap_prefers_soonest_due_classes(tmp_path, monkeypatch):
+    """Budget smaller than class count: the soonest-due classes win the seats."""
+    _write_caches(
+        tmp_path,
+        canvas=_dated_caches({"Early": 3, "Mid": 15, "Late": 45}),
+        onenote={},
+    )
+    monkeypatch.setattr(td, "_llm_refine_batch", lambda cm: {})
+    result = td.discover_topics_per_class(
+        cache_dir=tmp_path, use_online_refine=False, max_total_topics=2
+    )
+    assert set(result) == {"Early", "Mid"}  # Late (45d) dropped
+    assert result["Early"] == ["Page One"]
+    assert result["Mid"] == ["Page One"]
+
+
+def test_cap_deepens_highest_priority_class_first(tmp_path, monkeypatch):
+    """Budget above class count: leftover seats deepen in priority order."""
+    _write_caches(
+        tmp_path,
+        canvas=_dated_caches({"Early": 3, "Mid": 15}),
+        onenote={},
+    )
+    monkeypatch.setattr(td, "_llm_refine_batch", lambda cm: {})
+    result = td.discover_topics_per_class(
+        cache_dir=tmp_path, use_online_refine=False, max_total_topics=3
+    )
+    assert set(result) == {"Early", "Mid"}
+    assert result["Early"] == ["Page One", "Page Two"]
+    assert result["Mid"] == ["Page One"]
